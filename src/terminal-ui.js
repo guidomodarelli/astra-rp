@@ -296,19 +296,20 @@ export function renderBanner({ projectName, publishedLabel }) {
 }
 
 /**
- * Renders the header that introduces each executed step.
+ * Renders the header that introduces each executed step: a blank line, the `━━ PASO N/M ━ title ━…`
+ * rule (only the step label in bold) and a blank line that separates it from the step output.
  *
  * @param {number} stepNumber - 1-based index.
  * @param {number} stepCount - Total steps.
- * @param {string} title - Step title.
- * @returns {string} Header line.
+ * @param {string} title - Step title, in regular weight.
+ * @returns {string} Header lines.
  */
 export function renderStepHeader(stepNumber, stepCount, title) {
   const label = paint(["bold", "magenta"], ` PASO ${stepNumber}/${stepCount} `);
-  const text = ` ${paint("bold", title)} `;
+  const text = ` ${title} `;
   const fill = Math.max(resolveBoxWidth() - visibleWidth(label) - visibleWidth(text) - 2, 2);
 
-  return `\n${paint("magenta", "━━")}${label}${paint("magenta", "━")}${text}${paint("magenta", "━".repeat(fill))}`;
+  return ["", `${paint("magenta", "━━")}${label}${paint("magenta", "━")}${text}${paint("magenta", "━".repeat(fill))}`, ""].join("\n");
 }
 
 /**

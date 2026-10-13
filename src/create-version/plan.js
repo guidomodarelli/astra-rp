@@ -255,21 +255,152 @@ export function describeFeatureBranchGaps(branch, pullRequest, githubError, comm
 }
 
 /**
- * Explains a failed npm lookup through the credential check when the registry answered it and
- * rejected the credential (an invalid or expired token, or a user that cannot publish): an
- * authenticated `npm view` fails with E401/E403 in that case, so replacing the token is the fix,
- * not the connection. A missing token never reached the registry, so it does not explain the lookup.
+ * Builds a plan that cannot run until its blockers are fixed.
  *
- * @param {NpmAuthCheck | null | undefined} npmAuth - Credential check, when it ran.
- * @param {ProjectCommands} commands - Project commands quoted by the fix.
- * @returns {ReleaseBlocker | null} Credential blocker, or `null` to keep the generic lookup blocker.
+ * @param {ReleaseBlocker[]} blockers - What must be fixed first.
+ * @param {string[]} [warnings] - Warnings gathered before blocking.
+ * @returns {ReleasePlan} Blocked plan without steps.
  */
-function describeRejectedNpmCredential(npmAuth, commands) {
-  if (!npmAuth || npmAuth.status === NPM_AUTH_STATUS.missingToken) {
-    return null;
-  }
+function blockedPlan(blockers, warnings = []) {
+  return { mode: RELEASE_MODE.blocked, steps: [], blockers, warnings, pendingVersion: null };
+}
 
-  return describeNpmAuthProblem(npmAuth, commands);
+/**
+ * Tells whether the npm lookup of the diagnosis ran and failed, so the plan is blocked before it
+ * could show a publication step; shared with the monorepo mode and the run.
+ *
+ * @param {{ npm?: NpmLookup | null }} snapshot - Repository or package snapshot.
+ * @returns {boolean} `true` when npm was queried and did not answer with the published versions.
+ */
+export function hasFailedNpmLookup(snapshot) {
+  return Boolean(snapshot.npm) && snapshot.npm?.status !== NPM_LOOKUP_STATUS.ok;
+}
+
+/**
+ * Explains a failed npm lookup; shared with the monorepo mode. When the registry answered it and
+ * rejected the credential (an invalid or expired token, or a user that cannot publish), an
+ * authenticated `npm view` fails with E401/E403, so the credential blocker explains it: replacing
+ * the token is the fix, not the connection. A missing token never reached the registry, so it does
+ * not explain the lookup.
+ *
+ * @param {NpmLookup} npm - Failed lookup.
+ * @param {NpmAuthCheck | null | undefined} npmAuth - Credential check, when it ran.
+ * @param {ProjectCommands} commands - Project commands quoted by the hints.
+ * @param {{ subject?: string, defaultReason: string }} description - Text after the registry name in the
+ *   title (such as ` para <paquete>`) and the reason shown when the lookup has none.
+ * @returns {ReleaseBlocker} Credential blocker, or the generic lookup blocker.
+ */
+export function failedNpmLookupBlocker(npm, npmAuth, commands, { subject = "", defaultReason }) {
+  const rejectedCredential = npmAuth && npmAuth.status !== NPM_AUTH_STATUS.missingToken ? describeNpmAuthProblem(npmAuth, commands) : null;
+  return rejectedCredential ?? {
+    title: `No se pudo consultar ${npm.registryLabel ?? "npm"}${subject}`,
+    details: [`${npm.reason ?? defaultReason}.`, `Revisá la conexión y volvé a correr ${commands.createVersion}.`],
+  };
+}
+
+/**
+ * Explains that the releases only leave from `main`; shared with the monorepo mode.
+ *
+ * @param {Pick<ReleaseState, "branch" | "pullRequest" | "githubError"> & { currentBranch: string }} state - Snapshot on a feature branch.
+ * @param {ProjectCommands} commands - Project commands quoted by the hints.
+ * @returns {ReleaseBlocker} Blocker with what is still missing for the branch to reach `main`.
+ */
+export function featureBranchBlocker(state, commands) {
+  return {
+    title: `Estás en ${state.currentBranch}: los releases salen solo desde ${MAIN_BRANCH}`,
+    details: state.branch
+      ? describeFeatureBranchGaps(state.branch, state.pullRequest ?? null, state.githubError ?? null, commands)
+      : [`Hacé git switch ${MAIN_BRANCH} y volvé a correr ${commands.createVersion}.`],
+  };
+}
+
+/**
+ * Lists the uncommitted files that block the release without `--ignore-local-changes`; shared with the monorepo mode.
+ *
+ * @param {string[]} blockingChanges - `git status --porcelain` lines that block.
+ * @param {ProjectCommands} commands - Project commands quoted by the hints.
+ * @returns {ReleaseBlocker} Blocker.
+ */
+export function uncommittedFilesBlocker(blockingChanges, commands) {
+  return {
+    title: `Hay ${blockingChanges.length} archivo(s) sin commitear`,
+    details: [
+      ...blockingChanges.slice(0, MAX_LISTED_ITEMS),
+      `Commitealos en una rama (o git stash) y volvé a correr ${commands.createVersion}, o corré ${commands.createVersion} --${CREATE_VERSION_FLAG.ignoreLocalChanges} para apartarlos durante el release.`,
+    ],
+  };
+}
+
+/**
+ * Stops a new release whose manual changelog was not updated since the last release; shared with the monorepo mode.
+ *
+ * @param {string | null} reason - Why the changelog check failed, when it says so.
+ * @param {string} changelogPath - Changelog path relative to the root.
+ * @param {ProjectCommands} commands - Project commands quoted by the hints.
+ * @returns {ReleaseBlocker} Blocker with {@link CHANGELOG_UPDATE_REQUIRED_CODE}.
+ */
+export function changelogUpdateRequiredBlocker(reason, changelogPath, commands) {
+  return {
+    code: CHANGELOG_UPDATE_REQUIRED_CODE,
+    title: reason ?? `${changelogPath} no fue actualizado desde el último release`,
+    details: [`Actualizá ${changelogPath} manualmente y volvé a correr ${commands.createVersion}; beez-rp no lo modifica.`],
+  };
+}
+
+/**
+ * Builds the step that fast-forwards `main` before a new release; shared with the monorepo mode.
+ *
+ * @param {number} behindCount - Commits `origin/main` has and `main` lacks.
+ * @param {ProjectCommands} commands - Project commands quoted by the detail.
+ * @returns {ReleasePlanStep} Sync step.
+ */
+export function syncMainPlanStep(behindCount, commands) {
+  return {
+    id: RELEASE_STEP.syncMain,
+    title: `Actualizar ${MAIN_BRANCH} desde origin`,
+    detail: `${behindCount} commit(s) nuevos. Después hay que volver a correr ${commands.createVersion}, que diagnostica con el código nuevo.`,
+  };
+}
+
+/**
+ * Adds the migrations step when migrations are pending, or a warning when they could not be checked;
+ * shared with the monorepo mode.
+ *
+ * @param {MigrationCheck | null | undefined} migrations - Migration state of the diagnosis.
+ * @param {ReleasePlanStep[]} steps - Steps of the plan, extended in place.
+ * @param {string[]} warnings - Warnings of the plan, extended in place.
+ * @returns {void}
+ */
+export function addMigrationsPlanStep(migrations, steps, warnings) {
+  if (migrations?.status === MIGRATION_STATUS.pending) {
+    steps.push({
+      id: RELEASE_STEP.applyMigrations,
+      title: `Aplicar ${migrations.pending.length} migración(es) en la base de datos`,
+      detail: `Destino: ${migrations.target ?? "desconocido"} · se pide confirmación antes.`,
+    });
+  } else if (migrations?.status === MIGRATION_STATUS.unknown) {
+    warnings.push(`No se pudo verificar si hay migraciones pendientes: ${migrations.reason ?? "motivo desconocido"}.`);
+  }
+}
+
+/**
+ * Classifies the npm credential check of a package the plan would publish; shared with the monorepo mode.
+ *
+ * @param {NpmAuthCheck} npmAuth - Credential check.
+ * @param {ProjectCommands} commands - Project commands quoted by the fix.
+ * @param {string} [subject] - Text after the registry name in the unverified warning (such as ` de <paquete>`).
+ * @returns {{ problem: ReleaseBlocker | null, warning: string | null }} Blocker when the credentials cannot publish,
+ *   otherwise a warning when they could not be verified or the first publication cannot be confirmed.
+ */
+export function classifyNpmAuth(npmAuth, commands, subject = "") {
+  const problem = describeNpmAuthProblem(npmAuth, commands);
+  if (problem) {
+    return { problem, warning: null };
+  }
+  if (npmAuth.status === NPM_AUTH_STATUS.unknown) {
+    return { problem: null, warning: `No se pudieron verificar las credenciales de ${npmAuth.registryLabel ?? "npm"}${subject}: ${npmAuth.reason ?? "motivo desconocido"}. Se intenta publicar igual.` };
+  }
+  return { problem: null, warning: describeNpmFirstPublicationWarning(npmAuth) };
 }
 
 /**
@@ -297,12 +428,7 @@ function findBlockers(state, ignoreLocalChanges, commands) {
   const blockers = [];
 
   if (state.currentBranch && state.currentBranch !== MAIN_BRANCH) {
-    blockers.push({
-      title: `Estás en ${state.currentBranch}: los releases salen solo desde ${MAIN_BRANCH}`,
-      details: state.branch
-        ? describeFeatureBranchGaps(state.branch, state.pullRequest ?? null, state.githubError ?? null, commands)
-        : [`Hacé git switch ${MAIN_BRANCH} y volvé a correr ${commands.createVersion}.`],
-    });
+    blockers.push(featureBranchBlocker({ ...state, currentBranch: state.currentBranch }, commands));
   }
 
   // CHANGELOG.md may be uncommitted only for a new release, whose bump commits it: resuming an
@@ -310,22 +436,11 @@ function findBlockers(state, ignoreLocalChanges, commands) {
   const blockingChanges = state.workingTreeChanges.filter((line) => !isChangelogChange(line));
 
   if (blockingChanges.length > 0 && !ignoreLocalChanges) {
-    blockers.push({
-      title: `Hay ${blockingChanges.length} archivo(s) sin commitear`,
-      details: [
-        ...blockingChanges.slice(0, MAX_LISTED_ITEMS),
-        `Commitealos en una rama (o git stash) y volvé a correr ${commands.createVersion}, o corré ${commands.createVersion} --${CREATE_VERSION_FLAG.ignoreLocalChanges} para apartarlos durante el release.`,
-      ],
-    });
+    blockers.push(uncommittedFilesBlocker(blockingChanges, commands));
   }
 
-  if (state.npm && state.npm.status !== NPM_LOOKUP_STATUS.ok) {
-    blockers.push(
-      describeRejectedNpmCredential(state.npmAuth, commands) ?? {
-        title: `No se pudo consultar ${state.npm.registryLabel ?? "npm"}`,
-        details: [`${state.npm.reason ?? "El registry no respondió"}.`, `Revisá la conexión y volvé a correr ${commands.createVersion}.`],
-      }
-    );
+  if (state.npm && hasFailedNpmLookup(state)) {
+    blockers.push(failedNpmLookupBlocker(state.npm, state.npmAuth, commands, { defaultReason: "El registry no respondió" }));
   }
 
   return blockers;
@@ -399,7 +514,7 @@ function refuseToSetAsideCodeChanges(plan, state, ignoreLocalChanges, commands) 
     return plan;
   }
 
-  return { mode: RELEASE_MODE.blocked, steps: [], blockers: [codeChangesToSetAsideBlocker(codeChanges, commands)], warnings: [], pendingVersion: null };
+  return blockedPlan([codeChangesToSetAsideBlocker(codeChanges, commands)]);
 }
 
 /**
@@ -442,21 +557,15 @@ function refuseToSetAsideCiWorkerChanges(plan, state, ignoreLocalChanges, ciWork
     return plan;
   }
 
-  return {
-    mode: RELEASE_MODE.blocked,
-    steps: [],
-    blockers: [
-      {
-        title: `--${CREATE_VERSION_FLAG.ignoreLocalChanges} no aparta cambios en archivos que definen el worker de CI`,
-        details: [
-          ...workerChanges.slice(0, MAX_LISTED_ITEMS),
-          `La preparación los leería del working tree y el worker usaría los commiteados en el tag: commitealos en un commit propio o guardalos con git stash, y volvé a correr ${commands.createVersion}. No se creó la versión ni el tag.`,
-        ],
-      },
-    ],
-    warnings: [],
-    pendingVersion: null,
-  };
+  return blockedPlan([
+    {
+      title: `--${CREATE_VERSION_FLAG.ignoreLocalChanges} no aparta cambios en archivos que definen el worker de CI`,
+      details: [
+        ...workerChanges.slice(0, MAX_LISTED_ITEMS),
+        `La preparación los leería del working tree y el worker usaría los commiteados en el tag: commitealos en un commit propio o guardalos con git stash, y volvé a correr ${commands.createVersion}. No se creó la versión ni el tag.`,
+      ],
+    },
+  ]);
 }
 
 /**
@@ -494,27 +603,12 @@ function warnAboutSetAsideChanges(plan, state, ignoreLocalChanges) {
  * @returns {ReleasePlan} The same plan, or a blocked plan when `CHANGELOG.md` is dirty.
  */
 function requireCleanChangelog(plan, state, commands) {
-  const changelogChanges = state.workingTreeChanges.filter(isChangelogChange);
-
-  if (plan.mode !== RELEASE_MODE.resume || changelogChanges.length === 0) {
-    return plan;
-  }
-
-  return {
-    mode: RELEASE_MODE.blocked,
-    steps: [],
-    blockers: [
-      {
-        title: `${CHANGELOG_FILE} tiene cambios sin commitear y el release ${plan.pendingVersion} ya está commiteado`,
-        details: [
-          ...changelogChanges,
-          `Retomar un release usa el ${CHANGELOG_FILE} de su commit: descartá los cambios (git restore ${CHANGELOG_FILE}) o guardalos (git stash) y volvé a correr ${commands.createVersion}.`,
-        ],
-      },
-    ],
-    warnings: [],
-    pendingVersion: null,
-  };
+  return requireCommittedResumeFiles(
+    plan,
+    state.workingTreeChanges.filter(isChangelogChange),
+    `${CHANGELOG_FILE} tiene cambios sin commitear y el release ${plan.pendingVersion} ya está commiteado`,
+    `Retomar un release usa el ${CHANGELOG_FILE} de su commit: descartá los cambios (git restore ${CHANGELOG_FILE}) o guardalos (git stash) y volvé a correr ${commands.createVersion}.`
+  );
 }
 
 /**
@@ -528,27 +622,29 @@ function requireCleanChangelog(plan, state, commands) {
  * @returns {ReleasePlan} The same plan, or a blocked plan when the configuration file is dirty.
  */
 function requireCommittedConfig(plan, state, commands) {
-  const configChanges = state.workingTreeChanges.filter((line) => listPorcelainPaths(line).some((changedPath) => CREATE_VERSION_CONFIG_FILES.includes(changedPath)));
+  return requireCommittedResumeFiles(
+    plan,
+    state.workingTreeChanges.filter((line) => listPorcelainPaths(line).some((changedPath) => CREATE_VERSION_CONFIG_FILES.includes(changedPath))),
+    `La configuración tiene cambios sin commitear y el release ${plan.pendingVersion} ya está commiteado`,
+    `Retomar un release usa la configuración de su commit (versionFiles incluido): descartá los cambios (git restore) o guardalos (git stash) y volvé a correr ${commands.createVersion}.`
+  );
+}
 
-  if (plan.mode !== RELEASE_MODE.resume || configChanges.length === 0) {
+/**
+ * Blocks a resume plan while files it reads from the release commit have uncommitted changes.
+ *
+ * @param {ReleasePlan} plan - Resume plan (from `main` or from a detached release tag).
+ * @param {string[]} changes - `git status --porcelain` lines of those files.
+ * @param {string} title - Spanish blocker title.
+ * @param {string} fix - Spanish instruction listed after the changes.
+ * @returns {ReleasePlan} The same plan, or a blocked plan when any of those files is dirty.
+ */
+function requireCommittedResumeFiles(plan, changes, title, fix) {
+  if (plan.mode !== RELEASE_MODE.resume || changes.length === 0) {
     return plan;
   }
 
-  return {
-    mode: RELEASE_MODE.blocked,
-    steps: [],
-    blockers: [
-      {
-        title: `La configuración tiene cambios sin commitear y el release ${plan.pendingVersion} ya está commiteado`,
-        details: [
-          ...configChanges,
-          `Retomar un release usa la configuración de su commit (versionFiles incluido): descartá los cambios (git restore) o guardalos (git stash) y volvé a correr ${commands.createVersion}.`,
-        ],
-      },
-    ],
-    warnings: [],
-    pendingVersion: null,
-  };
+  return blockedPlan([{ title, details: [...changes, fix] }]);
 }
 
 /**
@@ -592,7 +688,7 @@ function planResume(state, capabilities) {
   const foreignCommits = main.aheadCommits.filter((commit) => !isReleaseCommitSubject(commit.subject));
 
   if (foreignCommits.length > 0) {
-    return { mode: RELEASE_MODE.blocked, steps: [], blockers: [foreignCommitsBlocker(foreignCommits)], warnings: [], pendingVersion: null };
+    return blockedPlan([foreignCommitsBlocker(foreignCommits)]);
   }
 
   const needsPublish = capabilities.publish && (npm !== null ? pendingPublish : pendingPush);
@@ -697,19 +793,13 @@ function planDetachedResume(version, capabilities, state) {
   const tag = toReleaseTag(version);
 
   if (!capabilities.publish) {
-    return {
-      mode: RELEASE_MODE.blocked,
-      steps: [],
-      blockers: [{ title: `${tag} no está en ${state.npm?.registryLabel ?? "npm"}, pero este proyecto no configura publish`, details: ["Agregá publish en beez-rp.config.js o publicalo a mano."] }],
-      warnings: [],
-      pendingVersion: null,
-    };
+    return blockedPlan([{ title: `${tag} no está en ${state.npm?.registryLabel ?? "npm"}, pero este proyecto no configura publish`, details: ["Agregá publish en beez-rp.config.js o publicalo a mano."] }]);
   }
 
   const blockers = findDetachedReleaseBlockers(version, state, capabilities.commands ?? DEFAULT_PROJECT_COMMANDS);
 
   if (blockers.length > 0) {
-    return { mode: RELEASE_MODE.blocked, steps: [], blockers, warnings: [], pendingVersion: null };
+    return blockedPlan(blockers);
   }
 
   /** @type {ReleasePlanStep[]} */
@@ -813,7 +903,7 @@ function checkUnpublishedBeforeResume(resume, state, skipUnpublished, commands) 
 
   return skipUnpublished
     ? { ...resume, warnings: [...resume.warnings, skippedReleaseWarning(unpublished)] }
-    : { mode: RELEASE_MODE.blocked, steps: [], blockers: [unpublishedReleaseBlocker(unpublished, commands)], warnings: [], pendingVersion: null };
+    : blockedPlan([unpublishedReleaseBlocker(unpublished, commands)]);
 }
 
 /**
@@ -830,18 +920,13 @@ function applyNpmAuth(plan, npmAuth, commands) {
     return plan;
   }
 
-  const problem = describeNpmAuthProblem(npmAuth, commands);
+  const { problem, warning } = classifyNpmAuth(npmAuth, commands);
 
   if (problem) {
-    return { mode: RELEASE_MODE.blocked, steps: [], blockers: [problem], warnings: [], pendingVersion: null };
+    return blockedPlan([problem]);
   }
 
-  if (npmAuth.status === NPM_AUTH_STATUS.unknown) {
-    return { ...plan, warnings: [...plan.warnings, `No se pudieron verificar las credenciales de ${npmAuth.registryLabel ?? "npm"}: ${npmAuth.reason ?? "motivo desconocido"}. Se intenta publicar igual.`] };
-  }
-
-  const firstPublicationWarning = describeNpmFirstPublicationWarning(npmAuth);
-  return firstPublicationWarning ? { ...plan, warnings: [...plan.warnings, firstPublicationWarning] } : plan;
+  return warning ? { ...plan, warnings: [...plan.warnings, warning] } : plan;
 }
 
 /**
@@ -890,7 +975,7 @@ function planRelease(state, capabilities, { skipUnpublished = false, ignoreLocal
   const blockers = findBlockers(state, ignoreLocalChanges, commands);
 
   if (blockers.length > 0) {
-    return { mode: RELEASE_MODE.blocked, steps: [], blockers, warnings: [], pendingVersion: null };
+    return blockedPlan(blockers);
   }
 
   const detachedVersion = findDetachedReleaseVersion(state);
@@ -908,13 +993,13 @@ function planRelease(state, capabilities, { skipUnpublished = false, ignoreLocal
   }
 
   if (state.main.aheadCommits.length > 0) {
-    return { mode: RELEASE_MODE.blocked, steps: [], blockers: [foreignCommitsBlocker(state.main.aheadCommits)], warnings: [], pendingVersion: null };
+    return blockedPlan([foreignCommitsBlocker(state.main.aheadCommits)]);
   }
 
   const unpublished = findUnpublishedLastRelease(state);
 
   if (unpublished && !skipUnpublished) {
-    return { mode: RELEASE_MODE.blocked, steps: [], blockers: [unpublishedReleaseBlocker(unpublished, commands)], warnings: [], pendingVersion: null };
+    return blockedPlan([unpublishedReleaseBlocker(unpublished, commands)]);
   }
 
   if (state.unreleasedCommits.length === 0) {
@@ -929,30 +1014,16 @@ function planRelease(state, capabilities, { skipUnpublished = false, ignoreLocal
   // The rest of the plan depends on the code and configuration of the updated main, so the run
   // stops after syncing and the next one diagnoses again.
   if (state.main.behindCount > 0) {
-    steps.push({
-      id: RELEASE_STEP.syncMain,
-      title: `Actualizar ${MAIN_BRANCH} desde origin`,
-      detail: `${state.main.behindCount} commit(s) nuevos. Después hay que volver a correr ${commands.createVersion}, que diagnostica con el código nuevo.`,
-    });
+    steps.push(syncMainPlanStep(state.main.behindCount, commands));
     return { mode: RELEASE_MODE.newRelease, steps, blockers: [], warnings, pendingVersion: null };
   }
 
   if (capabilities.checksMissing) {
-    return { mode: RELEASE_MODE.blocked, steps: [], blockers: [missingChecksBlocker(commands)], warnings: [], pendingVersion: null };
+    return blockedPlan([missingChecksBlocker(commands)]);
   }
 
   if (state.changelog.updated !== true) {
-    return {
-      mode: RELEASE_MODE.blocked,
-      steps: [],
-      blockers: [{
-        code: CHANGELOG_UPDATE_REQUIRED_CODE,
-        title: state.changelog.reason ?? `${CHANGELOG_FILE} no fue actualizado desde el último release`,
-        details: [`Actualizá ${CHANGELOG_FILE} manualmente y volvé a correr ${commands.createVersion}; beez-rp no lo modifica.`],
-      }],
-      warnings,
-      pendingVersion: null,
-    };
+    return blockedPlan([changelogUpdateRequiredBlocker(state.changelog.reason, CHANGELOG_FILE, commands)], warnings);
   }
 
   steps.push({
@@ -961,15 +1032,7 @@ function planRelease(state, capabilities, { skipUnpublished = false, ignoreLocal
     detail: "Debe haber cambiado desde el último release; su contenido se conserva sin reescribirlo.",
   });
 
-  if (state.migrations?.status === MIGRATION_STATUS.pending) {
-    steps.push({
-      id: RELEASE_STEP.applyMigrations,
-      title: `Aplicar ${state.migrations.pending.length} migración(es) en la base de datos`,
-      detail: `Destino: ${state.migrations.target ?? "desconocido"} · se pide confirmación antes.`,
-    });
-  } else if (state.migrations?.status === MIGRATION_STATUS.unknown) {
-    warnings.push(`No se pudo verificar si hay migraciones pendientes: ${state.migrations.reason ?? "motivo desconocido"}.`);
-  }
+  addMigrationsPlanStep(state.migrations, steps, warnings);
 
   if (capabilities.checks) {
     steps.push({ id: RELEASE_STEP.runChecks, title: "Validar el proyecto", detail: "Corre los checks configurados antes de tocar la versión." });

@@ -83,7 +83,7 @@ import {
 import { describeNpmPublishFailure, describeNpmTokenSource } from "./npm-auth.js";
 import { restoreLocalChanges, setAsideLocalChanges } from "./local-changes.js";
 import { describeProjectCommands, detectPackageManager } from "../package-manager.js";
-import { buildReleasePlan, buildReleaseUsage, listLocalChangesToSetAside, parseReleaseArguments } from "./plan.js";
+import { buildReleasePlan, buildReleaseUsage, hasFailedNpmLookup, listLocalChangesToSetAside, parseReleaseArguments } from "./plan.js";
 import { createGitReader, listCommits, runCommandLine, runInherited } from "./process.js";
 import { collectReleaseState, findLastRelease } from "./state.js";
 import { isRegistryProvider } from "./registry-config.js";
@@ -1358,17 +1358,6 @@ async function isTagCommitOnRemoteMain(reader, tag) {
   }
 
   return (await reader.tryGit(["merge-base", "--is-ancestor", `refs/tags/${tag}^{commit}`, remoteMainSha])) !== null;
-}
-
-/**
- * Tells whether the npm lookup of the diagnosis ran and failed, so the plan is blocked before it
- * could show a publication step.
- *
- * @param {{ npm: import("./npm.js").NpmLookup | null }} snapshot - Snapshot without credentials.
- * @returns {boolean} `true` when npm was queried and did not answer with the published versions.
- */
-function hasFailedNpmLookup(snapshot) {
-  return snapshot.npm !== null && snapshot.npm.status !== NPM_LOOKUP_STATUS.ok;
 }
 
 /**

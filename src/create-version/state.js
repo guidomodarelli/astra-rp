@@ -210,6 +210,56 @@ export async function lookupNpmOnPublishRegistry(lookupNpm, manifest, repository
 }
 
 /**
+ * Lists the published versions of a package for the diagnosis: on the selected registry, or on the
+ * registry the working-tree manifest publishes to when no registry is selected; shared with the monorepo mode.
+ *
+ * @param {import("./registry.js").RegistrySelection | undefined} registrySelection - Selected registry, if any.
+ * @param {Record<string, unknown>} manifest - Working-tree manifest of the package.
+ * @param {string} repositoryRoot - Repository root, where routing and credentials are read.
+ * @param {string} packageRoot - Package directory.
+ * @param {typeof lookupPublishedVersions} lookupNpm - npm lookup adapter.
+ * @returns {Promise<import("./npm.js").NpmLookup>} Published versions, or a failed lookup.
+ */
+export function lookupPackageVersions(registrySelection, manifest, repositoryRoot, packageRoot, lookupNpm) {
+  return registrySelection ? lookupRegistryVersions(registrySelection, manifest, repositoryRoot, packageRoot, lookupNpm) : lookupNpmOnPublishRegistry(lookupNpm, manifest, repositoryRoot);
+}
+
+/**
+ * Checks the credentials that would publish a package and confirms a first publication against its
+ * published versions (see {@link confirmFirstPublication}); shared with the monorepo mode.
+ *
+ * @param {import("./registry.js").RegistrySelection | undefined} registrySelection - Selected registry, if any.
+ * @param {Record<string, unknown>} manifest - Working-tree manifest of the package.
+ * @param {string} repositoryRoot - Repository root, where routing and credentials are read.
+ * @param {string} packageRoot - Package directory.
+ * @param {typeof checkNpmPublishAccess} checkNpmAccess - npm credential check adapter.
+ * @param {import("./npm.js").NpmLookup | null} npm - Published versions, or `null` when npm is not tracked.
+ * @returns {Promise<import("./npm.js").NpmAuthCheck>} Credential check.
+ */
+export async function checkPackageAccess(registrySelection, manifest, repositoryRoot, packageRoot, checkNpmAccess, npm) {
+  const npmAuth = registrySelection ? await checkRegistryAccess(registrySelection, manifest, repositoryRoot, packageRoot, checkNpmAccess) : await checkNpmAuthOnPublishRegistry(checkNpmAccess, manifest, repositoryRoot);
+  return confirmFirstPublication(npmAuth, npm);
+}
+
+/**
+ * Reads the changelog of a package for the diagnosis: its `[Unreleased]` block and whether it was
+ * updated since the last release; shared with the monorepo mode.
+ *
+ * @param {GitReader} reader - Git reader.
+ * @param {string} repositoryRoot - Repository root.
+ * @param {string} packageRoot - Package directory holding the changelog.
+ * @param {string} changelogPath - Changelog path relative to the root.
+ * @param {string | null} lastReleaseSha - Commit of the last release, or `null` without one.
+ * @returns {Promise<ReleaseSnapshot["changelog"]>} Changelog state.
+ */
+export async function readPackageChangelogState(reader, repositoryRoot, packageRoot, changelogPath, lastReleaseSha) {
+  return {
+    ...readChangelogState(packageRoot),
+    ...(await readChangelogUpdateState(reader, repositoryRoot, changelogPath, lastReleaseSha)),
+  };
+}
+
+/**
  * Resolves the publish registry without throwing.
  *
  * @param {Record<string, unknown>} manifest - Working-tree `package.json`.
@@ -371,7 +421,7 @@ export async function collectReleaseState({
 
   if (trackNpm) {
     onProgress("Consultando npm");
-    npm = registrySelection ? await lookupRegistryVersions(registrySelection, manifest, repositoryRoot, repositoryRoot, lookupNpm) : await lookupNpmOnPublishRegistry(lookupNpm, manifest, repositoryRoot);
+    npm = await lookupPackageVersions(registrySelection, manifest, repositoryRoot, repositoryRoot, lookupNpm);
   }
 
   if (checkMigrations) {
@@ -400,15 +450,12 @@ export async function collectReleaseState({
     npm,
     npmAuth: null,
     migrations,
-    changelog: {
-      ...readChangelogState(repositoryRoot),
-      ...(await readChangelogUpdateState(reader, repositoryRoot, CHANGELOG_FILE, lastRelease?.sha ?? null)),
-    },
+    changelog: await readPackageChangelogState(reader, repositoryRoot, repositoryRoot, CHANGELOG_FILE, lastRelease?.sha ?? null),
   };
 
   if (checkNpmAuth?.(snapshot)) {
     onProgress("Verificando las credenciales de npm");
-    snapshot.npmAuth = confirmFirstPublication(registrySelection ? await checkRegistryAccess(registrySelection, manifest, repositoryRoot, repositoryRoot, checkNpmAccess) : await checkNpmAuthOnPublishRegistry(checkNpmAccess, manifest, repositoryRoot), npm);
+    snapshot.npmAuth = await checkPackageAccess(registrySelection, manifest, repositoryRoot, repositoryRoot, checkNpmAccess, npm);
   }
 
   return snapshot;

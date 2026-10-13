@@ -16,17 +16,14 @@ import path from "node:path";
 import { RELEASE_REMOTE, REMOTE_MAIN_REF } from "../constants/create-version.js";
 import { UNRELEASED_PLACEHOLDER_VERSION } from "../constants/versions.js";
 import { checkNpmPublishAccess, lookupPublishedVersions } from "../create-version/npm.js";
-import { readChangelogUpdateState } from "../create-version/changelog.js";
 import { readJsonManifest } from "../create-version/json.js";
-import { checkRegistryAccess, lookupRegistryVersions } from "../create-version/registry.js";
 import { createGitReader, findVersionChangeCommit, listCommits, readPackageVersionAt } from "../create-version/process.js";
 import {
-  checkNpmAuthOnPublishRegistry,
-  confirmFirstPublication,
-  lookupNpmOnPublishRegistry,
+  checkPackageAccess,
+  lookupPackageVersions,
   lookupPullRequest,
-  readChangelogState,
   readMigrations,
+  readPackageChangelogState,
   readRepositorySnapshot,
 } from "../create-version/state.js";
 import { parseMonorepoReleaseSubject } from "./release-commit.js";
@@ -176,7 +173,7 @@ export async function collectMonorepoState({
     const range = lastRelease ? `${lastRelease.sha}..${REMOTE_MAIN_REF}` : REMOTE_MAIN_REF;
     const unreleasedCommits = repository.remoteMainExists ? await listCommits(reader, range, unit.changePaths) : [];
     const packageRoot = path.join(repositoryRoot, unit.directory);
-    const npm = trackNpm ? registrySelection ? await lookupRegistryVersions(registrySelection, manifest, repositoryRoot, packageRoot, lookupNpm) : await lookupNpmOnPublishRegistry(lookupNpm, manifest, repositoryRoot) : null;
+    const npm = trackNpm ? await lookupPackageVersions(registrySelection, manifest, repositoryRoot, packageRoot, lookupNpm) : null;
 
     packages.push({
       unit,
@@ -184,10 +181,7 @@ export async function collectMonorepoState({
       releasedVersion,
       lastRelease,
       unreleasedCommits,
-      changelog: {
-        ...readChangelogState(path.join(repositoryRoot, unit.directory)),
-        ...(await readChangelogUpdateState(reader, repositoryRoot, unit.changelogPath, lastRelease?.sha ?? null)),
-      },
+      changelog: await readPackageChangelogState(reader, repositoryRoot, packageRoot, unit.changelogPath, lastRelease?.sha ?? null),
       npm,
       npmAuth: null,
     });
@@ -204,10 +198,7 @@ export async function collectMonorepoState({
   for (const packageSnapshot of snapshot.packages) {
     if (packagesToCheck.has(packageSnapshot.unit.name)) {
       onProgress(`Verificando las credenciales de npm de ${packageSnapshot.unit.name}`);
-      packageSnapshot.npmAuth = confirmFirstPublication(
-        registrySelection ? await checkRegistryAccess(registrySelection, packageSnapshot.manifest, repositoryRoot, path.join(repositoryRoot, packageSnapshot.unit.directory), checkNpmAccess) : await checkNpmAuthOnPublishRegistry(checkNpmAccess, packageSnapshot.manifest, repositoryRoot),
-        packageSnapshot.npm
-      );
+      packageSnapshot.npmAuth = await checkPackageAccess(registrySelection, packageSnapshot.manifest, repositoryRoot, path.join(repositoryRoot, packageSnapshot.unit.directory), checkNpmAccess, packageSnapshot.npm);
     }
   }
 

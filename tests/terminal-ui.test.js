@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { stripVTControlCharacters } from "node:util";
 
-import { countTerminalRows, formatDuration, moveSelection, renderBox, renderRow, resolveNumberKey, visibleWidth } from "../src/terminal-ui.js";
+import { countTerminalRows, formatDuration, moveSelection, renderBox, renderRow, renderStepHeader, resolveNumberKey, visibleWidth } from "../src/terminal-ui.js";
 
 describe("terminal boxes", () => {
   it("should wrap long lines by words, never truncate them, and keep every line aligned", () => {
@@ -83,5 +83,26 @@ describe("durations", () => {
   it("should format seconds under a minute and minutes with padded seconds", () => {
     expect(formatDuration(3200)).toBe("3.2 s");
     expect(formatDuration(245_000)).toBe("4 min 05 s");
+  });
+});
+
+describe("step header", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("should paint every rule segment of the step header with the step accent color", () => {
+    // Arrange
+    vi.stubEnv("NO_COLOR", "");
+    vi.stubEnv("FORCE_COLOR", "1");
+    const magentaOpen = "\u001b[35m";
+    const colorReset = "\u001b[39m";
+    // Act
+    const header = renderStepHeader(4, 4, "Enviar el release a GitHub Actions");
+    // Assert
+    expect(stripVTControlCharacters(header)).toContain("━━ PASO 4/4 ━ Enviar el release a GitHub Actions ━");
+    const [unpaintedPrefix, ...magentaChunks] = header.split(magentaOpen);
+    const textOutsideMagenta = [unpaintedPrefix, ...magentaChunks.map((chunk) => chunk.slice(chunk.indexOf(colorReset) + colorReset.length))].join("");
+    expect(textOutsideMagenta).not.toContain("━");
   });
 });

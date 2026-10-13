@@ -131,6 +131,24 @@ export const CI_VERCEL_CONFIG_FILE = "vercel.json";
 /** Provider handled by the generated application deployment steps. */
 export const CI_VERCEL_DEPLOYMENT = "vercel";
 
+/** Generated step that lets dependency installs (including `vercel build`) read GitHub Packages. */
+export const CI_GITHUB_PACKAGES_AUTHENTICATION_STEP = "Autenticar GitHub Packages";
+
+/** Step-scoped variable carrying the built-in Actions token into the GitHub Packages authentication step. */
+export const CI_GITHUB_PACKAGES_TOKEN_VARIABLE = "GITHUB_PACKAGES_TOKEN";
+
+/**
+ * User npm config key bound to GitHub Packages. The user config (`~/.npmrc`) is read by npm, pnpm
+ * (which ignores credentials in the repository `.npmrc`), Yarn 1 and Bun alike.
+ */
+export const CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY = "//npm.pkg.github.com/:_authToken";
+
+/** Project `.npmrc` line selecting a registry, default (`registry=`) or scoped (`@scope:registry=`); captures the URL. */
+export const NPM_CONFIG_REGISTRY_LINE_PATTERN = /^(?:@[^\s:=]+:)?registry\s*=\s*(\S+)\s*$/u;
+
+/** Prefixes of `.npmrc` comment lines. */
+export const NPM_CONFIG_COMMENT_PREFIXES = Object.freeze(["#", ";"]);
+
 /** Vercel CLI version used by generated workflows. */
 export const CI_VERCEL_CLI_VERSION = "62.2.0";
 

@@ -18,9 +18,10 @@ import * as githubWorkflow from "../../src/create-version/github-workflow.js";
 import { parseReleaseArguments } from "../../src/create-version/plan.js";
 import { runCreateVersion } from "../../src/create-version/run.js";
 import { describeCiEnvironment, describeCiNodeVersion, prepareCiSetupFiles, renderCiReleaseWorkflow } from "../../src/create-version/ci-setup.js";
-import { GIT_FIXTURE_TEST_TIMEOUT_MS, cleanupTemporaryDirectories, commandEnvironment, commitFixtureRepository, createTemporaryDirectory, flattenOutput, runCliAsync, runGit } from "./support/cli-harness.js";
+import { GIT_FIXTURE_TEST_TIMEOUT_MS, cleanupTemporaryDirectories, commandEnvironment, commitFixtureRepository, createTemporaryDirectory, flattenOutput, resolveBashExecutable, runCliAsync, runGit } from "./support/cli-harness.js";
 import { FIXTURE_GITHUB_REPOSITORY, FIXTURE_GITHUB_TOKEN, startFixtureGithubActionsApi } from "./support/fixture-github-actions-api.js";
 import { startFixtureNpmRegistry } from "./support/fixture-npm-registry.js";
+import { CI_GITHUB_PACKAGES_AUTHENTICATION_STEP } from "../../src/constants/ci-release.js";
 
 /** Project configuration whose custom publisher (logged like `prepare`) is followed by a Vercel deployment. */
 /**
@@ -270,6 +271,36 @@ describe("release location and configuration", () => {
     expect(workflow.split("\n").includes("  actions: read")).toBe(readsHistory);
     expect(jobEnvironment.includes("GITHUB_TOKEN")).toBe(readsHistory);
   });
+
+  it.each([
+    { source: "a scoped GitHub Packages registry in .npmrc", npmrc: "# private UI kit\n@fixture-scope:registry=https://npm.pkg.github.com\n", secrets: [], authenticates: true },
+    { source: "a default GitHub Packages registry in .npmrc", npmrc: "registry = https://npm.pkg.github.com/\n", secrets: [], authenticates: true },
+    { source: "a declared GITHUB_TOKEN secret", npmrc: null, secrets: ["GITHUB_TOKEN"], authenticates: true },
+    { source: "only public or commented registries in .npmrc", npmrc: "@fixture-scope:registry=https://registry.npmjs.org/\n; registry=https://npm.pkg.github.com\n", secrets: [], authenticates: false },
+  ])("should authenticate dependency installs against GitHub Packages when the project uses $source: $authenticates", async ({ npmrc, secrets, authenticates }) => {
+    // Arrange
+    const root = createTemporaryDirectory("beez-rp-ci-github-packages-");
+    const runnerHome = createTemporaryDirectory("beez-rp-ci-runner-home-");
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
+    if (npmrc !== null) writeFileSync(path.join(root, ".npmrc"), npmrc);
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", deployment: "vercel", secrets } });
+    commitFixtureRepository(root);
+    // Act
+    const workflow = await renderCiReleaseWorkflow(root, config);
+    const { stepEnvironments } = readWorkflowEnvironmentScopes(workflow);
+    const stepNames = [...stepEnvironments.keys()];
+    const authenticationStep = workflow.split("\n      - name: ").find((step) => step.startsWith(CI_GITHUB_PACKAGES_AUTHENTICATION_STEP));
+    const authenticationCommand = /\n {8}run: (.+)/u.exec(authenticationStep ?? "")?.[1];
+    // Assert
+    expect(workflow.split("\n").includes("  packages: read")).toBe(authenticates);
+    expect(stepNames.includes(CI_GITHUB_PACKAGES_AUTHENTICATION_STEP)).toBe(authenticates);
+    if (!authenticates) return;
+    expect(stepNames.indexOf(CI_GITHUB_PACKAGES_AUTHENTICATION_STEP)).toBeLessThan(stepNames.indexOf("Instalar dependencias"));
+    expect(stepEnvironments.get(CI_GITHUB_PACKAGES_AUTHENTICATION_STEP)).toEqual(["GITHUB_PACKAGES_TOKEN"]);
+    const executed = spawnSync(resolveBashExecutable(), ["-c", authenticationCommand ?? "exit 1"], { encoding: "utf8", env: commandEnvironment({ HOME: runnerHome, GITHUB_PACKAGES_TOKEN: "fixture-actions-token" }) });
+    expect(executed.status).toBe(0);
+    expect(readFileSync(path.join(runnerHome, ".npmrc"), "utf8")).toBe("//npm.pkg.github.com/:_authToken=fixture-actions-token\n");
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it.each(["--ci-release", "--retry-ci"])("should reject invalid tags at the CLI boundary when using %s", (flag) => {
     // Arrange and Act and Assert

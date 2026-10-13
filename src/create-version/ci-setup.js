@@ -12,15 +12,16 @@ import {
   CI_RELEASE_METADATA_FILE, CI_VERCEL_CLI_VERSION, CI_VERCEL_DEPLOYMENT, CI_VERCEL_SECRETS,
   CI_VERCEL_CONFIG_FILE, CI_VERCEL_GATE_FILE, CI_VERCEL_GATE_TEMPLATE, CI_VERCEL_IGNORE_PLACEHOLDER, CI_VERCEL_WORKER_WRITTEN_PATHS,
   CI_DENO_JSR_CLIENT, CI_DENO_VERSION,
+  CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY, CI_GITHUB_PACKAGES_TOKEN_VARIABLE, NPM_CONFIG_COMMENT_PREFIXES, NPM_CONFIG_REGISTRY_LINE_PATTERN,
 } from "../constants/ci-release.js";
-import { CREATE_VERSION_CONFIG_FILES, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
+import { CREATE_VERSION_CONFIG_FILES, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
 import { PACKAGE_MANAGER } from "../constants/package-manager.js";
 import { requiresCiPublicationHistory } from "./ci-publication-history.js";
 import { readCommittedRegularFile } from "./committed-tree.js";
 import { renderCiReleaseIdentityStep } from "./ci-release-identity-step.js";
 import { ReleaseStepError } from "./errors.js";
 import { runCaptured } from "./process.js";
-import { GITHUB_REGISTRY_TOKEN_VARIABLE, JSR_REGISTRY_PROVIDER, NPM_OIDC_MINIMUM_VERSION, NPM_REGISTRY_PROVIDER, OIDC_AUTHENTICATION, TOKEN_AUTHENTICATION } from "../constants/registry.js";
+import { GITHUB_PACKAGES_REGISTRY_URL, GITHUB_REGISTRY_TOKEN_VARIABLE, JSR_REGISTRY_PROVIDER, NPM_OIDC_MINIMUM_VERSION, NPM_REGISTRY_PROVIDER, OIDC_AUTHENTICATION, TOKEN_AUTHENTICATION } from "../constants/registry.js";
 import { GIT_LITERAL_PATHSPEC_PREFIX } from "../constants/version-files.js";
 
 /**
@@ -101,6 +102,37 @@ export function requiresCiNpmOidcClient(config, pinnedVersion = null) {
 }
 
 /**
+ * Detects a project `.npmrc` that resolves the default registry or a scope from GitHub Packages,
+ * which the worker cannot install from anonymously.
+ * @param {string} repositoryRoot - Project checkout.
+ * @returns {boolean} Whether an active registry line points at GitHub Packages.
+ */
+function usesGithubPackagesRegistry(repositoryRoot) {
+  const npmConfigPath = path.join(repositoryRoot, PROJECT_NPM_CONFIG_FILE);
+  if (!existsSync(npmConfigPath)) return false;
+  const githubPackagesHost = new URL(GITHUB_PACKAGES_REGISTRY_URL).host;
+  return readFileSync(npmConfigPath, "utf8").split(/\r?\n/u).some((line) => {
+    const trimmedLine = line.trim();
+    if (NPM_CONFIG_COMMENT_PREFIXES.some((prefix) => trimmedLine.startsWith(prefix))) return false;
+    const registryUrl = NPM_CONFIG_REGISTRY_LINE_PATTERN.exec(trimmedLine)?.[1];
+    return registryUrl !== undefined && URL.canParse(registryUrl) && new URL(registryUrl).host === githubPackagesHost;
+  });
+}
+
+/**
+ * Renders the step that stores the built-in Actions token in the runner's user npm config, so the
+ * dependency install and the later `vercel build` install can read GitHub Packages. pnpm ignores
+ * credentials in the repository `.npmrc`, so the job-level `GITHUB_TOKEN` alone is not enough.
+ * @returns {string} Workflow step lines.
+ */
+function renderGithubPackagesAuthenticationStep() {
+  return [
+    `      - name: ${CI_GITHUB_PACKAGES_AUTHENTICATION_STEP}`, "        env:", `          ${CI_GITHUB_PACKAGES_TOKEN_VARIABLE}: \${{ github.token }}`,
+    `        run: printf '${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}=%s\\n' "$${CI_GITHUB_PACKAGES_TOKEN_VARIABLE}" >> "$HOME/.npmrc"`,
+  ].join("\n");
+}
+
+/**
  * Renders a workflow that installs the project's package manager and finishes a pinned release.
  * @param {string} repositoryRoot - Project checkout.
  * @param {ResolvedCreateVersionConfig} config - Release hooks and package manager.
@@ -130,6 +162,8 @@ export async function renderCiReleaseWorkflow(repositoryRoot, config) {
     packageSetup = [...(pinnedVersion ? ["      - name: Configurar npm", `        run: npm install --global npm@${pinnedVersion}`] : []), "      - name: Instalar dependencias", "        run: npm ci", ...npmOidcClientSetup].join("\n");
   }
   const environment = describeCiEnvironment(config);
+  const readsGithubPackages = environment.githubToken || usesGithubPackagesRegistry(repositoryRoot);
+  if (readsGithubPackages) packageSetup = `${renderGithubPackagesAuthenticationStep()}\n${packageSetup}`;
   const readsPublicationHistory = requiresCiPublicationHistory(config);
   const bindings = [
     ...environment.secrets.filter((name) => !environment.deploymentSecrets.includes(name)).map((name) => `      ${name}: \${{ secrets.${name} }}`),
@@ -140,7 +174,7 @@ export async function renderCiReleaseWorkflow(repositoryRoot, config) {
   const permissions = [
     ...(readsPublicationHistory ? ["  actions: read"] : []),
     ...(config.publication.authentication === OIDC_AUTHENTICATION ? ["  id-token: write"] : []),
-    ...(environment.githubToken ? [`  packages: ${environment.githubTokenWrite ? "write" : "read"}`] : []),
+    ...(readsGithubPackages ? [`  packages: ${environment.githubTokenWrite ? "write" : "read"}`] : []),
   ].join("\n");
   const releaseCommand = `${config.commands.createVersion}${manager === "npm" ? " --" : ""} --ci-release "$RELEASE_TAG"`;
   const vercelEnvironment = CI_VERCEL_SECRETS.map((name) => `          ${name}: \${{ secrets.${name} }}`).join("\n");

@@ -10,6 +10,10 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 - Elección entre releases locales y en GitHub Actions: CI queda seleccionado por defecto cuando está configurado. Sin configuración, el comando ofrece crear el workflow y agregar sus ajustes al repo. El bump, el CHANGELOG manual y el push se preparan en local; los checks y la publicación continúan en CI sobre el mismo tag, con comprobación de credenciales, recuperación sin otro bump y configuración del despliegue de Vercel después de los checks.
 
+### Fixed
+
+- El workflow de release generado instala dependencias privadas de GitHub Packages: cuando el `.npmrc` del proyecto resuelve un scope o el registry por defecto desde `npm.pkg.github.com`, o `ci.secrets` declara `GITHUB_TOKEN`, agrega `packages: read` y un paso que guarda el token del workflow en el `~/.npmrc` del runner antes de instalar, también para el build de Vercel. Antes la instalación fallaba con 401 y producción nunca se desplegaba; con pnpm, que ignora las credenciales del `.npmrc` del repo, ni siquiera alcanzaba con declarar `GITHUB_TOKEN`.
+
 ## [0.6.1] - 2026-10-03
 
 - 121502f agrega directorio a la ejecución de pruebas

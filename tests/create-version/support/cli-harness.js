@@ -39,6 +39,18 @@ const CLI_PATH = fileURLToPath(new URL("../../../bin/beez-rp.js", import.meta.ur
 /** Directories created by the current test, removed by {@link cleanupTemporaryDirectories}. */
 export const temporaryDirectories = /** @type {string[]} */ ([]);
 
+/** Commands started by {@link spawnTrackedCommand} that have not closed yet, such as one a timed-out test left behind. */
+const runningCommands = new Set(/** @type {import("node:child_process").ChildProcess[]} */ ([]));
+
+/** Unix runs each tracked command as the leader of its own process group, so the whole group can be signaled. */
+const IS_WINDOWS = process.platform === "win32";
+
+/**
+ * Removal retries while Windows releases files a stopped command still held open (EPERM, EBUSY).
+ * `rmSync` waits `retryDelay` times the attempt number between tries.
+ */
+const TEMPORARY_DIRECTORY_REMOVAL = { maxRetries: 10, retryDelay: 100 };
+
 /**
  * @param {string} prefix - Directory name prefix.
  * @returns {string} New temporary directory, removed after the test.
@@ -49,10 +61,38 @@ export function createTemporaryDirectory(prefix) {
   return directory;
 }
 
-/** Removes every directory {@link createTemporaryDirectory} created. */
+/**
+ * Terminates a command together with every process it started, such as the npm or Git commands the CLI awaits.
+ * `taskkill /T` returns once the whole tree has ended; on Unix the command leads its own process group.
+ *
+ * @param {import("node:child_process").ChildProcess} command - Command started by {@link spawnTrackedCommand}.
+ */
+function terminateCommandTree(command) {
+  if (command.pid === undefined) return;
+  if (IS_WINDOWS) {
+    // A tree that already ended makes taskkill fail, which leaves nothing to clean.
+    spawnSync("taskkill", ["/pid", String(command.pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
+    return;
+  }
+  try {
+    process.kill(-command.pid, "SIGKILL");
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code !== "ESRCH") throw error;
+  }
+}
+
+/**
+ * Stops commands still running, with every process they started, and removes every directory
+ * {@link createTemporaryDirectory} created. A test that times out leaves its command running inside those
+ * directories: Windows refuses to delete them and orphaned processes would interfere with later tests.
+ */
 export function cleanupTemporaryDirectories() {
+  for (const command of runningCommands) {
+    terminateCommandTree(command);
+  }
+  runningCommands.clear();
   for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, ...TEMPORARY_DIRECTORY_REMOVAL });
   }
 }
 
@@ -160,10 +200,25 @@ export function runCli(repositoryRoot, commandArguments) {
  */
 export function runCliAsync(repositoryRoot, commandArguments, environmentOverrides = {}) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [CLI_PATH, "create-version", ...commandArguments], { cwd: repositoryRoot, env: commandEnvironment(environmentOverrides) });
+    const child = spawnTrackedCommand(process.execPath, [CLI_PATH, "create-version", ...commandArguments], { cwd: repositoryRoot, env: commandEnvironment(environmentOverrides) });
     let output = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk) => (output += chunk));
-    child.stderr.setEncoding("utf8").on("data", (chunk) => (output += chunk));
+    child.stdout?.setEncoding("utf8").on("data", (chunk) => (output += chunk));
+    child.stderr?.setEncoding("utf8").on("data", (chunk) => (output += chunk));
     child.on("close", (status) => resolve({ status, output }));
   });
+}
+
+/**
+ * Starts a command that {@link cleanupTemporaryDirectories} stops if it is still running when the test ends.
+ *
+ * @param {string} command - Executable.
+ * @param {string[]} commandArguments - Arguments.
+ * @param {import("node:child_process").SpawnOptions} options - Working directory and environment.
+ * @returns {import("node:child_process").ChildProcess} The started command.
+ */
+export function spawnTrackedCommand(command, commandArguments, options) {
+  const child = spawn(command, commandArguments, { ...options, detached: !IS_WINDOWS });
+  runningCommands.add(child);
+  child.on("close", () => runningCommands.delete(child));
+  return child;
 }

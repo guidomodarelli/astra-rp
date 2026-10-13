@@ -296,6 +296,8 @@ describe("release location and configuration", () => {
     { source: "a GitHub Packages registry replaced by a later public registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n@fixture-scope:registry=https://registry.npmjs.org/\n", secrets: [], authenticates: false, tokenBindings: [] },
     // npm nests keys under an INI [section], so they never configure the top-level registry or its credentials.
     { source: "GitHub Packages settings only inside an INI section", npmrc: "[fixture-section]\n@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=\n", secrets: [], authenticates: false, tokenBindings: [] },
+    // npm's INI parser only reads `[name]` at the very start of a line as a section, so an indented one is a plain key.
+    { source: "a GitHub Packages registry after an indented bracketed line", npmrc: "  [fixture]\n@private:registry=https://npm.pkg.github.com/\n", secrets: [], authenticates: true, tokenBindings: [] },
     // npm also ends a line at a lone carriage return, so the second CR-only line still sets the GitHub Packages token.
     { source: "a GitHub Packages token on a CR-only line", npmrc: "registry=https://registry.npmjs.org/\r//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\r", secrets: [], authenticates: true, tokenBindings: ["GITHUB_TOKEN"] },
   ])("should authenticate dependency installs against GitHub Packages when the project uses $source: $authenticates", async ({ npmrc, committed = true, secrets, authenticates, tokenBindings }) => {
@@ -387,6 +389,11 @@ describe("release location and configuration", () => {
     { source: "a GitHub Packages token expanding a reserved release input binding", npmrc: "//npm.pkg.github.com/:_authToken=${BEEZ_RP_RELEASE_VERSION}\n", message: /BEEZ_RP_RELEASE_VERSION.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding the runner's GITHUB_REPOSITORY default", npmrc: "//npm.pkg.github.com/:_authToken=${GITHUB_REPOSITORY}\n", message: /GITHUB_REPOSITORY.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding the runner's RUNNER_TEMP default", npmrc: "//npm.pkg.github.com/:_authToken=${RUNNER_TEMP}\n", message: /RUNNER_TEMP.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    // The runner sets ACTIONS_* (such as the OIDC request token) before every step, overriding a job-level binding.
+    { source: "a GitHub Packages token expanding the runner's ACTIONS_ID_TOKEN_REQUEST_TOKEN", npmrc: "//npm.pkg.github.com/:_authToken=${ACTIONS_ID_TOKEN_REQUEST_TOKEN}\n", message: /ACTIONS_ID_TOKEN_REQUEST_TOKEN.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    // Package managers read their own prefixed variables as configuration, so binding the token there would turn it into settings such as the registry.
+    { source: "a GitHub Packages token expanding NPM_CONFIG_REGISTRY", npmrc: "//npm.pkg.github.com/:_authToken=${NPM_CONFIG_REGISTRY}\n", message: /NPM_CONFIG_REGISTRY.*configura un package manager/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a GitHub Packages token expanding BUN_CONFIG_REGISTRY", npmrc: "//npm.pkg.github.com/:_authToken=${BUN_CONFIG_REGISTRY}\n", message: /BUN_CONFIG_REGISTRY.*configura un package manager/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding the runner's CI default", npmrc: "//npm.pkg.github.com/:_authToken=${CI}\n", message: /\$\{CI\}.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
     // Binding the token to a variable that locates the user npm config would break the step that writes ~/.npmrc.
     { source: "a GitHub Packages token expanding HOME", npmrc: "//npm.pkg.github.com/:_authToken=${HOME}\n", message: /\$\{HOME\}.*configuración de usuario de npm/u, hint: /\$\{GITHUB_TOKEN\}/u },
@@ -410,6 +417,8 @@ describe("release location and configuration", () => {
     // Policy D: an environment registry override outranks the committed .npmrc and cannot be proven to use https:.
     { source: "a GitHub Packages registry while ci.variables overrides the npm registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", variables: ["NPM_CONFIG_REGISTRY"], message: /NPM_CONFIG_REGISTRY.*registry/u, hint: /NPM_CONFIG_REGISTRY/u },
     { source: "a declared GITHUB_TOKEN while ci.secrets overrides the npm registry", npmrc: "registry=https://registry.npmjs.org/\n", secrets: ["GITHUB_TOKEN", "NPM_CONFIG_REGISTRY"], message: /NPM_CONFIG_REGISTRY.*registry/u, hint: /NPM_CONFIG_REGISTRY/u },
+    { source: "a GitHub Packages registry while ci.variables overrides the Bun registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", variables: ["BUN_CONFIG_REGISTRY"], message: /BUN_CONFIG_REGISTRY.*registry/u, hint: /BUN_CONFIG_REGISTRY/u },
+    { source: "a declared GITHUB_TOKEN while ci.secrets overrides the Bun registry", npmrc: "registry=https://registry.npmjs.org/\n", secrets: ["GITHUB_TOKEN", "BUN_CONFIG_REGISTRY"], message: /BUN_CONFIG_REGISTRY.*registry/u, hint: /BUN_CONFIG_REGISTRY/u },
     // The workflow writes the Actions token only to the runner's ~/.npmrc, so moving the user config would hide it.
     { source: "a GitHub Packages registry while ci.variables moves the npm user config", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", variables: ["NPM_CONFIG_USERCONFIG"], message: /NPM_CONFIG_USERCONFIG.*~\/\.npmrc/u, hint: /NPM_CONFIG_USERCONFIG/u },
     { source: "a GitHub Packages registry while ci.secrets moves the npm user config", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", secrets: ["NPM_CONFIG_USERCONFIG"], message: /NPM_CONFIG_USERCONFIG.*~\/\.npmrc/u, hint: /NPM_CONFIG_USERCONFIG/u },

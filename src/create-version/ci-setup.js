@@ -13,7 +13,7 @@ import {
   CI_VERCEL_CONFIG_FILE, CI_VERCEL_GATE_FILE, CI_VERCEL_GATE_TEMPLATE, CI_VERCEL_IGNORE_PLACEHOLDER, CI_VERCEL_WORKER_WRITTEN_PATHS,
   CI_DENO_JSR_CLIENT, CI_DENO_VERSION, CI_RESERVED_ENVIRONMENT_NAMES,
   CI_RUNNER_BINDABLE_PREFIXED_ENVIRONMENT_NAMES, CI_RUNNER_DEFAULT_ENVIRONMENT_NAMES, CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES,
-  CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY, CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL, CI_GITHUB_PACKAGES_TOKEN_VARIABLE, CI_NPM_REGISTRY_OVERRIDE_VARIABLES, CI_NPM_USER_CONFIG_LOCATION_VARIABLES, CI_RUNNER_NPM_USER_CONFIG_PATH,
+  CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY, CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL, CI_GITHUB_PACKAGES_TOKEN_VARIABLE, CI_NPM_USER_CONFIG_LOCATION_VARIABLES, CI_PACKAGE_MANAGER_CONFIG_ENVIRONMENT_PREFIXES, CI_PACKAGE_REGISTRY_OVERRIDE_VARIABLES, CI_RUNNER_NPM_USER_CONFIG_PATH,
   NPM_CONFIG_COMMENT_PREFIXES, NPM_CONFIG_JSON_QUOTE, NPM_CONFIG_LINE_BREAK_PATTERN, NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN, NPM_CONFIG_ENVIRONMENT_REFERENCES_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_BOUND_KEY_PATTERN, NPM_CONFIG_INLINE_COMMENT_PATTERN, NPM_CONFIG_QUOTES, NPM_CONFIG_REGISTRY_KEY_PATTERN, NPM_CONFIG_SECTION_HEADER_PATTERN, NPM_CONFIG_VALUELESS_KEY_VALUE,
 } from "../constants/ci-release.js";
 import { CREATE_VERSION_CONFIG_FILES, NPM_CREDENTIAL_CONFIG_FIELDS, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
@@ -160,7 +160,8 @@ function isGithubPackagesCredentialKey(key) {
 /**
  * Reads the effective top-level settings of a `.npmrc` the way npm's INI parser does: a repeated key
  * keeps its last assignment (compared after unquoting), and every key after an INI `[section]`
- * header is nested under that section, so it never configures the top-level registries or credentials.
+ * header ({@link NPM_CONFIG_SECTION_HEADER_PATTERN}, tested on the untrimmed line as npm does) is nested
+ * under that section, so it never configures the top-level registries or credentials.
  * A key written without `=` gets {@link NPM_CONFIG_VALUELESS_KEY_VALUE}, as in npm, and lines end at
  * CRLF, LF or a lone CR ({@link NPM_CONFIG_LINE_BREAK_PATTERN}), as npm splits them.
  * @param {string} npmConfigText - Raw `.npmrc` contents.
@@ -170,8 +171,8 @@ function readTopLevelNpmConfigEntries(npmConfigText) {
   /** @type {Map<string, string | true>} */
   const entries = new Map();
   for (const line of npmConfigText.split(NPM_CONFIG_LINE_BREAK_PATTERN)) {
+    if (NPM_CONFIG_SECTION_HEADER_PATTERN.test(line)) break;
     const trimmedLine = line.trim();
-    if (NPM_CONFIG_SECTION_HEADER_PATTERN.test(trimmedLine)) break;
     if (trimmedLine === "" || NPM_CONFIG_COMMENT_PREFIXES.some((prefix) => trimmedLine.startsWith(prefix))) continue;
     const separatorIndex = trimmedLine.indexOf("=");
     if (separatorIndex === -1) {
@@ -216,11 +217,23 @@ function selectsGithubPackagesRegistry(key, value) {
  * Tells whether a variable is a default environment variable the GitHub Actions runner sets and
  * forbids overwriting, so a job-level binding to the workflow token would never reach npm.
  * @param {string} variableName - Environment variable name.
- * @returns {boolean} True for `CI` and `GITHUB_*` / `RUNNER_*` names other than `GITHUB_TOKEN`.
+ * @returns {boolean} True for `CI` and `GITHUB_*` / `RUNNER_*` / `ACTIONS_*` names other than `GITHUB_TOKEN`.
  */
 function isRunnerDefaultEnvironmentVariable(variableName) {
   if (CI_RUNNER_BINDABLE_PREFIXED_ENVIRONMENT_NAMES.includes(variableName)) return false;
   return CI_RUNNER_DEFAULT_ENVIRONMENT_NAMES.includes(variableName) || CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES.some((prefix) => variableName.startsWith(prefix));
+}
+
+/**
+ * Tells whether a package manager reads a variable as its own configuration, so a job-level binding to the
+ * workflow token would turn that token into a setting such as the registry.
+ * @param {string} variableName - Environment variable name.
+ * @returns {boolean} True for one of {@link CI_PACKAGE_REGISTRY_OVERRIDE_VARIABLES} or a name starting with one
+ *   of {@link CI_PACKAGE_MANAGER_CONFIG_ENVIRONMENT_PREFIXES}, in any casing.
+ */
+function isPackageManagerConfigEnvironmentVariable(variableName) {
+  const normalizedName = variableName.toUpperCase();
+  return CI_PACKAGE_REGISTRY_OVERRIDE_VARIABLES.includes(normalizedName) || CI_PACKAGE_MANAGER_CONFIG_ENVIRONMENT_PREFIXES.some((prefix) => normalizedName.startsWith(prefix));
 }
 
 /**
@@ -321,12 +334,14 @@ function assertProjectNpmConfigRegularFile(irregularFileMode) {
  * Actions token: a deployment secret, which the deployment steps bind to its own value (the install
  * inside `vercel build` would send that secret), a runner default variable, which GitHub never lets a
  * job override, a variable that locates the user npm config, which binding it to the token would break
- * (the step writes `$HOME/.npmrc`), or a binding owned by the worker protocol.
+ * (the step writes `$HOME/.npmrc`), a package manager configuration variable, which would turn the token
+ * into a setting such as the registry, or a binding owned by the worker protocol.
  * @param {string} tokenVariable - Variable the accepted token expands (`${NAME}`).
  * @param {readonly string[]} deploymentSecrets - Credentials the deployment steps bind themselves.
  * @returns {void}
  * @throws {ReleaseStepError} When the variable is a deployment secret, a runner default (`CI`, `GITHUB_*`
- *   other than `GITHUB_TOKEN`, `RUNNER_*`), one of {@link CI_NPM_USER_CONFIG_LOCATION_VARIABLES} or one of
+ *   other than `GITHUB_TOKEN`, `RUNNER_*`, `ACTIONS_*`), one of {@link CI_NPM_USER_CONFIG_LOCATION_VARIABLES}, a
+ *   package manager configuration variable (see {@link isPackageManagerConfigEnvironmentVariable}) or one of
  *   {@link CI_RESERVED_ENVIRONMENT_NAMES}.
  */
 function assertGithubPackagesTokenVariableBindable(tokenVariable, deploymentSecrets) {
@@ -341,6 +356,9 @@ function assertGithubPackagesTokenVariableBindable(tokenVariable, deploymentSecr
   if (CI_NPM_USER_CONFIG_LOCATION_VARIABLES.includes(tokenVariable)) {
     throwProjectNpmConfigError(`${usesVariable}, una variable que ubica la configuración de usuario de npm; el workflow la cargaría con el token de Actions y el paso que escribe ${CI_RUNNER_NPM_USER_CONFIG_PATH} fallaría o quedaría fuera del alcance de la instalación.`, `${useAnotherVariable} que no sea ${CI_NPM_USER_CONFIG_LOCATION_VARIABLES.join(", ")}`);
   }
+  if (isPackageManagerConfigEnvironmentVariable(tokenVariable)) {
+    throwProjectNpmConfigError(`${usesVariable}, una variable que configura un package manager; el workflow la cargaría con el token de Actions y npm, pnpm, Yarn o Bun lo tomarían como configuración (por ejemplo, como registry).`, `${useAnotherVariable} que no empiece con ${CI_PACKAGE_MANAGER_CONFIG_ENVIRONMENT_PREFIXES.join(", ")}`);
+  }
   if (CI_RESERVED_ENVIRONMENT_NAMES.includes(tokenVariable)) {
     throwProjectNpmConfigError(`${usesVariable}, una variable reservada del worker de CI (${CI_RESERVED_ENVIRONMENT_NAMES.join(", ")}).`, `${useAnotherVariable} no reservada`);
   }
@@ -352,7 +370,7 @@ function assertGithubPackagesTokenVariableBindable(tokenVariable, deploymentSecr
  * token somewhere unchecked.
  * - With the token step, a job binding of {@link CI_NPM_USER_CONFIG_LOCATION_VARIABLES} (`HOME` included)
  *   moves the user config away from the runner's `~/.npmrc`, where the step stores the Actions token, and one
- *   of {@link CI_NPM_REGISTRY_OVERRIDE_VARIABLES} replaces the committed registry with a value that cannot be
+ *   of {@link CI_PACKAGE_REGISTRY_OVERRIDE_VARIABLES} replaces the committed registry with a value that cannot be
  *   proven to use `https:` before dispatch.
  * - An accepted token expanding `GITHUB_TOKEN` while `ci.variables` declares it gets that repository
  *   variable instead of the Actions token.
@@ -374,7 +392,7 @@ function assertGithubPackagesSetupSupported(config, environment, projectGithubPa
       `Quitá ${redirectVariable} de ci.secrets y ci.variables (el workflow usa ${CI_RUNNER_NPM_USER_CONFIG_PATH}); no se cambió ningún archivo.`,
     );
   }
-  const registryOverrideVariable = declaredNames.find((name) => CI_NPM_REGISTRY_OVERRIDE_VARIABLES.includes(name));
+  const registryOverrideVariable = declaredNames.find((name) => CI_PACKAGE_REGISTRY_OVERRIDE_VARIABLES.includes(name));
   if (readsGithubPackages && registryOverrideVariable !== undefined) {
     throw new ReleaseStepError(
       `ci.secrets o ci.variables declara ${registryOverrideVariable}, que reemplaza el registry del ${PROJECT_NPM_CONFIG_FILE} commiteado; el workflow le da a npm el token de Actions y antes del bump no se puede comprobar a qué registry lo enviaría ni que use ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}.`,

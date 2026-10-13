@@ -162,11 +162,19 @@ export const CI_NPM_USER_CONFIG_REDIRECT_VARIABLES = Object.freeze(["NPM_CONFIG_
 export const CI_NPM_USER_CONFIG_LOCATION_VARIABLES = Object.freeze(["HOME", ...CI_NPM_USER_CONFIG_REDIRECT_VARIABLES]);
 
 /**
- * Job bindings that replace the committed default registry for npm and pnpm (`npm_config_registry` in any
- * casing). Their value cannot be proven to use `https:` before dispatch, so the generated workflow rejects them
- * whenever it hands npm the Actions token. Scoped registries cannot be set through a variable name.
+ * Job bindings that replace the committed default registry: `NPM_CONFIG_REGISTRY` for npm and pnpm
+ * (`npm_config_registry` in any casing) and `BUN_CONFIG_REGISTRY` for Bun. Their value cannot be proven to use
+ * `https:` before dispatch, so the generated workflow rejects them whenever it hands the package manager the
+ * Actions token. Scoped registries cannot be set through a variable name.
  */
-export const CI_NPM_REGISTRY_OVERRIDE_VARIABLES = Object.freeze(["NPM_CONFIG_REGISTRY"]);
+export const CI_PACKAGE_REGISTRY_OVERRIDE_VARIABLES = Object.freeze(["NPM_CONFIG_REGISTRY", "BUN_CONFIG_REGISTRY"]);
+
+/**
+ * Prefixes of the environment variables npm, pnpm, Yarn and Bun read as their own configuration (compared in
+ * uppercase, since npm reads `npm_config_*` in any casing). A GitHub Packages token expanding one of them would
+ * bind the Actions token to a package manager setting, such as the registry.
+ */
+export const CI_PACKAGE_MANAGER_CONFIG_ENVIRONMENT_PREFIXES = Object.freeze(["NPM_CONFIG_", "BUN_CONFIG_", "YARN_", "PNPM_"]);
 
 /** Only URL protocol accepted for a GitHub Packages registry, so the workflow token never travels in clear text. */
 export const CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL = "https:";
@@ -199,10 +207,12 @@ export const NPM_CONFIG_ENVIRONMENT_REFERENCES_PATTERN = /\$\{([^${}]+)\}/gu;
 export const NPM_CONFIG_INLINE_COMMENT_PATTERN = /(?<!\\)[;#]/u;
 
 /**
- * `.npmrc` INI section header (`[name]`). npm's INI parser nests every later key under that section,
- * so those keys never configure the top-level registries or credentials.
+ * `.npmrc` INI section header (`[name]`), matched against the raw, untrimmed line exactly as npm's INI parser
+ * does: the bracket must open the line, the name cannot contain `]` and only whitespace may follow. npm nests
+ * every later key under that section, so those keys never configure the top-level registries or credentials;
+ * any other bracketed line (indented or malformed) is a plain key.
  */
-export const NPM_CONFIG_SECTION_HEADER_PATTERN = /^\[.*\]$/u;
+export const NPM_CONFIG_SECTION_HEADER_PATTERN = /^\[[^\]]*\]\s*$/u;
 
 /** Prefixes of `.npmrc` comment lines. */
 export const NPM_CONFIG_COMMENT_PREFIXES = Object.freeze(["#", ";"]);
@@ -226,12 +236,13 @@ export const CI_MIGRATION_ENVIRONMENT_PATTERN = /\b[A-Z][A-Z0-9_]*(?:URL|TOKEN|K
 export const CI_RESERVED_ENVIRONMENT_NAMES = Object.freeze([CI_RELEASE_TAG_ENVIRONMENT, "HUSKY", ...Object.values(CI_RELEASE_ENVIRONMENT)]);
 
 /**
- * Prefixes of the default environment variables the GitHub Actions runner sets on every step. GitHub
- * documents that they cannot be overwritten, so a job-level binding to the workflow token would not
- * reach them.
+ * Prefixes of the environment variables the GitHub Actions runner sets on every step: the documented defaults
+ * (`GITHUB_*`, `RUNNER_*`), which cannot be overwritten, and its internal `ACTIONS_*` variables (such as
+ * `ACTIONS_ID_TOKEN_REQUEST_TOKEN`), assigned before each `run:`. A job-level binding to the workflow token
+ * would not reach any of them.
  * @see https://docs.github.com/en/actions/reference/workflows-and-actions/variables#default-environment-variables
  */
-export const CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES = Object.freeze(["GITHUB_", "RUNNER_"]);
+export const CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES = Object.freeze(["GITHUB_", "RUNNER_", "ACTIONS_"]);
 
 /**
  * Default runner environment variables without one of {@link CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES}

@@ -12,6 +12,10 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - El encabezado de cada paso (`━━ PASO N/M ━ …`) muestra el título del paso en texto normal (solo `PASO N/M` sigue en negrita) y deja una línea en blanco antes de la salida del paso, para que no quede pegada al encabezado.
 - Si el CHANGELOG no es texto UTF-8 válido (por ejemplo, está en ISO-8859-1), `create-version` se detiene antes del bump con un aviso para convertirlo a UTF-8, en lugar de cerrar `## [Unreleased]` reemplazando sus caracteres por `�` en el commit de versión.
 
+### Fixed
+
+- Si un hook de commit borra el CHANGELOG, `package.json` o un archivo de `versionFiles` durante el commit de versión, `create-version` deshace el release y vuelve a crear esos archivos (y su carpeta, si también se borró) con su contenido anterior, en vez de dejarlos borrados y pedir restaurarlos a mano.
+
 ## [0.7.5] - 2026-10-13
 
 ### Fixed

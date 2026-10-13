@@ -822,7 +822,7 @@ export async function prepareVersionFileUpdates(context, versionFiles, version) 
  * Undoes a release whose files were written but not committed (a failed write, `git add`,
  * `git write-tree` or `git commit`, or a commit undone because a hook changed it): the index entries
  * of the release files go back to the tree the index had before staging, and every release file to
- * its original bytes.
+ * its original bytes (recreating a file, and its folder, that a hook deleted).
  *
  * @param {VersionFilesContext} context - Release context.
  * @param {ReleaseFileUpdate[]} fileUpdates - Files of the release commit.
@@ -842,7 +842,11 @@ async function rollBackRelease(context, fileUpdates, indexTree, failure) {
           return false;
         }
         // Only files that changed: one that could not be written (read-only) already holds its bytes.
-        if (!readFileSync(absolutePath).equals(originalBytes)) {
+        // A file a hook deleted is recreated, folder included, so uncommitted notes are not lost.
+        if (!existsSync(absolutePath)) {
+          mkdirSync(path.dirname(absolutePath), { recursive: true });
+          writeFileSync(absolutePath, originalBytes);
+        } else if (!readFileSync(absolutePath).equals(originalBytes)) {
           writeFileSync(absolutePath, originalBytes);
         }
         return false;

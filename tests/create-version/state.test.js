@@ -437,6 +437,50 @@ describe("beez-rp create-version command", () => {
     expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
+  it("should undo the release and recreate the changelog when a commit hook deletes it after staging", () => {
+    // Arrange
+    const { repositoryRoot, remoteRoot } = createReleasedRepository();
+    pushConfiguration(repositoryRoot, ["export default { checks: false };"]);
+    const head = runGit(["rev-parse", "HEAD"], repositoryRoot);
+    const notes = readFileSync(path.join(repositoryRoot, "CHANGELOG.md"), "utf8");
+    writeFileSync(path.join(repositoryRoot, ".git", "hooks", "pre-commit"), "#!/bin/sh\nrm -f CHANGELOG.md\n", { mode: 0o755 });
+
+    // Act
+    const release = runCli(repositoryRoot, ["--bump", "minor"]);
+
+    // Assert
+    expect(release.status, release.output).toBe(1);
+    expect(flattenOutput(release.output)).toContain("se restauraron package.json, versionFiles y el CHANGELOG (contenido y staging)");
+    expect(readFileSync(path.join(repositoryRoot, "CHANGELOG.md"), "utf8")).toBe(notes);
+    expect(runGit(["status", "--porcelain"], repositoryRoot)).toBe("");
+    expect(JSON.parse(readFileSync(path.join(repositoryRoot, "package.json"), "utf8")).version).toBe("0.1.0");
+    expect(runGit(["rev-parse", "HEAD"], repositoryRoot)).toBe(head);
+    expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
+  it("should recreate a versionFiles entry and its folder when a rejecting commit hook deletes them", () => {
+    // Arrange
+    const { repositoryRoot, remoteRoot } = createReleasedRepository();
+    const versionFile = path.join(repositoryRoot, "src", "cli.js");
+    const versionFileContent = 'program.version("0.1.0"); // beez-rp-version\n';
+    mkdirSync(path.dirname(versionFile));
+    writeFileSync(versionFile, versionFileContent);
+    pushConfiguration(repositoryRoot, ["export default {", "  checks: false,", '  versionFiles: ["src/cli.js"],', "};"]);
+    const head = runGit(["rev-parse", "HEAD"], repositoryRoot);
+    writeFileSync(path.join(repositoryRoot, ".git", "hooks", "pre-commit"), "#!/bin/sh\nrm -rf src\nexit 1\n", { mode: 0o755 });
+
+    // Act
+    const release = runCli(repositoryRoot, ["--bump", "minor"]);
+
+    // Assert
+    expect(release.status, release.output).toBe(1);
+    expect(flattenOutput(release.output)).toContain("se restauraron package.json, versionFiles y el CHANGELOG (contenido y staging)");
+    expect(readFileSync(versionFile, "utf8")).toBe(versionFileContent);
+    expect(runGit(["status", "--porcelain"], repositoryRoot)).toBe("");
+    expect(runGit(["rev-parse", "HEAD"], repositoryRoot)).toBe(head);
+    expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
   it("should resume a local release commit without closing its changelog again", () => {
     // Arrange
     const { repositoryRoot, remoteRoot } = createReleasedRepository();

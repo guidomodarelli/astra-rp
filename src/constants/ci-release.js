@@ -191,6 +191,12 @@ export const NPM_CONFIG_KEY_FIELD_PATTERN = /(?:^|:)([^:]*)$/u;
 /** Value npm's INI parser gives a `.npmrc` key written without `=`. */
 export const NPM_CONFIG_VALUELESS_KEY_VALUE = true;
 
+/** Effective (unquoted) `.npmrc` values npm's INI parser turns into booleans instead of keeping them as text. */
+export const NPM_CONFIG_BOOLEAN_VALUES = Object.freeze(["true", "false"]);
+
+/** Line terminators npm's INI parser splits a `.npmrc` on: CRLF, LF or a lone CR. */
+export const NPM_CONFIG_LINE_BREAK_PATTERN = /\r\n|[\r\n]/u;
+
 /** `.npmrc` value that is exactly one `${NAME}` environment reference; captures the variable name. */
 export const NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/u;
 

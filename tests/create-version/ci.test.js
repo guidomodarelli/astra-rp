@@ -308,6 +308,8 @@ describe("release location and configuration", () => {
     // npm prefers the host token the worker writes over host-level basic credentials, so an undeclared reference there is harmless.
     { source: "a host-level GitHub Packages basic credential expanding an undeclared variable", npmrc: "//npm.pkg.github.com/:_auth=${GITHUB_PACKAGES_BASIC_AUTH}\n", secrets: [], authenticates: true, tokenBindings: [] },
     { source: "a host-level GitHub Packages password expanding an undeclared variable", npmrc: "//npm.pkg.github.com/:username=fixture-user\n//npm.pkg.github.com/:_password=${GITHUB_PACKAGES_PASSWORD}\n", secrets: [], authenticates: true, tokenBindings: [] },
+    // npm also ends a line at a lone carriage return, so the second CR-only line still sets the GitHub Packages token.
+    { source: "a GitHub Packages token on a CR-only line", npmrc: "registry=https://registry.npmjs.org/\r//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\r", secrets: [], authenticates: true, tokenBindings: ["GITHUB_TOKEN"] },
   ])("should authenticate dependency installs against GitHub Packages when the project uses $source: $authenticates", async ({ npmrc, committed = true, secrets, authenticates, tokenBindings }) => {
     // Arrange
     const root = createTemporaryDirectory("beez-rp-ci-github-packages-");
@@ -389,6 +391,12 @@ describe("release location and configuration", () => {
     // npm also expands references inside keys, so a credential key whose host comes from the environment may target GitHub Packages.
     { source: "a credential key whose host is read from the environment", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//${GH_HOST}/:_authToken=${GITHUB_TOKEN}\n", message: /\/\/\$\{GH_HOST\}\/:_authToken/u, hint: /host literal/u },
     { source: "a basic credential key read from the environment with a declared GITHUB_TOKEN secret", npmrc: "//${GH_HOST}/fixture-owner/:_auth=${GITHUB_PACKAGES_BASIC_AUTH}\n", secrets: ["GITHUB_TOKEN", "GITHUB_PACKAGES_BASIC_AUTH"], message: /\$\{GH_HOST\}\/fixture-owner\/:_auth/u, hint: /host literal/u },
+    // npm turns `true` and `false` into booleans, which replace the token the workflow writes to ~/.npmrc.
+    { source: "a GitHub Packages host token set to true", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=true\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*booleano/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a quoted GitHub Packages host token set to false", npmrc: "//npm.pkg.github.com/:_authToken=\"false\"\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*booleano/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    // Deployment secrets reach only the Vercel steps, so an owner-path credential expanding one stays unresolved in the job install.
+    { source: "an owner-path GitHub Packages basic credential expanding a declared VERCEL_TOKEN deployment secret", npmrc: "//npm.pkg.github.com/fixture-owner/:_auth=${VERCEL_TOKEN}\n", deployment: "vercel", secrets: ["VERCEL_TOKEN"], message: /fixture-owner\/:_auth.*VERCEL_TOKEN.*Vercel/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "an owner-path GitHub Packages username expanding a declared VERCEL_ORG_ID deployment secret", npmrc: "//npm.pkg.github.com/fixture-owner/:username=${VERCEL_ORG_ID}\n//npm.pkg.github.com/fixture-owner/:_password=${GITHUB_PACKAGES_PASSWORD}\n", deployment: "vercel", secrets: ["VERCEL_ORG_ID", "GITHUB_PACKAGES_PASSWORD"], message: /fixture-owner\/:username.*VERCEL_ORG_ID.*Vercel/u, hint: /\$\{GITHUB_TOKEN\}/u },
   ])("should reject the CI workflow before the bump when the committed .npmrc uses $source", async ({ npmrc, deployment = null, secrets = [], variables = [], publish = undefined, publication = undefined, message, hint }) => {
     // Arrange
     const root = createTemporaryDirectory("beez-rp-ci-github-packages-rejected-");
@@ -402,6 +410,26 @@ describe("release location and configuration", () => {
     await expect(rendering).rejects.toBeInstanceOf(ReleaseStepError);
     await expect(rendering).rejects.toThrow(message);
     await expect(rendering).rejects.toMatchObject({ hint: expect.stringMatching(hint) });
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
+  it("should reject the CI workflow before the bump when the committed .npmrc is a symlink the worker would follow", async () => {
+    // Arrange
+    const root = createTemporaryDirectory("beez-rp-ci-npmrc-symlink-");
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
+    commitFixtureRepository(root);
+    // The index entry commits a symlink without depending on file-system symlink support (Windows).
+    const linkTargetPath = path.join(root, "npmrc-link-target.txt");
+    writeFileSync(linkTargetPath, "config/shared.npmrc");
+    const linkTargetBlob = runGit(["hash-object", "-w", linkTargetPath], root);
+    runGit(["update-index", "--add", "--cacheinfo", `120000,${linkTargetBlob},.npmrc`], root);
+    runGit(["commit", "--quiet", "-m", "link npm config"], root);
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml" } });
+    // Act
+    const rendering = renderCiReleaseWorkflow(root, config);
+    // Assert
+    await expect(rendering).rejects.toBeInstanceOf(ReleaseStepError);
+    await expect(rendering).rejects.toThrow(/\.npmrc.*no es un archivo regular/u);
+    await expect(rendering).rejects.toMatchObject({ hint: expect.stringMatching(/archivo regular/u) });
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it.each(["--ci-release", "--retry-ci"])("should reject invalid tags at the CLI boundary when using %s", (flag) => {

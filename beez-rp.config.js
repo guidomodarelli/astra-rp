@@ -1,6 +1,7 @@
 /**
  * `beez-rp create-version` configuration of beez-rp itself: validate with
- * `pnpm check`, then publish to npm with `NPM_TOKEN` (environment, `.env` or `~/.config/beez-rp/.env`).
+ * `pnpm check`, then publish to npm from the `release.yml` workflow through npm
+ * trusted publishing (OIDC), so no npm token is stored in the repository.
  *
  * @module beez-rp.config
  */
@@ -14,6 +15,7 @@ export default {
   },
   checks: ["pnpm check"],
   publish: "npm",
+  publication: { authentication: "oidc" },
   summary: ["Consumidores: pnpm add -D beez-rp@^{version}"],
 };
 

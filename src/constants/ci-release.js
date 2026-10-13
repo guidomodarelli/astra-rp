@@ -144,14 +144,15 @@ export const CI_GITHUB_PACKAGES_TOKEN_VARIABLE = "GITHUB_PACKAGES_TOKEN";
  */
 export const CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY = "//npm.pkg.github.com/:_authToken";
 
-/**
- * Environment variables that move the user npm config away from `~/.npmrc`, in the order the
- * generated step prefers them; npm and pnpm read whichever the job sets.
- */
-export const CI_NPM_USER_CONFIG_ENVIRONMENT_VARIABLES = Object.freeze(["NPM_CONFIG_USERCONFIG", "npm_config_userconfig"]);
+/** Shell path of the runner's user npm config, where the generated step stores the GitHub Packages token. */
+export const CI_RUNNER_NPM_USER_CONFIG_PATH = "$HOME/.npmrc";
 
-/** Shell path of the user npm config when no variable of {@link CI_NPM_USER_CONFIG_ENVIRONMENT_VARIABLES} is set. */
-export const CI_DEFAULT_NPM_USER_CONFIG_PATH = "$HOME/.npmrc";
+/**
+ * Job bindings that move the user config away from the runner's `~/.npmrc` (npm and pnpm read
+ * `NPM_CONFIG_USERCONFIG`, Bun reads `$XDG_CONFIG_HOME/.npmrc`), so the token the workflow stores
+ * there would never reach the install. `ci.secrets` and `ci.variables` only accept uppercase names.
+ */
+export const CI_NPM_USER_CONFIG_REDIRECT_VARIABLES = Object.freeze(["NPM_CONFIG_USERCONFIG", "XDG_CONFIG_HOME"]);
 
 /** `.npmrc` key selecting a registry, default (`registry`) or scoped (`@scope:registry`). */
 export const NPM_CONFIG_REGISTRY_KEY_PATTERN = /^(?:@[^\s:]+:)?registry$/u;
@@ -167,6 +168,9 @@ export const NPM_CONFIG_GITHUB_PACKAGES_BOUND_KEY_PATTERN = /^\/\/npm\.pkg\.gith
 
 /** `.npmrc` value that is exactly one `${NAME}` environment reference; captures the variable name. */
 export const NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/u;
+
+/** Every `${NAME}` environment reference inside a `.npmrc` value, as npm expands them; captures each variable name. */
+export const NPM_CONFIG_ENVIRONMENT_REFERENCES_PATTERN = /\$\{([^${}]+)\}/gu;
 
 /** Start of an inline comment in an unquoted `.npmrc` value (INI syntax: an unescaped `;` or `#`). */
 export const NPM_CONFIG_INLINE_COMMENT_PATTERN = /(?<!\\)[;#]/u;

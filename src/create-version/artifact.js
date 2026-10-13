@@ -43,6 +43,7 @@ import {
   SAFE_ARTIFACT_PATH_PATTERN,
   SHA256_HEX_PATTERN_SOURCE,
 } from "../constants/create-version.js";
+import { isRecord } from "./json.js";
 
 /**
  * @typedef {{ path: string, expectedSha256: string | null }} PreparedArtifact
@@ -165,13 +166,33 @@ export function isSafeArtifactPath(artifactPath) {
 }
 
 /**
+ * Computes the SHA-256 of file bytes.
+ *
+ * @param {Buffer} bytes - File content.
+ * @returns {string} Lowercase hexadecimal digest.
+ */
+function computeBytesSha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * Computes the npm integrity of file bytes (see {@link computeNpmIntegrity}).
+ *
+ * @param {Buffer} bytes - File content.
+ * @returns {string} Subresource-integrity string.
+ */
+function computeBytesNpmIntegrity(bytes) {
+  return `${NPM_INTEGRITY_ALGORITHM}-${createHash(NPM_INTEGRITY_ALGORITHM).update(bytes).digest("base64")}`;
+}
+
+/**
  * Computes the SHA-256 of a file.
  *
  * @param {string} filePath - Absolute path.
  * @returns {string} Lowercase hexadecimal digest.
  */
 export function computeSha256(filePath) {
-  return createHash("sha256").update(readFileSync(filePath)).digest("hex");
+  return computeBytesSha256(readFileSync(filePath));
 }
 
 
@@ -183,17 +204,7 @@ export function computeSha256(filePath) {
  * @returns {string} Subresource-integrity string.
  */
 export function computeNpmIntegrity(filePath) {
-  return `${NPM_INTEGRITY_ALGORITHM}-${createHash(NPM_INTEGRITY_ALGORITHM).update(readFileSync(filePath)).digest("base64")}`;
-}
-
-/**
- * Tells whether a value is a plain JSON object.
- *
- * @param {unknown} value - Any value.
- * @returns {value is Record<string, unknown>} Whether it is a non-array object.
- */
-function isRecord(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return computeBytesNpmIntegrity(readFileSync(filePath));
 }
 
 /**
@@ -312,16 +323,16 @@ export async function withArtifactOutsidePackageRoot(repositoryRoot, artifactPat
  * @returns {string[]} Problems in Spanish; empty when the archive can be published.
  */
 export function verifyPreparedArtifact(repositoryRoot, artifact, expectedIntegrity) {
-  const archivePath = path.join(repositoryRoot, artifact.path);
+  const archiveBytes = readFileSync(path.join(repositoryRoot, artifact.path));
 
   if (artifact.expectedSha256) {
-    const actualSha256 = computeSha256(archivePath);
+    const actualSha256 = computeBytesSha256(archiveBytes);
     if (actualSha256 !== artifact.expectedSha256) {
       return [`el SHA-256 del tarball (${actualSha256}) no coincide con el de su ruta (${artifact.expectedSha256})`];
     }
   }
 
-  const actualIntegrity = computeNpmIntegrity(archivePath);
+  const actualIntegrity = computeBytesNpmIntegrity(archiveBytes);
   if (actualIntegrity !== expectedIntegrity) {
     return [
       `el tarball no es lo que npm empaquetaría de este commit (integrity ${actualIntegrity}; npm pack --dry-run informa ${expectedIntegrity})`,

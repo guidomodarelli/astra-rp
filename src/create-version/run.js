@@ -73,8 +73,10 @@ import {
   withArtifactOutsidePackageRoot,
 } from "./artifact.js";
 import { describeReleaseTypes, loadCreateVersionConfig } from "./config.js";
+import { ciWorkflowPath } from "./ci-config.js";
 import { assertPreservedFilesUnchanged, verifyChangelogUpdate } from "./changelog.js";
-import { ReleaseStepError } from "./errors.js";
+import { ReleaseStepError, describeError } from "./errors.js";
+import { readJsonManifest } from "./json.js";
 import {
   describePublishedRelease,
   readNpmPackIntegrity,
@@ -82,21 +84,20 @@ import {
 import { describeNpmPublishFailure, describeNpmTokenSource } from "./npm-auth.js";
 import { restoreLocalChanges, setAsideLocalChanges } from "./local-changes.js";
 import { describeProjectCommands, detectPackageManager } from "../package-manager.js";
-import { buildReleasePlan, buildReleaseUsage, listLocalChangesToSetAside, parseReleaseArguments } from "./plan.js";
+import { buildReleasePlan, buildReleaseUsage, hasFailedNpmLookup, listLocalChangesToSetAside, parseReleaseArguments } from "./plan.js";
 import { createGitReader, listCommits, runCommandLine, runInherited } from "./process.js";
-import { collectReleaseState } from "./state.js";
+import { collectReleaseState, findLastRelease } from "./state.js";
 import { isRegistryProvider } from "./registry-config.js";
 import { checkRegistryAccess, lookupRegistryVersions, publishRegistryRelease, resolveRegistry, selectProjectRegistry } from "./registry.js";
 import { prepareJsrVersionUpdates, readJsrManifest } from "./jsr.js";
 import { JSR_REGISTRY_PROVIDER, REGISTRY_LABELS } from "../constants/registry.js";
-import { CI_DISPATCH_STATUS, CI_GIT_HOOKS_OPTION, CI_VERCEL_DEPLOYMENT, CI_WORKER_CONFIGURATION_FILES, CI_WORKFLOW_DIRECTORY, DISPATCH_CI_RELEASE_STEP, RELEASE_EXECUTION } from "../constants/ci-release.js";
+import { CI_DISPATCH_STATUS, CI_GIT_HOOKS_OPTION, CI_VERCEL_DEPLOYMENT, CI_WORKER_CONFIGURATION_FILES, DISPATCH_CI_RELEASE_STEP, RELEASE_EXECUTION } from "../constants/ci-release.js";
 import { findCompletedCiPublication, requiresCiPublicationHistory } from "./ci-publication-history.js";
 import { appendCiDispatch, assertCiCompatiblePublication, assertCiInstallLockfileCommitted, assertCiNodeVersionFileCommitted, assertGeneratedCiWorkflowCurrent, assertResumeExecutionMatches, buildCiWorkerPlan, chooseReleaseExecution, defaultCiReleaseConfig, isCommittedCiWorkflowGenerated, readCiReleaseIdentity, readCommittedCiWorkflow } from "./ci.js";
 import { assertCiSetupFilesUnchanged, describeCiEnvironment, prepareCiReleaseMetadata, prepareCiSetupFiles } from "./ci-setup.js";
 import { createGithubWorkflowClient } from "./github-workflow.js";
 import { loadReleaseTagConfig } from "./release-tag-config.js";
 import { formatReleaseExecutionTrailer } from "./release-execution.js";
-import { findLastRelease } from "./state.js";
 
 /**
  * @typedef {import("./config.js").ResolvedCreateVersionConfig} ResolvedCreateVersionConfig
@@ -154,6 +155,34 @@ const MIGRATION_CHOICE = Object.freeze({ apply: "apply", skip: "skip", cancel: "
 const LOCAL_CHANGES_CHOICE = Object.freeze({ ignore: "ignore", cancel: "cancel" });
 
 /**
+ * Prints a failure that ends the run before any step: its message and, for a {@link ReleaseStepError}, its hint.
+ *
+ * @param {unknown} error - Thrown value.
+ * @param {{ red?: boolean }} [display] - Whether the message and hint are painted red.
+ * @returns {void}
+ */
+export function printFailure(error, { red = false } = {}) {
+  const hint = error instanceof ReleaseStepError ? ` ${error.hint}` : "";
+  const message = `${describeError(error)}${hint}`;
+  print(`${ICON.failure} ${red ? paint("red", message) : message}`);
+}
+
+/**
+ * Lists items as bullet lines up to a limit and summarizes the rest in a gray line.
+ *
+ * @param {readonly string[]} items - Items to list.
+ * @param {number} limit - Most items listed one by one.
+ * @returns {string[]} Box lines.
+ */
+function listWithOverflow(items, limit) {
+  const lines = items.slice(0, limit).map((item) => `${ICON.bullet} ${item}`);
+  if (items.length > limit) {
+    lines.push(paint("gray", `… y ${items.length - limit} más`));
+  }
+  return lines;
+}
+
+/**
  * Lists the uncommitted changes and asks whether to set them aside for this release, as
  * `--ignore-local-changes` does. Nothing is preselected, so a stray Enter never ignores them.
  *
@@ -161,10 +190,7 @@ const LOCAL_CHANGES_CHOICE = Object.freeze({ ignore: "ignore", cancel: "cancel" 
  * @returns {Promise<boolean>} `true` to set them aside and go on.
  */
 export async function askToIgnoreLocalChanges(changes) {
-  const lines = changes.slice(0, MAX_LISTED_ITEMS).map((line) => `${ICON.bullet} ${line}`);
-  if (changes.length > MAX_LISTED_ITEMS) {
-    lines.push(paint("gray", `… y ${changes.length - MAX_LISTED_ITEMS} más`));
-  }
+  const lines = listWithOverflow(changes, MAX_LISTED_ITEMS);
   lines.push("", paint("gray", "Si los ignorás, se apartan con git stash durante el release (no se publican) y se restauran al final."));
   print(renderBox({ title: `Hay ${changes.length} cambio(s) sin commitear`, lines, tone: BOX_TONE.warning }));
 
@@ -209,12 +235,7 @@ export function createHookContext(repositoryRoot, reader, version) {
  * @returns {string} Box.
  */
 export function renderCommitList(commits, title) {
-  const lines = commits.slice(0, MAX_LISTED_COMMITS).map((commit) => `${ICON.bullet} ${commit.subject}`);
-
-  if (commits.length > MAX_LISTED_COMMITS) {
-    lines.push(paint("gray", `… y ${commits.length - MAX_LISTED_COMMITS} más`));
-  }
-
+  const lines = listWithOverflow(commits.map((commit) => commit.subject), MAX_LISTED_COMMITS);
   return renderBox({ title, lines, tone: BOX_TONE.accent });
 }
 
@@ -237,26 +258,25 @@ export function checkPinnedNodeVersion(repositoryRoot) {
 }
 
 /**
- * Renders the status panel of the diagnosis.
+ * Renders the repository rows both diagnoses start with: the branch, the working tree and `main`
+ * compared with `origin/main`.
  *
- * @param {ReleaseSnapshot} state - Snapshot.
- * @param {string} repositoryRoot - Repository root.
- * @returns {string} Box.
+ * @param {{ currentBranch: string | null, workingTreeChanges: string[], main: { aheadCommits: unknown[], behindCount: number } }} state - Repository part of a snapshot.
+ * @param {string | null} [detachedTag] - Release tag a detached `HEAD` sits on, which is only a warning.
+ * @returns {string[]} Rows.
  */
-function renderDiagnosis(state, repositoryRoot) {
-  const isOnMain = state.currentBranch === MAIN_BRANCH;
+export function renderRepositoryRows(state, detachedTag = null) {
   const { aheadCommits, behindCount } = state.main;
   const syncParts = [
     ...(behindCount > 0 ? [paint("yellow", `${behindCount} atrás`)] : []),
     ...(aheadCommits.length > 0 ? [paint("yellow", `${aheadCommits.length} adelante`)] : []),
   ];
-  const detachedTag = !state.currentBranch && state.headReleaseTag ? state.headReleaseTag : null;
-  const branchRow = isOnMain
+  const branchRow = state.currentBranch === MAIN_BRANCH
     ? renderRow(ICON.success, "Rama", MAIN_BRANCH)
     : detachedTag
       ? renderRow(ICON.warning, "Rama", paint("yellow", `HEAD desacoplado en ${detachedTag}`))
       : renderRow(ICON.failure, "Rama", paint("red", state.currentBranch ?? "HEAD desacoplado"));
-  const rows = [
+  return [
     branchRow,
     renderRow(
       state.workingTreeChanges.length === 0 ? ICON.success : ICON.warning,
@@ -264,6 +284,34 @@ function renderDiagnosis(state, repositoryRoot) {
       state.workingTreeChanges.length === 0 ? "limpio" : paint("yellow", `${state.workingTreeChanges.length} cambio(s) sin commitear`)
     ),
     renderRow(syncParts.length > 0 ? ICON.warning : ICON.success, `${MAIN_BRANCH} ↔ origin`, syncParts.join(", ") || "al día"),
+  ];
+}
+
+/**
+ * Renders the Node.js row of the diagnosis when the project pins a version in `.nvmrc`.
+ *
+ * @param {string} repositoryRoot - Repository root.
+ * @returns {string | null} Row, or `null` without `.nvmrc`.
+ */
+export function renderNodeVersionRow(repositoryRoot) {
+  const node = checkPinnedNodeVersion(repositoryRoot);
+  if (!node) {
+    return null;
+  }
+  return renderRow(node.matches ? ICON.success : ICON.warning, "Node.js", node.matches ? process.version : paint("yellow", `${process.version} (.nvmrc pide v${node.pinned})`));
+}
+
+/**
+ * Renders the status panel of the diagnosis.
+ *
+ * @param {ReleaseSnapshot} state - Snapshot.
+ * @param {string} repositoryRoot - Repository root.
+ * @returns {string} Box.
+ */
+function renderDiagnosis(state, repositoryRoot) {
+  const detachedTag = !state.currentBranch && state.headReleaseTag ? state.headReleaseTag : null;
+  const rows = [
+    ...renderRepositoryRows(state, detachedTag),
     renderRow(
       ICON.info,
       "Último release",
@@ -313,11 +361,9 @@ function renderDiagnosis(state, repositoryRoot) {
     rows.push(renderRow(ICON.info, "CHANGELOG", "sin actualización requerida"));
   }
 
-  const node = checkPinnedNodeVersion(repositoryRoot);
-  if (node) {
-    rows.push(
-      renderRow(node.matches ? ICON.success : ICON.warning, "Node.js", node.matches ? process.version : paint("yellow", `${process.version} (.nvmrc pide v${node.pinned})`))
-    );
+  const nodeRow = renderNodeVersionRow(repositoryRoot);
+  if (nodeRow) {
+    rows.push(nodeRow);
   }
 
   return renderBox({ title: "Diagnóstico", lines: rows, tone: BOX_TONE.info });
@@ -402,6 +448,20 @@ export async function runGitStep(context, gitArguments, failureMessage, hint) {
 }
 
 /**
+ * Creates an annotated release tag, failing the step when Git rejects it.
+ *
+ * @param {StepContext} context - Release context.
+ * @param {string} tag - Tag to create.
+ * @param {string} annotation - Tag message.
+ * @param {string} hint - Spanish next action when it fails.
+ * @param {string | null} [target] - Commit to tag; `HEAD` when `null`.
+ * @returns {Promise<void>}
+ */
+export async function createAnnotatedTag(context, tag, annotation, hint, target = null) {
+  await runGitStep(context, ["tag", "-a", tag, "-m", annotation, ...(target === null ? [] : [target])], `No se pudo crear el tag ${tag}`, hint);
+}
+
+/**
  * Runs configured command lines in order, stopping at the first failure.
  *
  * @param {StepContext} context - Release context.
@@ -418,16 +478,6 @@ export async function runConfiguredCommands(context, commandLines, hint) {
       throw new ReleaseStepError(`${commandLine} falló con código ${exitCode}.`, hint);
     }
   }
-}
-
-/**
- * Reads the working tree `package.json`, which syncing `main` may have changed after the diagnosis.
- *
- * @param {string} repositoryRoot - Repository root.
- * @returns {import("./artifact.js").PackageManifest} Current manifest.
- */
-function readWorkingManifest(repositoryRoot) {
-  return JSON.parse(readFileSync(path.join(repositoryRoot, PACKAGE_MANIFEST_FILE), "utf8"));
 }
 
 /**
@@ -504,10 +554,7 @@ export async function applyMigrationsStep(context) {
     return;
   }
 
-  const lines = migrations.pending.slice(0, MAX_LISTED_ITEMS * 2).map((name) => `${ICON.bullet} ${name}`);
-  if (migrations.pending.length > MAX_LISTED_ITEMS * 2) {
-    lines.push(paint("gray", `… y ${migrations.pending.length - MAX_LISTED_ITEMS * 2} más`));
-  }
+  const lines = listWithOverflow(migrations.pending, MAX_LISTED_ITEMS * 2);
   const targetHint = adapter.targetHint ? ` (${adapter.targetHint})` : "";
   lines.push("", `${ICON.warning} Destino: ${paint(["bold", "yellow"], migrations.target ?? "desconocido")}${targetHint}`);
   print(renderBox({ title: "Migraciones pendientes", lines, tone: BOX_TONE.warning }));
@@ -885,7 +932,7 @@ export async function commitReleaseFiles(context, releaseFiles, subject, preserv
         mkdirSync(path.dirname(path.join(context.repositoryRoot, filePath)), { recursive: true });
         writeFileSync(path.join(context.repositoryRoot, filePath), content);
       } catch (error) {
-        throw new ReleaseStepError(`No se pudo escribir ${filePath} para el release (${error instanceof Error ? error.message : String(error)}).`, "Revisá que se pueda escribir (permisos, solo lectura).", {
+        throw new ReleaseStepError(`No se pudo escribir ${filePath} para el release (${describeError(error)}).`, "Revisá que se pueda escribir (permisos, solo lectura).", {
           cause: error,
         });
       }
@@ -899,7 +946,7 @@ export async function commitReleaseFiles(context, releaseFiles, subject, preserv
     const failure =
       error instanceof ReleaseStepError
         ? error
-        : new ReleaseStepError(`No se pudo preparar el commit de versión ${subject} (${error instanceof Error ? error.message : String(error)}).`, "Revisá git status.", { cause: error });
+        : new ReleaseStepError(`No se pudo preparar el commit de versión ${subject} (${describeError(error)}).`, "Revisá git status.", { cause: error });
     throw await rollBackRelease(context, releaseFiles, indexTree, failure, preservedFiles);
   }
 
@@ -989,7 +1036,7 @@ async function bumpVersionStep(context) {
   await commitReleaseFiles(context, releaseFiles, nextRelease.version, context.changelogFiles, executionTrailers);
 
   const tag = toReleaseTag(nextRelease.version);
-  await runGitStep(context, ["tag", "-a", tag, "-m", nextRelease.version], `No se pudo crear el tag ${tag}`, `Si ya existe, revisalo con git show ${tag}.`);
+  await createAnnotatedTag(context, tag, nextRelease.version, `Si ya existe, revisalo con git show ${tag}.`);
 
   context.version = nextRelease.version;
   context.commitCount = commits.length;
@@ -1024,7 +1071,7 @@ async function pushReleaseStep(context) {
   const tag = toReleaseTag(version);
 
   if ((await context.reader.tryGit(["rev-parse", "--verify", "--quiet", `refs/tags/${tag}`])) === null) {
-    await runGitStep(context, ["tag", "-a", tag, "-m", version], `No se pudo crear el tag ${tag}`, `Revisá git tag --list ${tag}.`);
+    await createAnnotatedTag(context, tag, version, `Revisá git tag --list ${tag}.`);
   }
 
   // Running `create-version` is the request to publish; `--dry-run` previews the plan.
@@ -1184,7 +1231,8 @@ async function publishReleaseStep(context) {
 
   if (isRegistryProvider(publish)) {
     // Syncing main may have renamed the package after the diagnosis: publish under the current name.
-    const manifest = readWorkingManifest(context.repositoryRoot);
+    /** @type {import("./artifact.js").PackageManifest} */
+    const manifest = readJsonManifest(context.repositoryRoot);
     const packageName = String(manifest.name);
     context.packageName = packageName;
     const selection = selectProjectRegistry(context.config);
@@ -1370,14 +1418,90 @@ async function isTagCommitOnRemoteMain(reader, tag) {
 }
 
 /**
- * Tells whether the npm lookup of the diagnosis ran and failed, so the plan is blocked before it
- * could show a publication step.
+ * Capabilities the plan runs with: a CI preparation leaves the checks, the preparation and the
+ * publication to the worker.
  *
- * @param {{ npm: import("./npm.js").NpmLookup | null }} snapshot - Snapshot without credentials.
- * @returns {boolean} `true` when npm was queried and did not answer with the published versions.
+ * @param {ResolvedCreateVersionConfig} config - Resolved configuration.
+ * @param {boolean} isCiPreparation - Whether this run only prepares the release for CI.
+ * @param {string} [registryLabel] - Provider discovered from the resolved endpoint.
+ * @returns {import("./plan.js").ReleaseCapabilities} Capabilities for `buildReleasePlan`.
  */
-function hasFailedNpmLookup(snapshot) {
-  return snapshot.npm !== null && snapshot.npm.status !== NPM_LOOKUP_STATUS.ok;
+function describePlannedCapabilities(config, isCiPreparation, registryLabel) {
+  const capabilities = describeReleaseCapabilities(config, registryLabel);
+  return isCiPreparation ? { ...capabilities, checks: false, prepare: false, publish: false } : capabilities;
+}
+
+/**
+ * Rejects a CI preparation before diagnosing or bumping when the worker could never publish the
+ * pushed tag, and checks what the generated workflow needs committed when it is the one in use.
+ *
+ * @param {string} repositoryRoot - Repository root.
+ * @param {ResolvedCreateVersionConfig} config - Configuration with CI settings.
+ * @param {boolean} setsUpGeneratedWorkflow - Whether this run writes the generated workflow.
+ * @returns {Promise<void>}
+ * @throws {ReleaseStepError} When the publication, lockfile or Node.js pin cannot work in the worker.
+ */
+async function preflightCiPreparation(repositoryRoot, config, setsUpGeneratedWorkflow) {
+  await assertCiCompatiblePublication(config, repositoryRoot);
+  // An ordinary CI release with the generated workflow committed installs the same way.
+  const usesGeneratedWorkflow = setsUpGeneratedWorkflow || await isCommittedCiWorkflowGenerated(repositoryRoot, config);
+  if (usesGeneratedWorkflow) {
+    await assertCiInstallLockfileCommitted(repositoryRoot, config.commands.packageManager);
+    await assertCiNodeVersionFileCommitted(repositoryRoot);
+  }
+}
+
+/**
+ * Dispatches an existing release tag to CI again (`--retry-ci`) without creating another version.
+ *
+ * @param {{
+ *   repositoryRoot: string,
+ *   reader: GitReader,
+ *   config: ResolvedCreateVersionConfig,
+ *   options: import("./plan.js").ReleaseOptions,
+ *   workflowClient: import("./github-workflow.js").GithubWorkflowClient | undefined,
+ * }} retry - Repository, reader, configuration, options with `retryCi` and the GitHub adapter.
+ * @returns {Promise<number>} Process exit code.
+ */
+async function runRetryCi({ repositoryRoot, reader, config, options, workflowClient }) {
+  try {
+    if (!workflowClient) throw new ReleaseStepError("No hay un workflow configurado para reenviar el release.", "Configurá ci.workflow y volvé a ejecutar --retry-ci con el mismo tag.");
+    const release = await readCiReleaseIdentity(reader, /** @type {string} */ (options.retryCi));
+    // The worker runs the workflow and configuration stored in the tag: later commits on main that keep
+    // the version may rename the workflow or change its bindings, so both are resolved from the tag.
+    const releaseConfig = await loadReleaseTagConfig(repositoryRoot, release.tag);
+    if (!releaseConfig.ci) throw new ReleaseStepError(`${release.tag} no tiene ci.workflow en su configuración; ese release no se preparó para CI.`, `Publicá ${release.tag} con --local; no se envió ninguna ejecución.`);
+    const releaseWorkflow = releaseConfig.ci.workflow;
+    if (options.dryRun) { print(`--dry-run: se reenviaría ${release.tag} a ${releaseWorkflow}; no se cambió nada.`); return 0; }
+    const environment = describeCiEnvironment(releaseConfig);
+    await workflowClient.preflight(releaseWorkflow, environment.secrets, environment.variables);
+    const submitted = await workflowClient.dispatch(releaseWorkflow, release, `${config.commands.createVersion} --retry-ci ${release.tag}`);
+    print(`${release.tag} ${submitted.status === CI_DISPATCH_STATUS.existing ? "ya tiene una ejecución activa o exitosa" : "enviado a CI"}: ${submitted.url ?? "revisá Actions"}. No se creó otra versión.`);
+    return 0;
+  } catch (error) {
+    printFailure(error);
+    return FAILURE_EXIT_CODE;
+  }
+}
+
+/**
+ * Checks, before a resume pushes or publishes a release commit that already exists, that it can go on
+ * as committed: in the execution mode it was prepared for (local runs only), and with `versionFiles`
+ * and the JSR manifest of `HEAD` already carrying the pending version, since a resume never rewrites them.
+ *
+ * @param {{ repositoryRoot: string, config: ResolvedCreateVersionConfig, reader: GitReader, options: import("./plan.js").ReleaseOptions }} resume - Release being resumed.
+ * @param {string} pendingVersion - Version of the pending release.
+ * @param {"local" | "ci"} execution - Execution location chosen for this run.
+ * @returns {Promise<void>}
+ * @throws {ReleaseStepError} When the mode differs or a versioned file does not carry the pending version.
+ */
+async function verifyResumeReady({ repositoryRoot, config, reader, options }, pendingVersion, execution) {
+  // The worker always runs the release committed for CI; local runs must resume in the committed mode.
+  if (!options.ciRelease) await assertResumeExecutionMatches(reader, pendingVersion, execution);
+  await verifyReleasedVersionFiles({ repositoryRoot, config, reader, commands: config.commands }, pendingVersion);
+  if (config.publish === JSR_REGISTRY_PROVIDER && readJsrManifest(repositoryRoot, config.publication.configFile).manifest.version !== pendingVersion) {
+    throw new ReleaseStepError("El manifest JSR no coincide con la versión del release pendiente.", "Corregilo dentro del commit de release antes de subir o publicar; no se reescribió ningún archivo.");
+  }
 }
 
 /**
@@ -1396,7 +1520,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
   try {
     options = parseReleaseArguments(argv);
   } catch (error) {
-    print(`${ICON.failure} ${paint("red", error instanceof Error ? error.message : String(error))}`);
+    print(`${ICON.failure} ${paint("red", describeError(error))}`);
     print(usage);
     return FAILURE_EXIT_CODE;
   }
@@ -1411,7 +1535,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
   try {
     config = await loadCreateVersionConfig(repositoryRoot);
   } catch (error) {
-    print(`${ICON.failure} ${paint("red", error instanceof Error ? error.message : String(error))}`);
+    print(`${ICON.failure} ${paint("red", describeError(error))}`);
     return FAILURE_EXIT_CODE;
   }
 
@@ -1430,19 +1554,19 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
   try {
     selection = await chooseReleaseExecution(config, options);
   } catch (error) {
-    print(`${ICON.failure} ${error instanceof Error ? error.message : String(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
+    printFailure(error);
     return FAILURE_EXIT_CODE;
   }
   if (!selection) return 0;
   if (selection.setup && !config.ci) config = { ...config, ci: defaultCiReleaseConfig(repositoryRoot, config) };
   // Setup either writes the generated workflow or keeps an existing one that still matches it; both install from the committed lockfile.
   const setsUpGeneratedWorkflow = selection.setup;
-  if (selection.setup && ciWasConfigured && config.ci && existsSync(path.join(repositoryRoot, CI_WORKFLOW_DIRECTORY, config.ci.workflow))) {
+  if (selection.setup && ciWasConfigured && config.ci && existsSync(path.join(repositoryRoot, ciWorkflowPath(config.ci.workflow)))) {
     // An existing workflow turns setup into an ordinary CI release only while it still matches the current configuration.
     try {
       await assertGeneratedCiWorkflowCurrent(repositoryRoot, config);
     } catch (error) {
-      print(`${ICON.failure} ${error instanceof Error ? error.message : String(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
+      printFailure(error);
       return FAILURE_EXIT_CODE;
     }
     selection = { ...selection, setup: false };
@@ -1453,15 +1577,9 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
   // tag, which passed them when the tag was prepared, while the working tree may have changed since.
   if (isCiPreparation && !options.retryCi) {
     try {
-      await assertCiCompatiblePublication(config, repositoryRoot);
-      // An ordinary CI release with the generated workflow committed installs the same way.
-      const usesGeneratedWorkflow = setsUpGeneratedWorkflow || await isCommittedCiWorkflowGenerated(repositoryRoot, config);
-      if (usesGeneratedWorkflow) {
-        await assertCiInstallLockfileCommitted(repositoryRoot, config.commands.packageManager);
-        await assertCiNodeVersionFileCommitted(repositoryRoot);
-      }
+      await preflightCiPreparation(repositoryRoot, config, setsUpGeneratedWorkflow);
     } catch (error) {
-      print(`${ICON.failure} ${error instanceof Error ? error.message : String(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
+      printFailure(error);
       return FAILURE_EXIT_CODE;
     }
   }
@@ -1470,10 +1588,9 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
   const reader = createGitReader(repositoryRoot);
   const remoteUrl = (await reader.tryGit(["remote", "get-url", RELEASE_REMOTE])) ?? "";
   const { migrations } = config;
-  let capabilities = describeReleaseCapabilities(config);
-  if (isCiPreparation) capabilities = { ...capabilities, checks: false, prepare: false, publish: false };
+  let capabilities = describePlannedCapabilities(config, isCiPreparation);
   // The worker reloads these files from the release tag: setting their changes aside would preflight another configuration.
-  const ciWorkerFiles = isCiPreparation && config.ci ? [...CI_WORKER_CONFIGURATION_FILES, `${CI_WORKFLOW_DIRECTORY}/${config.ci.workflow}`] : [];
+  const ciWorkerFiles = isCiPreparation && config.ci ? [...CI_WORKER_CONFIGURATION_FILES, ciWorkflowPath(config.ci.workflow)] : [];
   const planOptions = { skipUnpublished: options.skipUnpublished, ignoreLocalChanges: options.ignoreLocalChanges, ciWorkerFiles };
   const spinner = startSpinner("Diagnosticando el repositorio");
   let state;
@@ -1499,13 +1616,12 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
     spinner.succeed("Diagnóstico completo");
   } catch (error) {
     spinner.fail("No se pudo diagnosticar el repositorio");
-    print(paint("red", error instanceof Error ? error.message : String(error)));
+    print(paint("red", describeError(error)));
     return FAILURE_EXIT_CODE;
   }
 
   const latestPublished = state.npm?.publishedVersions.at(-1);
-  capabilities = describeReleaseCapabilities(config, state.npm?.registryLabel);
-  if (isCiPreparation) capabilities = { ...capabilities, checks: false, prepare: false, publish: false };
+  capabilities = describePlannedCapabilities(config, isCiPreparation, state.npm?.registryLabel);
   const publishedLabel = state.npm
     ? latestPublished ? `v${latestPublished} en ${state.npm.registryLabel ?? "npm"}` : null
     : state.releasedVersion ? `v${state.releasedVersion} ${config.publishedLabel}` : null;
@@ -1524,30 +1640,13 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
       plan = buildCiWorkerPlan(state, capabilities, release.version, config.ci?.deployment === CI_VERCEL_DEPLOYMENT, completedPublication !== null);
       plan.steps.unshift({ id: RELEASE_STEP.verifyChangelog, title: "Verificar el CHANGELOG del release recibido" });
     } catch (error) {
-      print(`${ICON.failure} ${error instanceof Error ? error.message : String(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
+      printFailure(error);
       return FAILURE_EXIT_CODE;
     }
   }
 
   if (options.retryCi) {
-    try {
-      if (!workflowClient) throw new ReleaseStepError("No hay un workflow configurado para reenviar el release.", "Configurá ci.workflow y volvé a ejecutar --retry-ci con el mismo tag.");
-      const release = await readCiReleaseIdentity(reader, options.retryCi);
-      // The worker runs the workflow and configuration stored in the tag: later commits on main that keep
-      // the version may rename the workflow or change its bindings, so both are resolved from the tag.
-      const releaseConfig = await loadReleaseTagConfig(repositoryRoot, release.tag);
-      if (!releaseConfig.ci) throw new ReleaseStepError(`${release.tag} no tiene ci.workflow en su configuración; ese release no se preparó para CI.`, `Publicá ${release.tag} con --local; no se envió ninguna ejecución.`);
-      const releaseWorkflow = releaseConfig.ci.workflow;
-      if (options.dryRun) { print(`--dry-run: se reenviaría ${release.tag} a ${releaseWorkflow}; no se cambió nada.`); return 0; }
-      const environment = describeCiEnvironment(releaseConfig);
-      await workflowClient.preflight(releaseWorkflow, environment.secrets, environment.variables);
-      const submitted = await workflowClient.dispatch(releaseWorkflow, release, `${config.commands.createVersion} --retry-ci ${release.tag}`);
-      print(`${release.tag} ${submitted.status === CI_DISPATCH_STATUS.existing ? "ya tiene una ejecución activa o exitosa" : "enviado a CI"}: ${submitted.url ?? "revisá Actions"}. No se creó otra versión.`);
-      return 0;
-    } catch (error) {
-      print(`${ICON.failure} ${error instanceof Error ? error.message : String(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
-      return FAILURE_EXIT_CODE;
-    }
+    return runRetryCi({ repositoryRoot, reader, config, options, workflowClient });
   }
 
   // Uncommitted changes are the only blocker when ignoring them unblocks the plan: an interactive
@@ -1588,7 +1687,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
     try {
       resolveRequestedVersion(state.headVersion, options);
     } catch (error) {
-      print(`${ICON.failure} ${paint("red", error instanceof Error ? error.message : String(error))}`);
+      print(`${ICON.failure} ${paint("red", describeError(error))}`);
       return FAILURE_EXIT_CODE;
     }
   } else if (plan.mode === RELEASE_MODE.resume && (options.bump || options.setVersion)) {
@@ -1598,15 +1697,9 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
   // A resume never rewrites versionFiles: before pushing or publishing, HEAD must already carry the pending version.
   if (plan.mode === RELEASE_MODE.resume && plan.pendingVersion) {
     try {
-      // The worker always runs the release committed for CI; local runs must resume in the committed mode.
-      if (!options.ciRelease) await assertResumeExecutionMatches(reader, plan.pendingVersion, selection.execution);
-      await verifyReleasedVersionFiles({ repositoryRoot, config, reader, commands: config.commands }, plan.pendingVersion);
-      if (config.publish === JSR_REGISTRY_PROVIDER && readJsrManifest(repositoryRoot, config.publication.configFile).manifest.version !== plan.pendingVersion) {
-        throw new ReleaseStepError("El manifest JSR no coincide con la versión del release pendiente.", "Corregilo dentro del commit de release antes de subir o publicar; no se reescribió ningún archivo.");
-      }
+      await verifyResumeReady({ repositoryRoot, config, reader, options }, plan.pendingVersion, selection.execution);
     } catch (error) {
-      const hint = error instanceof ReleaseStepError ? ` ${error.hint}` : "";
-      print(`${ICON.failure} ${paint("red", `${error instanceof Error ? error.message : String(error)}${hint}`)}`);
+      printFailure(error, { red: true });
       return FAILURE_EXIT_CODE;
     }
   }
@@ -1636,7 +1729,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
       if (config.migrations && environment.secrets.length === 0) print(`${ICON.warning} El worker necesita las variables de las migraciones: declaralas en ci.secrets o ci.variables y configurá Actions antes de publicar.`);
       print(`${ICON.info} CI ejecutará los checks y hooks; la preparación local omite los hooks de Git.`);
     } catch (error) {
-      print(`${ICON.failure} ${error instanceof Error ? error.message : String(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
+      printFailure(error);
       return FAILURE_EXIT_CODE;
     }
   }
@@ -1663,49 +1756,110 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
     workflowClient,
   };
   const changesToSetAside = options.ignoreLocalChanges ? listLocalChangesToSetAside(state, plan.mode) : [];
+
+  return withLocalChangesSetAside(
+    {
+      reader,
+      repositoryRoot,
+      changeCount: changesToSetAside.length,
+      setAsideOptions: { keepChangelog: plan.mode === RELEASE_MODE.newRelease, createVersionCommand: config.commands.createVersion },
+      messages: {
+        setAside: "cambio(s) sin commitear apartados con git stash; al terminar vuelven igual: lo staged staged y el resto sin stagear.",
+        restored: "Cambios sin commitear restaurados como estaban: lo staged sigue staged y el resto sin stagear.",
+        recovery: "cuando lo resuelvas, recuperalos con git stash pop --index.",
+      },
+    },
+    () => runPlanSteps(context, {
+      steps: plan.steps,
+      executors: STEP_EXECUTORS,
+      untouchedNote: "No se tocó la versión ni los tags.",
+      describeFailureFollowUp: (failedContext) => describeReleaseFailureFollowUp(failedContext, remoteUrl),
+      renderSummary: (finishedContext) => (finishedContext.version && (finishedContext.pushed || finishedContext.published) ? renderReleaseSummary(finishedContext, remoteUrl, startedAt) : null),
+    }, startedAt)
+  );
+}
+
+/**
+ * Closes the failure box of a step: where the release stands and how to go on without another bump.
+ *
+ * @param {ReleaseContext} context - Release context.
+ * @param {string} remoteUrl - URL of the release remote.
+ * @returns {Promise<string[]>} Lines appended after the failure and its hint.
+ */
+async function describeReleaseFailureFollowUp(context, remoteUrl) {
+  const releaseOnOrigin = await describeReleaseOnOrigin(context, remoteUrl);
+  return ["", context.execution === RELEASE_EXECUTION.ci && context.version && context.pushed
+    ? `${ICON.warning} ${toReleaseTag(context.version)} ya está en origin. Revisá Actions y reenviá el mismo release con ${context.commands.createVersion} --retry-ci ${toReleaseTag(context.version)}; no hagas otro bump.`
+    : context.ciWorker && context.version ? `${ICON.warning} ${toReleaseTag(context.version)} ya está en origin. Corregí el paso y reintentá el workflow de este mismo tag; no se hizo otro bump ni push.`
+    : releaseOnOrigin ? `${ICON.warning} ${paint("bold", releaseOnOrigin)}` : paint("gray", `${context.commands.createVersion} retoma desde el primer paso que falte.`)];
+}
+
+/**
+ * Sets the uncommitted changes aside while an operation runs and restores them afterwards, whatever
+ * its outcome; shared with the monorepo mode.
+ *
+ * @param {{
+ *   reader: GitReader,
+ *   repositoryRoot: string,
+ *   changeCount: number,
+ *   setAsideOptions: Parameters<typeof setAsideLocalChanges>[1],
+ *   messages: { setAside: string, restored: string, recovery: string },
+ * }} localChanges - Repository, how many changes to set aside (none skips it), the options of
+ *   {@link setAsideLocalChanges} and the Spanish messages printed after setting aside, after
+ *   restoring and when the restore fails.
+ * @param {() => Promise<number>} operation - Work run with the changes set aside.
+ * @returns {Promise<number>} Exit code of the operation, or a failure when the changes could not be set aside.
+ */
+export async function withLocalChangesSetAside({ reader, repositoryRoot, changeCount, setAsideOptions, messages }, operation) {
   let setAside = null;
 
-  if (changesToSetAside.length > 0) {
+  if (changeCount > 0) {
     try {
-      setAside = await setAsideLocalChanges(reader, { keepChangelog: plan.mode === RELEASE_MODE.newRelease, createVersionCommand: config.commands.createVersion });
+      setAside = await setAsideLocalChanges(reader, setAsideOptions);
     } catch (error) {
-      const hint = error instanceof ReleaseStepError ? ` ${error.hint}` : "";
-      print(`${ICON.failure} ${paint("red", `${error instanceof Error ? error.message : String(error)}${hint}`)}`);
+      printFailure(error, { red: true });
       return FAILURE_EXIT_CODE;
     }
 
-    print(`${ICON.info} ${changesToSetAside.length} cambio(s) sin commitear apartados con git stash; al terminar vuelven igual: lo staged staged y el resto sin stagear.`);
+    print(`${ICON.info} ${changeCount} ${messages.setAside}`);
   }
 
   try {
-    return await runPlanSteps(context, plan, remoteUrl, startedAt);
+    return await operation();
   } finally {
     if (setAside) {
       const restore = await restoreLocalChanges(reader, repositoryRoot, setAside);
       print(
         restore.restored
-          ? `${ICON.success} Cambios sin commitear restaurados como estaban: lo staged sigue staged y el resto sin stagear.`
-          : `${ICON.warning} ${paint("yellow", `No se pudieron restaurar los cambios sin commitear (${restore.reason}): cuando lo resuelvas, recuperalos con git stash pop --index.`)}`
+          ? `${ICON.success} ${messages.restored}`
+          : `${ICON.warning} ${paint("yellow", `No se pudieron restaurar los cambios sin commitear (${restore.reason}): ${messages.recovery}`)}`
       );
     }
   }
 }
 
 /**
- * Runs the plan steps in order and prints the outcome.
+ * Runs the plan steps in order and prints the outcome; shared with the monorepo mode.
  *
- * @param {ReleaseContext} context - Release context.
- * @param {import("./plan.js").ReleasePlan} plan - Runnable plan.
- * @param {string} remoteUrl - URL of the release remote, for the summary.
+ * @template {{ commands: import("../package-manager.js").ProjectCommands }} Context
+ * @param {Context} context - Release context passed to every step.
+ * @param {{
+ *   steps: import("./plan.js").ReleasePlanStep[],
+ *   executors: Record<string, (context: Context) => Promise<void>>,
+ *   untouchedNote: string,
+ *   describeFailureFollowUp: (context: Context) => Promise<string[]>,
+ *   renderSummary: (context: Context) => string | null,
+ * }} planRun - Steps and their executors, what a restart after syncing `main` left untouched, the lines
+ *   that close a failure box, and the closing summary (`null` for the generic one).
  * @param {number} startedAt - Start time of the command, in milliseconds.
  * @returns {Promise<number>} Process exit code.
  */
-async function runPlanSteps(context, plan, remoteUrl, startedAt) {
-  for (const [index, planStep] of plan.steps.entries()) {
-    print(renderStepHeader(index + 1, plan.steps.length, planStep.title));
+export async function runPlanSteps(context, { steps, executors, untouchedNote, describeFailureFollowUp, renderSummary }, startedAt) {
+  for (const [index, planStep] of steps.entries()) {
+    print(renderStepHeader(index + 1, steps.length, planStep.title));
 
     try {
-      await STEP_EXECUTORS[planStep.id](context);
+      await executors[planStep.id](context);
     } catch (error) {
       if (error instanceof ReleaseCancelledError) {
         return 0;
@@ -1716,33 +1870,25 @@ async function runPlanSteps(context, plan, remoteUrl, startedAt) {
         print(
           renderBox({
             title: `${MAIN_BRANCH} actualizado`,
-            lines: [`${ICON.info} ${buildMainSyncedRestartMessage(context.commands.createVersion)}`, "", paint("gray", "No se tocó la versión ni los tags.")],
+            lines: [`${ICON.info} ${buildMainSyncedRestartMessage(context.commands.createVersion)}`, "", paint("gray", untouchedNote)],
             tone: BOX_TONE.info,
           })
         );
         return 0;
       }
 
-      const lines = [`${ICON.failure} ${error instanceof Error ? error.message : String(error)}`];
+      const lines = [`${ICON.failure} ${describeError(error)}`];
       if (error instanceof ReleaseStepError) {
         lines.push("", `${paint("bold", "Qué hacer:")} ${error.hint}`);
       }
-      const releaseOnOrigin = await describeReleaseOnOrigin(context, remoteUrl);
-      lines.push("", context.execution === RELEASE_EXECUTION.ci && context.version && context.pushed
-        ? `${ICON.warning} ${toReleaseTag(context.version)} ya está en origin. Revisá Actions y reenviá el mismo release con ${context.commands.createVersion} --retry-ci ${toReleaseTag(context.version)}; no hagas otro bump.`
-        : context.ciWorker && context.version ? `${ICON.warning} ${toReleaseTag(context.version)} ya está en origin. Corregí el paso y reintentá el workflow de este mismo tag; no se hizo otro bump ni push.`
-        : releaseOnOrigin ? `${ICON.warning} ${paint("bold", releaseOnOrigin)}` : paint("gray", `${context.commands.createVersion} retoma desde el primer paso que falte.`));
+      lines.push(...(await describeFailureFollowUp(context)));
       print(renderBox({ title: `Falló el paso ${index + 1}: ${planStep.title}`, lines, tone: BOX_TONE.danger }));
       return FAILURE_EXIT_CODE;
     }
   }
 
   print("");
-  print(
-    context.version && (context.pushed || context.published)
-      ? renderReleaseSummary(context, remoteUrl, startedAt)
-      : renderBox({ title: "Listo", lines: [`${ICON.success} Plan completado en ${formatDuration(measureActiveMs(startedAt))}.`], tone: BOX_TONE.success })
-  );
+  print(renderSummary(context) ?? renderBox({ title: "Listo", lines: [`${ICON.success} Plan completado en ${formatDuration(measureActiveMs(startedAt))}.`], tone: BOX_TONE.success }));
 
   return 0;
 }

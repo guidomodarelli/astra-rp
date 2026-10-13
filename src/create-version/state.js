@@ -22,18 +22,18 @@ import {
   MAIN_BRANCH,
   MIGRATION_STATUS,
   NPM_AUTH_STATUS,
-  NPM_LOOKUP_STATUS,
   NPM_NOT_FOUND_CODE,
   NO_PULL_REQUEST_MESSAGE_PATTERN,
-  PACKAGE_MANIFEST_FILE,
   PULL_REQUEST_JSON_FIELDS,
   RELEASE_REMOTE,
   REMOTE_MAIN_REF,
 } from "../constants/create-version.js";
 import { toReleaseTag } from "../versions.js";
 import { readChangelogUpdateState } from "./changelog.js";
+import { describeError } from "./errors.js";
+import { readJsonManifest } from "./json.js";
 import { checkRegistryAccess, lookupRegistryVersions } from "./registry.js";
-import { checkNpmPublishAccess, lookupPublishedVersions, resolvePublishRegistry } from "./npm.js";
+import { checkNpmPublishAccess, failedLookup, lookupPublishedVersions, resolvePublishRegistry } from "./npm.js";
 import { createGitReader, findVersionChangeCommit, listCommits, readPackageVersionAt, runCaptured } from "./process.js";
 
 /**
@@ -123,7 +123,7 @@ export async function lookupPullRequest(repositoryRoot, branchName) {
     try {
       return { pullRequest: JSON.parse(result.stdout), githubError: null };
     } catch (error) {
-      return { pullRequest: null, githubError: `respuesta inválida de gh (${error instanceof Error ? error.message : String(error)})` };
+      return { pullRequest: null, githubError: `respuesta inválida de gh (${describeError(error)})` };
     }
   }
 
@@ -186,7 +186,7 @@ export async function readMigrations(checkMigrations) {
   try {
     return await checkMigrations();
   } catch (error) {
-    return { status: MIGRATION_STATUS.unknown, pending: [], target: null, reason: error instanceof Error ? error.message : String(error) };
+    return { status: MIGRATION_STATUS.unknown, pending: [], target: null, reason: describeError(error) };
   }
 }
 
@@ -204,8 +204,58 @@ export async function lookupNpmOnPublishRegistry(lookupNpm, manifest, repository
   const registry = await resolveRegistrySafely(manifest, repositoryRoot);
 
   return registry.registryUrl === null
-    ? { status: NPM_LOOKUP_STATUS.failed, publishedVersions: [], reason: registry.reason }
+    ? failedLookup(registry.reason)
     : lookupNpm(String(manifest.name), repositoryRoot, registry.registryUrl);
+}
+
+/**
+ * Lists the published versions of a package for the diagnosis: on the selected registry, or on the
+ * registry the working-tree manifest publishes to when no registry is selected; shared with the monorepo mode.
+ *
+ * @param {import("./registry.js").RegistrySelection | undefined} registrySelection - Selected registry, if any.
+ * @param {Record<string, unknown>} manifest - Working-tree manifest of the package.
+ * @param {string} repositoryRoot - Repository root, where routing and credentials are read.
+ * @param {string} packageRoot - Package directory.
+ * @param {typeof lookupPublishedVersions} lookupNpm - npm lookup adapter.
+ * @returns {Promise<import("./npm.js").NpmLookup>} Published versions, or a failed lookup.
+ */
+export function lookupPackageVersions(registrySelection, manifest, repositoryRoot, packageRoot, lookupNpm) {
+  return registrySelection ? lookupRegistryVersions(registrySelection, manifest, repositoryRoot, packageRoot, lookupNpm) : lookupNpmOnPublishRegistry(lookupNpm, manifest, repositoryRoot);
+}
+
+/**
+ * Checks the credentials that would publish a package and confirms a first publication against its
+ * published versions (see {@link confirmFirstPublication}); shared with the monorepo mode.
+ *
+ * @param {import("./registry.js").RegistrySelection | undefined} registrySelection - Selected registry, if any.
+ * @param {Record<string, unknown>} manifest - Working-tree manifest of the package.
+ * @param {string} repositoryRoot - Repository root, where routing and credentials are read.
+ * @param {string} packageRoot - Package directory.
+ * @param {typeof checkNpmPublishAccess} checkNpmAccess - npm credential check adapter.
+ * @param {import("./npm.js").NpmLookup | null} npm - Published versions, or `null` when npm is not tracked.
+ * @returns {Promise<import("./npm.js").NpmAuthCheck>} Credential check.
+ */
+export async function checkPackageAccess(registrySelection, manifest, repositoryRoot, packageRoot, checkNpmAccess, npm) {
+  const npmAuth = registrySelection ? await checkRegistryAccess(registrySelection, manifest, repositoryRoot, packageRoot, checkNpmAccess) : await checkNpmAuthOnPublishRegistry(checkNpmAccess, manifest, repositoryRoot);
+  return confirmFirstPublication(npmAuth, npm);
+}
+
+/**
+ * Reads the changelog of a package for the diagnosis: its `[Unreleased]` block and whether it was
+ * updated since the last release; shared with the monorepo mode.
+ *
+ * @param {GitReader} reader - Git reader.
+ * @param {string} repositoryRoot - Repository root.
+ * @param {string} packageRoot - Package directory holding the changelog.
+ * @param {string} changelogPath - Changelog path relative to the root.
+ * @param {string | null} lastReleaseSha - Commit of the last release, or `null` without one.
+ * @returns {Promise<ReleaseSnapshot["changelog"]>} Changelog state.
+ */
+export async function readPackageChangelogState(reader, repositoryRoot, packageRoot, changelogPath, lastReleaseSha) {
+  return {
+    ...readChangelogState(packageRoot),
+    ...(await readChangelogUpdateState(reader, repositoryRoot, changelogPath, lastReleaseSha)),
+  };
 }
 
 /**
@@ -219,7 +269,7 @@ async function resolveRegistrySafely(manifest, repositoryRoot) {
   try {
     return { registryUrl: await resolvePublishRegistry(manifest, repositoryRoot), reason: null };
   } catch (error) {
-    return { registryUrl: null, reason: error instanceof Error ? error.message : String(error) };
+    return { registryUrl: null, reason: describeError(error) };
   }
 }
 
@@ -365,12 +415,12 @@ export async function collectReleaseState({
   const lastRelease = remoteMainExists ? await findLastRelease(reader, REMOTE_MAIN_REF) : null;
   const unreleasedCommits = remoteMainExists ? await listCommits(reader, lastRelease ? `${lastRelease.sha}..${REMOTE_MAIN_REF}` : REMOTE_MAIN_REF) : [];
 
-  const manifest = JSON.parse(readFileSync(path.join(repositoryRoot, PACKAGE_MANIFEST_FILE), "utf8"));
+  const manifest = readJsonManifest(repositoryRoot);
   let npm = null;
 
   if (trackNpm) {
     onProgress("Consultando npm");
-    npm = registrySelection ? await lookupRegistryVersions(registrySelection, manifest, repositoryRoot, repositoryRoot, lookupNpm) : await lookupNpmOnPublishRegistry(lookupNpm, manifest, repositoryRoot);
+    npm = await lookupPackageVersions(registrySelection, manifest, repositoryRoot, repositoryRoot, lookupNpm);
   }
 
   if (checkMigrations) {
@@ -399,15 +449,12 @@ export async function collectReleaseState({
     npm,
     npmAuth: null,
     migrations,
-    changelog: {
-      ...readChangelogState(repositoryRoot),
-      ...(await readChangelogUpdateState(reader, repositoryRoot, CHANGELOG_FILE, lastRelease?.sha ?? null)),
-    },
+    changelog: await readPackageChangelogState(reader, repositoryRoot, repositoryRoot, CHANGELOG_FILE, lastRelease?.sha ?? null),
   };
 
   if (checkNpmAuth?.(snapshot)) {
     onProgress("Verificando las credenciales de npm");
-    snapshot.npmAuth = confirmFirstPublication(registrySelection ? await checkRegistryAccess(registrySelection, manifest, repositoryRoot, repositoryRoot, checkNpmAccess) : await checkNpmAuthOnPublishRegistry(checkNpmAccess, manifest, repositoryRoot), npm);
+    snapshot.npmAuth = await checkPackageAccess(registrySelection, manifest, repositoryRoot, repositoryRoot, checkNpmAccess, npm);
   }
 
   return snapshot;

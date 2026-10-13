@@ -17,11 +17,12 @@ import { CREATE_VERSION_FLAG, DEFAULT_NPM_REGISTRY_URL, MAIN_BRANCH, MIGRATION_S
 import { RELEASE_TAG_PREFIX } from "../constants/versions.js";
 import { compareReleaseVersions, findHighestStableVersion, isStableReleaseVersion, parseReleaseVersion, toReleaseTag } from "../versions.js";
 import { print, select } from "../terminal-ui.js";
-import { ReleaseStepError } from "./errors.js";
-import { assertCiGithubPackagesSetupSupported, assertSafeCiPath, describeCiNodeVersion, extractPinnedPackageManagerVersion, readRunningNodeMajor, renderCiReleaseWorkflow } from "./ci-setup.js";
+import { ReleaseStepError, describeError } from "./errors.js";
+import { assertSafeCiPath, describeCiNodeVersion, extractPinnedPackageManagerVersion, prepareCiReleaseWorkflow, readRunningNodeMajor, renderCiReleaseWorkflow } from "./ci-setup.js";
 import { listCommittedTreeEntries, readCommittedRegularFile } from "./committed-tree.js";
 import { runCaptured } from "./process.js";
 import { readReleaseExecutionTrailer } from "./release-execution.js";
+import { ciWorkflowPath } from "./ci-config.js";
 import { isRegistryProvider } from "./registry-config.js";
 import { findNpmOidcRegistryProblem, resolveRegistry, selectProjectRegistry } from "./registry.js";
 
@@ -204,7 +205,7 @@ async function resolveCiPublicationRegistry(config, manifest, repositoryRoot, pu
     return await resolveRegistry(selectProjectRegistry(config), manifest, repositoryRoot);
   } catch (error) {
     throw new ReleaseStepError(
-      `No se pudo resolver el registry de ${publicationDescription} para comprobarlo antes del release en CI: ${error instanceof Error ? error.message : String(error)}.`,
+      `No se pudo resolver el registry de ${publicationDescription} para comprobarlo antes del release en CI: ${describeError(error)}.`,
       `Corregí publication.registryUrl, publishConfig o la configuración de npm del proyecto; no se creó, subió ni reenvió ningún release.`,
       { cause: error }
     );
@@ -289,10 +290,10 @@ export async function assertResumeExecutionMatches(reader, version, execution) {
  * @returns {void}
  * @throws {ReleaseStepError} When the configured workflow is missing or a symlink.
  */
-export function assertCiWorkflowFile(repositoryRoot, workflow) {
-  assertSafeCiPath(repositoryRoot, `${CI_WORKFLOW_DIRECTORY}/${workflow}`);
+function assertCiWorkflowFile(repositoryRoot, workflow) {
+  assertSafeCiPath(repositoryRoot, ciWorkflowPath(workflow));
   const workflowPath = path.join(repositoryRoot, CI_WORKFLOW_DIRECTORY, workflow);
-  if (!existsSync(workflowPath) || !lstatSync(workflowPath).isFile()) throw new ReleaseStepError(`No existe un workflow regular en ${CI_WORKFLOW_DIRECTORY}/${workflow}.`, "Crealo y commitealo, o quitá ci.workflow y ejecutá --setup-ci; también podés elegir --local.");
+  if (!existsSync(workflowPath) || !lstatSync(workflowPath).isFile()) throw new ReleaseStepError(`No existe un workflow regular en ${ciWorkflowPath(workflow)}.`, "Crealo y commitealo, o quitá ci.workflow y ejecutá --setup-ci; también podés elegir --local.");
 }
 
 /**
@@ -307,7 +308,7 @@ export function assertCiWorkflowFile(repositoryRoot, workflow) {
  */
 export async function readCommittedCiWorkflow(repositoryRoot, workflow, missingHint = `Commitealo en un commit propio antes de crear el release, o elegí --${CREATE_VERSION_FLAG.local}. No se creó la versión ni el tag.`) {
   assertCiWorkflowFile(repositoryRoot, workflow);
-  const workflowPath = `${CI_WORKFLOW_DIRECTORY}/${workflow}`;
+  const workflowPath = ciWorkflowPath(workflow);
   const committed = await runCaptured("git", ["show", `HEAD:${workflowPath}`], { cwd: repositoryRoot });
   if (committed.status !== 0) throw new ReleaseStepError(`${workflowPath} existe pero no está commiteado en HEAD; el worker de CI no lo recibiría.`, missingHint);
   return committed.stdout;
@@ -362,14 +363,12 @@ function toWorkflowLines(content) {
 }
 
 /**
- * Tells whether two workflows have the same lines, regardless of checkout line endings.
- * @param {string} committedContent - Workflow committed at HEAD.
- * @param {string} renderedContent - Workflow setup renders for the current configuration.
+ * Tells whether two workflows have the same lines (see {@link toWorkflowLines}).
+ * @param {string[]} committedLines - Lines of the workflow committed at HEAD.
+ * @param {string[]} renderedLines - Lines of the workflow setup renders for the current configuration.
  * @returns {boolean} True when every line matches in order.
  */
-function haveSameWorkflowLines(committedContent, renderedContent) {
-  const committedLines = toWorkflowLines(committedContent);
-  const renderedLines = toWorkflowLines(renderedContent);
+function haveSameWorkflowLines(committedLines, renderedLines) {
   return committedLines.length === renderedLines.length && committedLines.every((line, index) => line === renderedLines[index]);
 }
 
@@ -391,18 +390,20 @@ function haveSameWorkflowLines(committedContent, renderedContent) {
  */
 export async function isCommittedCiWorkflowGenerated(repositoryRoot, config) {
   if (!config.ci) return false;
-  const workflowPath = `${CI_WORKFLOW_DIRECTORY}/${config.ci.workflow}`;
+  const workflowPath = ciWorkflowPath(config.ci.workflow);
   const committedWorkflow = await readCommittedRegularFile(repositoryRoot, workflowPath);
   if (committedWorkflow === null) return false;
-  const renderedWorkflow = await renderCiReleaseWorkflow(repositoryRoot, config, { validateGithubPackages: false });
-  if (!haveSameWorkflowLines(committedWorkflow, renderedWorkflow)) {
-    if (!lacksOnlyGithubPackagesAuthentication(committedWorkflow, renderedWorkflow)) return false;
+  const renderedWorkflow = await prepareCiReleaseWorkflow(repositoryRoot, config);
+  const committedLines = toWorkflowLines(committedWorkflow);
+  const renderedLines = toWorkflowLines(renderedWorkflow.content);
+  if (!haveSameWorkflowLines(committedLines, renderedLines)) {
+    if (!lacksOnlyGithubPackagesAuthentication(committedLines, renderedLines)) return false;
     throw new ReleaseStepError(
       `${workflowPath} se generó antes de que beez-rp autenticara GitHub Packages: le falta el paso "${CI_GITHUB_PACKAGES_AUTHENTICATION_STEP}" o su permiso packages, que el proyecto necesita para instalar dependencias; el worker fallaría con 401 después de subir el tag.`,
       buildRegenerateCiWorkflowHint(),
     );
   }
-  await assertCiGithubPackagesSetupSupported(repositoryRoot, config);
+  await renderedWorkflow.assertGithubPackagesSetupSupported();
   return true;
 }
 
@@ -433,13 +434,11 @@ function flagGithubPackagesAuthenticationLines(renderedLines) {
  * Tells whether a committed workflow is the rendered one minus some of its GitHub Packages authentication
  * lines (see {@link flagGithubPackagesAuthenticationLines}), as a workflow generated before that
  * authentication existed. Any other difference means the workflow was customized.
- * @param {string} committedContent - Workflow committed at HEAD.
- * @param {string} renderedContent - Workflow setup renders for the current configuration, with the authentication step.
+ * @param {string[]} committedLines - Lines of the workflow committed at HEAD (see {@link toWorkflowLines}).
+ * @param {string[]} renderedLines - Lines of the workflow setup renders for the current configuration, with the authentication step.
  * @returns {boolean} True when only authentication lines are missing from the committed workflow.
  */
-function lacksOnlyGithubPackagesAuthentication(committedContent, renderedContent) {
-  const committedLines = toWorkflowLines(committedContent);
-  const renderedLines = toWorkflowLines(renderedContent);
+function lacksOnlyGithubPackagesAuthentication(committedLines, renderedLines) {
   const authenticationLines = flagGithubPackagesAuthenticationLines(renderedLines);
   if (!renderedLines.some((line, index) => authenticationLines[index] && line.startsWith(CI_WORKFLOW_STEP_PREFIX))) return false;
   let committedIndex = 0;
@@ -462,13 +461,13 @@ function lacksOnlyGithubPackagesAuthentication(committedContent, renderedContent
  */
 export async function assertGeneratedCiWorkflowCurrent(repositoryRoot, config) {
   if (!config.ci) return;
-  const workflowPath = `${CI_WORKFLOW_DIRECTORY}/${config.ci.workflow}`;
+  const workflowPath = ciWorkflowPath(config.ci.workflow);
   const regenerateHint = buildRegenerateCiWorkflowHint();
   const committedWorkflow = await readCommittedCiWorkflow(repositoryRoot, config.ci.workflow, regenerateHint);
   const renderedWorkflow = await renderCiReleaseWorkflow(repositoryRoot, config);
-  if (haveSameWorkflowLines(committedWorkflow, renderedWorkflow)) return;
   const committedLines = toWorkflowLines(committedWorkflow);
   const renderedLines = toWorkflowLines(renderedWorkflow);
+  if (haveSameWorkflowLines(committedLines, renderedLines)) return;
   const missingLines = renderedLines.filter((line) => line.trim() !== "" && !committedLines.includes(line)).map((line) => line.trim());
   const missingDetail = missingLines.length > 0 ? ` Líneas esperadas ausentes: ${missingLines.slice(0, CI_WORKFLOW_DRIFT_PREVIEW_LINES).join(" | ")}.` : "";
   throw new ReleaseStepError(`${workflowPath} no coincide con el workflow que --${CREATE_VERSION_FLAG.setupCi} genera para la configuración actual; el worker podría fallar después de subir el tag.${missingDetail}`, regenerateHint);

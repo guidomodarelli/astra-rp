@@ -5,19 +5,18 @@
  */
 
 import {
-  DEFAULT_NPM_REGISTRY_URL, NPM_AUTH_STATUS, NPM_LOOKUP_STATUS, NPM_PACKAGE_NAME_PATTERN,
+  DEFAULT_NPM_REGISTRY_URL, NPM_AUTH_STATUS, NPM_DIST_TAG, NPM_LOOKUP_STATUS, NPM_PACKAGE_NAME_PATTERN, PROJECT_NPM_CONFIG_FILE,
 } from "../constants/create-version.js";
 import {
-  BROWSER_AUTHENTICATION, GITHUB_PACKAGES_REGISTRY_URL, GITHUB_REGISTRY_PROVIDER, GITLAB_PROJECT_REGISTRY_PATTERN,
-  GITLAB_REGISTRY_PROVIDER, JSR_REGISTRY_PROVIDER, JSR_REGISTRY_URL, JSR_SHELL_SAFE_TOKEN_PATTERN,
-  NPM_OIDC_MINIMUM_NODE_VERSION, NPM_OIDC_MINIMUM_VERSION, NPM_REGISTRY_PROVIDER, OIDC_AUTHENTICATION, REGISTRY_LABELS,
+  BROWSER_AUTHENTICATION, GITHUB_PACKAGES_HOST, GITHUB_PACKAGES_REGISTRY_URL, GITHUB_REGISTRY_PROVIDER, GITLAB_PROJECT_REGISTRY_PATTERN,
+  GITLAB_REGISTRY_PROVIDER, JSR_NPM_COMPATIBILITY_HOSTNAME, JSR_REGISTRY_PROVIDER, JSR_REGISTRY_URL, JSR_SHELL_SAFE_TOKEN_PATTERN,
+  NPM_OIDC_MINIMUM_NODE_VERSION, NPM_OIDC_MINIMUM_VERSION, NPM_REGISTRY_PROVIDER, OIDC_AUTHENTICATION, REGISTRY_LABELS, TOKEN_AUTHENTICATION,
 } from "../constants/registry.js";
 import { compareReleaseVersions, isStableReleaseVersion } from "../versions.js";
-import { buildNpmAuthConfigLine, checkNpmPublishAccess, findProjectNpmCredentialKey, lookupPublishedVersions, publishToNpm, resolveNpmToken, resolvePublishRegistry } from "./npm.js";
+import { buildNpmAuthConfigLine, checkNpmPublishAccess, failedLookup, findProjectNpmCredentialKey, lookupPublishedVersions, publishToNpm, resolveNpmToken, resolvePublishRegistry, runNpmCaptured } from "./npm.js";
 import { publishToJsr, readJsrManifest } from "./jsr.js";
-import { isRegistryProvider, resolvePublicationOptions } from "./registry-config.js";
+import { isPlainHttpUrl, isRegistryProvider, resolvePublicationOptions } from "./registry-config.js";
 import { lookupHttpRegistry } from "./registry-http.js";
-import { runCaptured, USES_SHELL_FOR_PACKAGE_MANAGERS } from "./process.js";
 
 /**
  * @typedef {{ provider: import("./registry-config.js").RegistryProvider, options: import("./registry-config.js").ResolvedPublicationOptions }} RegistrySelection
@@ -56,15 +55,15 @@ export async function resolveRegistry(selection, manifest, repositoryRoot, packa
   } else {
     registryUrl = options.registryUrl ?? (provider === GITHUB_REGISTRY_PROVIDER ? GITHUB_PACKAGES_REGISTRY_URL : await resolvePublishRegistry(manifest, repositoryRoot));
     const url = new URL(registryUrl);
-    if (provider === NPM_REGISTRY_PROVIDER && url.hostname === new URL(GITHUB_PACKAGES_REGISTRY_URL).hostname) provider = GITHUB_REGISTRY_PROVIDER;
+    if (provider === NPM_REGISTRY_PROVIDER && url.hostname === GITHUB_PACKAGES_HOST) provider = GITHUB_REGISTRY_PROVIDER;
     else if (provider === NPM_REGISTRY_PROVIDER && GITLAB_PROJECT_REGISTRY_PATTERN.test(url.pathname)) provider = GITLAB_REGISTRY_PROVIDER;
     if (!NPM_PACKAGE_NAME_PATTERN.test(packageName)) throw new Error(`Nombre de paquete inválido para ${REGISTRY_LABELS[provider]}`);
     if (provider === GITHUB_REGISTRY_PROVIDER && !packageName.startsWith("@")) throw new Error("GitHub Packages requiere name con scope (@owner/package) en package.json");
     if (provider === GITLAB_REGISTRY_PROVIDER && !GITLAB_PROJECT_REGISTRY_PATTERN.test(url.pathname)) throw new Error("GitLab requiere el endpoint /api/v4/projects/<id>/packages/npm/ para publicar");
-    if (url.hostname === "npm.jsr.io") throw new Error("npm.jsr.io permite instalar, pero publicar requiere publish: jsr");
+    if (url.hostname === JSR_NPM_COMPATIBILITY_HOSTNAME) throw new Error(`${JSR_NPM_COMPATIBILITY_HOSTNAME} permite instalar, pero publicar requiere publish: jsr`);
   }
   const url = new URL(registryUrl);
-  if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error("El registry debe ser una URL http(s) sin credenciales, query ni fragmento");
+  if (!isPlainHttpUrl(url)) throw new Error("El registry debe ser una URL http(s) sin credenciales, query ni fragmento");
   if (options.packageName !== null && options.packageName !== packageName) throw new Error("publication.packageName debe coincidir con el name del manifest que se publica");
   return { provider, options, registryUrl: url.href, packageName, label: REGISTRY_LABELS[provider], tag: options.tag };
 }
@@ -80,17 +79,46 @@ export async function resolveRegistry(selection, manifest, repositoryRoot, packa
  * @returns {Promise<import("./npm.js").NpmLookup>} Published-version state.
  */
 export async function lookupRegistryVersions(selection, manifest, repositoryRoot, packageRoot = repositoryRoot, lookupNpm = lookupPublishedVersions) {
+  let registry;
   try {
-    const registry = await resolveRegistry(selection, manifest, repositoryRoot, packageRoot);
+    registry = await resolveRegistry(selection, manifest, repositoryRoot, packageRoot);
+  } catch (error) {
+    return describeFailedRegistryLookup(error, selection.provider);
+  }
+  return lookupResolvedRegistryVersions(registry, repositoryRoot, lookupNpm, selection.provider);
+}
+
+/**
+ * Reads the published versions of an already resolved registry through the common version contract.
+ *
+ * @param {SelectedRegistry} registry - Resolved registry.
+ * @param {string} repositoryRoot - Repository containing credentials and routing.
+ * @param {typeof lookupPublishedVersions} lookupNpm - Legacy npm boundary.
+ * @param {import("./registry-config.js").RegistryProvider} selectedProvider - Configured provider, named when the lookup fails.
+ * @returns {Promise<import("./npm.js").NpmLookup>} Published-version state.
+ */
+async function lookupResolvedRegistryVersions(registry, repositoryRoot, lookupNpm, selectedProvider) {
+  try {
     if (registry.provider === JSR_REGISTRY_PROVIDER || registry.provider === GITLAB_REGISTRY_PROVIDER) {
       const { token } = resolveNpmToken(repositoryRoot, { tokenVariable: registry.options.tokenEnv });
-      return lookupHttpRegistry(registry, token);
+      return await lookupHttpRegistry(registry, token);
     }
-    const lookup = await lookupNpm(registry.packageName, repositoryRoot, registry.registryUrl, { tokenVariable: registry.options.tokenEnv, tag: registry.tag ?? "latest", pinScope: true });
-    return registry.provider === NPM_REGISTRY_PROVIDER && registry.tag === "latest" ? lookup : { ...lookup, registryLabel: registry.label, tag: registry.tag };
+    const lookup = await lookupNpm(registry.packageName, repositoryRoot, registry.registryUrl, { tokenVariable: registry.options.tokenEnv, tag: registry.tag ?? NPM_DIST_TAG, pinScope: true });
+    return registry.provider === NPM_REGISTRY_PROVIDER && registry.tag === NPM_DIST_TAG ? lookup : { ...lookup, registryLabel: registry.label, tag: registry.tag };
   } catch (error) {
-    return { status: NPM_LOOKUP_STATUS.failed, publishedVersions: [], reason: error instanceof Error ? error.message : "No se pudo resolver el registry", registryLabel: REGISTRY_LABELS[selection.provider] };
+    return describeFailedRegistryLookup(error, selectedProvider);
   }
+}
+
+/**
+ * Builds the failed lookup of a registry that could not be resolved or read.
+ *
+ * @param {unknown} error - Thrown value.
+ * @param {import("./registry-config.js").RegistryProvider} selectedProvider - Configured provider.
+ * @returns {import("./npm.js").NpmLookup} Failed lookup labeled with the configured provider.
+ */
+function describeFailedRegistryLookup(error, selectedProvider) {
+  return { ...failedLookup(error instanceof Error ? error.message : "No se pudo resolver el registry"), registryLabel: REGISTRY_LABELS[selectedProvider] };
 }
 
 /**
@@ -119,7 +147,7 @@ async function oidcEnvironmentProblem(registry) {
   if (registryProblem !== null) return registryProblem;
   if (!github && !gitlab) return "npm con OIDC requiere GitHub Actions o GitLab CI con sus credenciales OIDC configuradas";
   if (!isStableReleaseVersion(process.versions.node) || compareReleaseVersions(process.versions.node, NPM_OIDC_MINIMUM_NODE_VERSION) < 0) return `OIDC requiere Node >= ${NPM_OIDC_MINIMUM_NODE_VERSION}`;
-  const result = USES_SHELL_FOR_PACKAGE_MANAGERS ? await runCaptured("npm --version", [], { shell: true }) : await runCaptured("npm", ["--version"]);
+  const result = await runNpmCaptured(["--version"], process.cwd());
   return result.status === 0 && isStableReleaseVersion(result.stdout) && compareReleaseVersions(result.stdout, NPM_OIDC_MINIMUM_VERSION) >= 0 ? null : `OIDC requiere npm >= ${NPM_OIDC_MINIMUM_VERSION}`;
 }
 
@@ -141,7 +169,7 @@ export async function checkRegistryAccess(selection, manifest, repositoryRoot, p
     const registry = await resolveRegistry(selection, manifest, repositoryRoot, packageRoot);
     diagnostic = { ...diagnostic, registryUrl: registry.registryUrl, packageName: registry.packageName, registryLabel: registry.label };
     const projectCredentialKey = registry.provider === JSR_REGISTRY_PROVIDER ? null : findProjectNpmCredentialKey(repositoryRoot, registry.registryUrl);
-    if (projectCredentialKey) return { ...diagnostic, status: NPM_AUTH_STATUS.projectCredentials, reason: `.npmrc define ${projectCredentialKey}` };
+    if (projectCredentialKey) return { ...diagnostic, status: NPM_AUTH_STATUS.projectCredentials, reason: `${PROJECT_NPM_CONFIG_FILE} define ${projectCredentialKey}` };
     if (registry.options.authentication === OIDC_AUTHENTICATION) {
       const reason = await oidcEnvironmentProblem(registry);
       return { ...diagnostic, status: reason ? NPM_AUTH_STATUS.unsupportedAuth : NPM_AUTH_STATUS.unknown, source: "OIDC", reason: reason ?? `${registry.label}: OIDC configurado; permiso de publicación no verificable sin publicar` };
@@ -175,20 +203,18 @@ export async function checkRegistryAccess(selection, manifest, repositoryRoot, p
  */
 export async function publishRegistryRelease(selection, manifest, repositoryRoot, packageRoot, version, artifactPath = null) {
   const registry = await resolveRegistry(selection, manifest, repositoryRoot, packageRoot);
-  const token = registry.options.authentication === "token" ? resolveNpmToken(repositoryRoot, { tokenVariable: registry.options.tokenEnv }).token : null;
-  if (registry.options.authentication === "token" && !token) return { registry, exitCode: 1, missingToken: true, confirmed: false };
-  if (registry.provider === JSR_REGISTRY_PROVIDER) {
-    const native = readJsrManifest(packageRoot, registry.options.configFile);
-    if (native.manifest.version !== version) throw new Error(`JSR: ${native.filePath} no declara la versión del release ${version}`);
-  }
-  const result = registry.provider === JSR_REGISTRY_PROVIDER
-    ? { exitCode: await publishToJsr(packageRoot, registry, token), missingToken: false }
+  const token = registry.options.authentication === TOKEN_AUTHENTICATION ? resolveNpmToken(repositoryRoot, { tokenVariable: registry.options.tokenEnv }).token : null;
+  if (registry.options.authentication === TOKEN_AUTHENTICATION && !token) return { registry, exitCode: 1, missingToken: true, confirmed: false };
+  const jsrManifest = registry.provider === JSR_REGISTRY_PROVIDER ? readJsrManifest(packageRoot, registry.options.configFile) : null;
+  if (jsrManifest && jsrManifest.manifest.version !== version) throw new Error(`JSR: ${jsrManifest.filePath} no declara la versión del release ${version}`);
+  const result = jsrManifest
+    ? { exitCode: await publishToJsr(packageRoot, registry, token, jsrManifest), missingToken: false }
     : await publishToNpm(repositoryRoot, {
       authConfigLine: token ? buildNpmAuthConfigLine(registry.registryUrl) : "", artifactPath, packageRoot, registryUrl: registry.registryUrl,
-      tokenVariable: registry.options.tokenEnv, authentication: registry.options.authentication === OIDC_AUTHENTICATION ? "oidc" : "token", access: registry.options.access, tag: registry.options.tag, packageName: registry.packageName,
+      tokenVariable: registry.options.tokenEnv, authentication: registry.options.authentication === OIDC_AUTHENTICATION ? OIDC_AUTHENTICATION : TOKEN_AUTHENTICATION, access: registry.options.access, tag: registry.options.tag, packageName: registry.packageName,
     });
   if (result.exitCode === 0 && registry.provider !== JSR_REGISTRY_PROVIDER) return { registry, ...result, confirmed: true };
-  const lookup = await lookupRegistryVersions(selection, manifest, repositoryRoot, packageRoot);
+  const lookup = await lookupResolvedRegistryVersions(registry, repositoryRoot, lookupPublishedVersions, selection.provider);
   const confirmed = lookup.status === NPM_LOOKUP_STATUS.ok && lookup.publishedVersions.includes(version);
   return { registry, ...result, confirmed };
 }

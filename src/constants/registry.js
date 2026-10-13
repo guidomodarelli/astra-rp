@@ -26,10 +26,14 @@ export const REGISTRY_AUTHENTICATION_MODES = Object.freeze([TOKEN_AUTHENTICATION
 
 /** Provider names used in terminal feedback. */
 export const REGISTRY_LABELS = Object.freeze({ npm: "npm", github: "GitHub Packages", gitlab: "GitLab", jsr: "JSR" });
+/** Host of the GitHub Packages npm endpoint. */
+export const GITHUB_PACKAGES_HOST = "npm.pkg.github.com";
 /** Public GitHub Packages npm endpoint. */
-export const GITHUB_PACKAGES_REGISTRY_URL = "https://npm.pkg.github.com/";
+export const GITHUB_PACKAGES_REGISTRY_URL = `https://${GITHUB_PACKAGES_HOST}/`;
 /** Public native JSR endpoint. */
 export const JSR_REGISTRY_URL = "https://jsr.io/";
+/** Hostname of JSR's npm compatibility endpoint, which installs JSR packages but cannot publish them. */
+export const JSR_NPM_COMPATIBILITY_HOSTNAME = "npm.jsr.io";
 /** Default credential variable for each provider. */
 export const NPM_REGISTRY_TOKEN_VARIABLE = "NPM_TOKEN";
 /** GitHub Actions token or a classic PAT stored under this variable. */

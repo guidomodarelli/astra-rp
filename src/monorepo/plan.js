@@ -14,13 +14,10 @@
  * @module monorepo/plan
  */
 
-import { CHANGELOG_UPDATE_REQUIRED_CODE } from "../constants/changelog.js";
 import {
   CREATE_VERSION_FLAG,
   MAIN_BRANCH,
   MAX_LISTED_ITEMS,
-  MIGRATION_STATUS,
-  NPM_AUTH_STATUS,
   NPM_LOOKUP_STATUS,
   RELEASE_MODE,
   RELEASE_REMOTE,
@@ -28,8 +25,21 @@ import {
   REMOTE_MAIN_REF,
 } from "../constants/create-version.js";
 import { MONOREPO_RELEASE_STEP } from "../constants/monorepo.js";
-import { codeChangesToSetAsideBlocker, describeFeatureBranchGaps, foreignCommitsBlocker, isCodeChange, listPorcelainPaths, missingChecksBlocker } from "../create-version/plan.js";
-import { describeNpmAuthProblem, describeNpmFirstPublicationWarning } from "../create-version/npm-auth.js";
+import {
+  addMigrationsPlanStep,
+  changelogUpdateRequiredBlocker,
+  classifyNpmAuth,
+  codeChangesToSetAsideBlocker,
+  failedNpmLookupBlocker,
+  featureBranchBlocker,
+  foreignCommitsBlocker,
+  hasFailedNpmLookup,
+  isCodeChange,
+  listPorcelainPaths,
+  missingChecksBlocker,
+  syncMainPlanStep,
+  uncommittedFilesBlocker,
+} from "../create-version/plan.js";
 import { DEFAULT_PROJECT_COMMANDS } from "../package-manager.js";
 import { findHighestStableVersion, isStableReleaseVersion, isStableVersionAbove } from "../versions.js";
 import { parseMonorepoReleaseSubject } from "./release-commit.js";
@@ -112,12 +122,7 @@ function findBlockers(state, ignoreLocalChanges, commands) {
   const blockers = [];
 
   if (state.currentBranch !== MAIN_BRANCH) {
-    blockers.push({
-      title: `Estás en ${state.currentBranch}: los releases salen solo desde ${MAIN_BRANCH}`,
-      details: state.branch
-        ? describeFeatureBranchGaps(state.branch, state.pullRequest ?? null, state.githubError ?? null, commands)
-        : [`Hacé git switch ${MAIN_BRANCH} y volvé a correr ${commands.createVersion}.`],
-    });
+    blockers.push(featureBranchBlocker({ ...state, currentBranch: state.currentBranch }, commands));
   }
 
   // Without origin/main no package has commits to compare, so the plan would say everything is up to date.
@@ -131,25 +136,12 @@ function findBlockers(state, ignoreLocalChanges, commands) {
   const blockingChanges = listMonorepoChangesToSetAside(state, RELEASE_MODE.newRelease);
 
   if (blockingChanges.length > 0 && !ignoreLocalChanges) {
-    blockers.push({
-      title: `Hay ${blockingChanges.length} archivo(s) sin commitear`,
-      details: [
-        ...blockingChanges.slice(0, MAX_LISTED_ITEMS),
-        `Commitealos en una rama (o git stash) y volvé a correr ${commands.createVersion}, o corré ${commands.createVersion} --${CREATE_VERSION_FLAG.ignoreLocalChanges} para apartarlos durante el release.`,
-      ],
-    });
+    blockers.push(uncommittedFilesBlocker(blockingChanges, commands));
   }
 
   for (const packageSnapshot of state.packages) {
-    if (packageSnapshot.npm && packageSnapshot.npm.status !== NPM_LOOKUP_STATUS.ok) {
-      const rejectedCredential =
-        packageSnapshot.npmAuth && packageSnapshot.npmAuth.status !== NPM_AUTH_STATUS.missingToken ? describeNpmAuthProblem(packageSnapshot.npmAuth, commands) : null;
-      blockers.push(
-        rejectedCredential ?? {
-          title: `No se pudo consultar ${packageSnapshot.npm.registryLabel ?? "npm"} para ${packageSnapshot.unit.name}`,
-          details: [`${packageSnapshot.npm.reason ?? "npm no respondió"}.`, `Revisá la conexión y volvé a correr ${commands.createVersion}.`],
-        }
-      );
+    if (packageSnapshot.npm && hasFailedNpmLookup(packageSnapshot)) {
+      blockers.push(failedNpmLookupBlocker(packageSnapshot.npm, packageSnapshot.npmAuth, commands, { subject: ` para ${packageSnapshot.unit.name}`, defaultReason: "npm no respondió" }));
     }
   }
 
@@ -316,13 +308,7 @@ function planNewRelease(state, capabilities, commands, warnings, selectAllPackag
   if (state.main.behindCount > 0) {
     return createPlan({
       mode: RELEASE_MODE.newRelease,
-      steps: [
-        {
-          id: RELEASE_STEP.syncMain,
-          title: `Actualizar ${MAIN_BRANCH} desde origin`,
-          detail: `${state.main.behindCount} commit(s) nuevos. Después hay que volver a correr ${commands.createVersion}, que diagnostica con el código nuevo.`,
-        },
-      ],
+      steps: [syncMainPlanStep(state.main.behindCount, commands)],
       warnings,
       candidates: candidateNames,
     });
@@ -339,11 +325,7 @@ function planNewRelease(state, capabilities, commands, warnings, selectAllPackag
   const unchangedChangelogs = candidates.filter(({ changelog }) => changelog.updated !== true);
   if (selectAllPackages && unchangedChangelogs.length > 0) {
     return createPlan({
-      blockers: unchangedChangelogs.map(({ changelog, unit }) => ({
-        code: CHANGELOG_UPDATE_REQUIRED_CODE,
-        title: changelog.reason ?? `${unit.changelogPath} no fue actualizado desde el último release`,
-        details: [`Actualizá ${unit.changelogPath} manualmente y volvé a correr ${commands.createVersion}; beez-rp no lo modifica.`],
-      })),
+      blockers: unchangedChangelogs.map(({ changelog, unit }) => changelogUpdateRequiredBlocker(changelog.reason, unit.changelogPath, commands)),
       warnings,
     });
   }
@@ -367,15 +349,7 @@ function planNewRelease(state, capabilities, commands, warnings, selectAllPackag
     warnings.push(`${changelog.reason ?? `${unit.changelogPath} no fue actualizado desde el último release`}; si elegís publicar ${unit.name}, el release se corta. Actualizalo manualmente.`);
   }
 
-  if (state.migrations?.status === MIGRATION_STATUS.pending) {
-    steps.push({
-      id: RELEASE_STEP.applyMigrations,
-      title: `Aplicar ${state.migrations.pending.length} migración(es) en la base de datos`,
-      detail: `Destino: ${state.migrations.target ?? "desconocido"} · se pide confirmación antes.`,
-    });
-  } else if (state.migrations?.status === MIGRATION_STATUS.unknown) {
-    warnings.push(`No se pudo verificar si hay migraciones pendientes: ${state.migrations.reason ?? "motivo desconocido"}.`);
-  }
+  addMigrationsPlanStep(state.migrations, steps, warnings);
 
   if (capabilities.checks) {
     steps.push({ id: RELEASE_STEP.runChecks, title: "Validar el proyecto", detail: "Corre los checks configurados antes de tocar las versiones." });
@@ -422,16 +396,11 @@ function applyNpmAuth(plan, state, commands) {
     if (!npmAuth) {
       continue;
     }
-    const problem = describeNpmAuthProblem(npmAuth, commands);
+    const { problem, warning } = classifyNpmAuth(npmAuth, commands, ` de ${unit.name}`);
     if (problem) {
       blockers.push(problem);
-    } else if (npmAuth.status === NPM_AUTH_STATUS.unknown) {
-      warnings.push(`No se pudieron verificar las credenciales de ${npmAuth.registryLabel ?? "npm"} de ${unit.name}: ${npmAuth.reason ?? "motivo desconocido"}. Se intenta publicar igual.`);
-    } else {
-      const firstPublication = describeNpmFirstPublicationWarning(npmAuth);
-      if (firstPublication) {
-        warnings.push(firstPublication);
-      }
+    } else if (warning) {
+      warnings.push(warning);
     }
   }
 

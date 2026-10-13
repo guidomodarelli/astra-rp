@@ -11,6 +11,15 @@ import { CI_ENVIRONMENT_NAME_PATTERN, CI_RESERVED_ENVIRONMENT_NAMES, CI_VERCEL_D
  */
 
 /**
+ * Builds the root-relative path of a workflow file.
+ * @param {string} workflow - Validated workflow filename.
+ * @returns {string} Path under {@link CI_WORKFLOW_DIRECTORY}.
+ */
+export function ciWorkflowPath(workflow) {
+  return `${CI_WORKFLOW_DIRECTORY}/${workflow}`;
+}
+
+/**
  * Resolves a workflow basename and explicit environment bindings.
  * @param {unknown} raw - Repository-owned configuration, or null to disable CI releases.
  * @returns {ResolvedCiReleaseConfig | null} Validated configuration.

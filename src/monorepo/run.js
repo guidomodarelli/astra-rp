@@ -13,7 +13,7 @@
  * @module monorepo/run
  */
 
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -25,14 +25,12 @@ import {
   MAIN_BRANCH,
   MAX_LISTED_ITEMS,
   NPM_LOOKUP_STATUS,
-  PACKAGE_MANIFEST_FILE,
   RELEASE_MODE,
   RELEASE_REGISTRY,
   RELEASE_REMOTE,
   RELEASE_STEP,
   SHORT_SHA_LENGTH,
   SUMMARY_VERSION_PLACEHOLDER,
-  buildMainSyncedRestartMessage,
 } from "../constants/create-version.js";
 import { MONOREPO_RELEASE_STEP, SKIP_PACKAGE_CHOICE, SUMMARY_PACKAGE_PLACEHOLDER } from "../constants/monorepo.js";
 import { RELEASE_TYPE_ORDER } from "../constants/versions.js";
@@ -43,18 +41,17 @@ import { checkRegistryAccess, publishRegistryRelease, resolveRegistry, selectPro
 import { prepareJsrVersionUpdates } from "../create-version/jsr.js";
 import { JSR_REGISTRY_PROVIDER } from "../constants/registry.js";
 import { verifyChangelogUpdate } from "../create-version/changelog.js";
-import { ReleaseStepError } from "../create-version/errors.js";
-import { restoreLocalChanges, setAsideLocalChanges } from "../create-version/local-changes.js";
+import { ReleaseStepError, describeError } from "../create-version/errors.js";
+import { readJsonManifest } from "../create-version/json.js";
 import { describePublishedRelease, readNpmPackIntegrity } from "../create-version/npm.js";
 import { describeNpmPublishFailure } from "../create-version/npm-auth.js";
 import { createGitReader } from "../create-version/process.js";
 import {
-  MainSyncedRestartError,
   ReleaseCancelledError,
   applyMigrationsStep,
   askToIgnoreLocalChanges,
   assertNoTrackedChanges,
-  checkPinnedNodeVersion,
+  createAnnotatedTag,
   createHookContext,
   describeReleaseCapabilities,
   assertReleaseFilesMatchHead,
@@ -62,15 +59,19 @@ import {
   prepareVersionFileUpdates,
   readReleaseFile,
   renderCommitList,
+  renderNodeVersionRow,
   renderNpmAuthRow,
+  renderRepositoryRows,
   rewriteManifestVersion,
   renderPlan,
   runChecksStep,
   runConfiguredCommands,
   runGitStep,
+  runPlanSteps,
   syncMainStep,
+  withLocalChangesSetAside,
 } from "../create-version/run.js";
-import { BOX_TONE, ICON, formatDuration, measureActiveMs, paint, print, renderBanner, renderBox, renderRow, renderStepHeader, select, startSpinner } from "../terminal-ui.js";
+import { BOX_TONE, ICON, formatDuration, measureActiveMs, paint, print, renderBanner, renderBox, renderRow, select, startSpinner } from "../terminal-ui.js";
 import { bumpReleaseVersion, compareReleaseVersions, findHighestStableVersion, isStableReleaseVersion, suggestNextReleaseType } from "../versions.js";
 import { buildMonorepoPlan, listMonorepoChangesToSetAside, listPackagesToAuthenticate } from "./plan.js";
 import { buildMonorepoReleaseSubject } from "./release-commit.js";
@@ -117,21 +118,7 @@ const RELEASE_CHECKOUT_PREFIX = "beez-rp-release-";
  * @returns {string} Box.
  */
 function renderMonorepoDiagnosis(state, repositoryRoot) {
-  const { aheadCommits, behindCount } = state.main;
-  const syncParts = [
-    ...(behindCount > 0 ? [paint("yellow", `${behindCount} atrás`)] : []),
-    ...(aheadCommits.length > 0 ? [paint("yellow", `${aheadCommits.length} adelante`)] : []),
-  ];
-  const rows = [
-    state.currentBranch === MAIN_BRANCH ? renderRow(ICON.success, "Rama", MAIN_BRANCH) : renderRow(ICON.failure, "Rama", paint("red", state.currentBranch ?? "HEAD desacoplado")),
-    renderRow(
-      state.workingTreeChanges.length === 0 ? ICON.success : ICON.warning,
-      "Working tree",
-      state.workingTreeChanges.length === 0 ? "limpio" : paint("yellow", `${state.workingTreeChanges.length} cambio(s) sin commitear`)
-    ),
-    renderRow(syncParts.length > 0 ? ICON.warning : ICON.success, `${MAIN_BRANCH} ↔ origin`, syncParts.join(", ") || "al día"),
-    "",
-  ];
+  const rows = [...renderRepositoryRows(state), ""];
 
   for (const packageSnapshot of state.packages) {
     const { unit, lastRelease, unreleasedCommits, npm, npmAuth, changelog } = packageSnapshot;
@@ -155,9 +142,9 @@ function renderMonorepoDiagnosis(state, repositoryRoot) {
     rows.push("", renderRow(state.migrations.status === "pending" ? ICON.warning : ICON.success, "Migraciones", state.migrations.status));
   }
 
-  const node = checkPinnedNodeVersion(repositoryRoot);
-  if (node) {
-    rows.push(renderRow(node.matches ? ICON.success : ICON.warning, "Node.js", node.matches ? process.version : paint("yellow", `${process.version} (.nvmrc pide v${node.pinned})`)));
+  const nodeRow = renderNodeVersionRow(repositoryRoot);
+  if (nodeRow) {
+    rows.push(nodeRow);
   }
 
   return renderBox({ title: "Diagnóstico · monorepo", lines: rows, tone: BOX_TONE.info });
@@ -185,7 +172,7 @@ function requirePackage(context, name) {
  * @throws {ReleaseStepError} When it is not a stable `X.Y.Z` version.
  */
 function readWorkingVersion(context, unit) {
-  const version = JSON.parse(readFileSync(path.join(context.repositoryRoot, unit.manifestPath), "utf8")).version;
+  const version = readJsonManifest(context.repositoryRoot, unit.manifestPath).version;
   if (!isStableReleaseVersion(version)) {
     throw new ReleaseStepError(`${unit.manifestPath} tiene la versión ${String(version)}, que no es X.Y.Z.`, `Corregila y volvé a correr ${context.commands.createVersion}.`);
   }
@@ -381,7 +368,7 @@ async function assertOnlyReleaseChanges(context, releasePaths) {
   const chosenNames = new Set(context.chosen.map(({ unit }) => unit.name));
   const skippedChangelogs = new Set(context.units.filter((unit) => !chosenNames.has(unit.name)).map((unit) => unit.changelogPath));
   // `git diff HEAD` does not list untracked files, yet `npm publish` packs them from the package directory.
-  const untrackedPaths = (await context.reader.git(["ls-files", "--others", "--exclude-standard", "-z"])).split(" ").filter(Boolean);
+  const untrackedPaths = (await context.reader.git(["ls-files", "--others", "--exclude-standard", "-z"])).split("\0").filter(Boolean);
   const changedPaths = [...(await listDiffPaths(context, ["HEAD"])), ...untrackedPaths];
   const dirtySkippedChangelogs = changedPaths.filter((filePath) => skippedChangelogs.has(filePath));
   if (dirtySkippedChangelogs.length > 0) {
@@ -455,7 +442,7 @@ async function bumpPackagesStep(context) {
 
   const commitSha = await context.reader.git(["rev-parse", "HEAD"]);
   for (const release of context.chosen) {
-    await runGitStep(context, ["tag", "-a", release.tag, "-m", `${release.unit.name}@${release.version}`], `No se pudo crear el tag ${release.tag}`, `Si ya existe, revisalo con git show ${release.tag}.`);
+    await createAnnotatedTag(context, release.tag, `${release.unit.name}@${release.version}`, `Si ya existe, revisalo con git show ${release.tag}.`);
     release.commitSha = commitSha;
   }
 
@@ -524,7 +511,7 @@ async function pushPackagesStep(context) {
   for (const release of releases) {
     const taggedSha = await context.reader.tryGit(["rev-parse", "--verify", "--quiet", `refs/tags/${release.tag}^{commit}`]);
     if (taggedSha === null) {
-      await runGitStep(context, ["tag", "-a", release.tag, "-m", `${release.name}@${release.version}`, release.commitSha], `No se pudo crear el tag ${release.tag}`, `Revisá git tag --list ${release.tag}.`);
+      await createAnnotatedTag(context, release.tag, `${release.name}@${release.version}`, `Revisá git tag --list ${release.tag}.`, release.commitSha);
     } else if (taggedSha !== release.commitSha) {
       throw new ReleaseStepError(
         `El tag local ${release.tag} apunta a ${taggedSha.slice(0, SHORT_SHA_LENGTH)} y el commit de release de ${release.name}@${release.version} es ${release.commitSha.slice(0, SHORT_SHA_LENGTH)}.`,
@@ -608,7 +595,7 @@ async function publishPackage(context, checkoutRoot, release) {
   // npm publishes the checkout of the release commit: no tracked file may differ from it, and npm
   // would upload as they are the specifiers only pnpm rewrites when packing.
   await assertNoTrackedChanges({ reader: createGitReader(checkoutRoot), commands: context.commands });
-  const manifest = JSON.parse(readFileSync(path.join(packageRoot, PACKAGE_MANIFEST_FILE), "utf8"));
+  const manifest = readJsonManifest(packageRoot);
   if (manifest.name !== release.name) {
     throw new ReleaseStepError(
       `El commit de release ${release.tag} publica ${String(manifest.name)} desde ${unit.manifestPath}, pero el paquete ahora se llama ${release.name}.`,
@@ -626,7 +613,7 @@ async function publishPackage(context, checkoutRoot, release) {
     // Resolved in the repository, as the diagnosis did: a temporary release checkout lacks an untracked project .npmrc.
     registry = await resolveRegistry(selection, manifest, context.repositoryRoot, packageRoot);
   } catch (error) {
-    throw new ReleaseStepError(`No se puede publicar ${release.name}: ${error instanceof Error ? error.message : String(error)}.`, "Corregí el registry (publishConfig) y volvé a correr el comando.");
+    throw new ReleaseStepError(`No se puede publicar ${release.name}: ${describeError(error)}.`, "Corregí el registry (publishConfig) y volvé a correr el comando.");
   }
 
   const registryUrl = registry.registryUrl;
@@ -759,56 +746,14 @@ function renderMonorepoSummary(context, remoteUrl, startedAt) {
 }
 
 /**
- * Runs the plan steps in order and prints the outcome.
+ * Closes the failure box of a step: the packages already published and how to resume.
  *
  * @param {MonorepoContext} context - Context.
- * @param {string} remoteUrl - `origin` URL.
- * @param {number} startedAt - Start timestamp.
- * @returns {Promise<number>} Exit code.
+ * @returns {Promise<string[]>} Lines appended after the failure and its hint.
  */
-async function runPlanSteps(context, remoteUrl, startedAt) {
-  const { steps } = context.plan;
-
-  for (const [index, planStep] of steps.entries()) {
-    print(renderStepHeader(index + 1, steps.length, planStep.title));
-
-    try {
-      await STEP_EXECUTORS[planStep.id](context);
-    } catch (error) {
-      if (error instanceof ReleaseCancelledError) {
-        return 0;
-      }
-      if (error instanceof MainSyncedRestartError) {
-        print(
-          renderBox({
-            title: `${MAIN_BRANCH} actualizado`,
-            lines: [`${ICON.info} ${buildMainSyncedRestartMessage(context.commands.createVersion)}`, "", paint("gray", "No se tocaron versiones ni tags.")],
-            tone: BOX_TONE.info,
-          })
-        );
-        return 0;
-      }
-
-      const lines = [`${ICON.failure} ${error instanceof Error ? error.message : String(error)}`];
-      if (error instanceof ReleaseStepError) {
-        lines.push("", `${paint("bold", "Qué hacer:")} ${error.hint}`);
-      }
-      if (context.published.length > 0) {
-        lines.push("", `${ICON.warning} Ya se publicaron: ${context.published.map(({ name, version }) => `${name}@${version}`).join(", ")}.`);
-      }
-      lines.push("", paint("gray", `${context.commands.createVersion} retoma desde el primer paso que falte.`));
-      print(renderBox({ title: `Falló el paso ${index + 1}: ${planStep.title}`, lines, tone: BOX_TONE.danger }));
-      return FAILURE_EXIT_CODE;
-    }
-  }
-
-  print("");
-  print(
-    context.pushed || context.published.length > 0
-      ? renderMonorepoSummary(context, remoteUrl, startedAt)
-      : renderBox({ title: "Listo", lines: [`${ICON.success} Plan completado en ${formatDuration(measureActiveMs(startedAt))}.`], tone: BOX_TONE.success })
-  );
-  return 0;
+async function describeMonorepoFailureFollowUp(context) {
+  const publishedLines = context.published.length > 0 ? ["", `${ICON.warning} Ya se publicaron: ${context.published.map(({ name, version }) => `${name}@${version}`).join(", ")}.`] : [];
+  return [...publishedLines, "", paint("gray", `${context.commands.createVersion} retoma desde el primer paso que falte.`)];
 }
 
 /**
@@ -838,7 +783,7 @@ export async function runMonorepoCreateVersion({ repositoryRoot, config, options
   try {
     units = resolveReleaseUnits(discoverWorkspacePackages(repositoryRoot, /** @type {"workspaces" | string[]} */ (config.packages)));
   } catch (error) {
-    print(`${ICON.failure} ${paint("red", error instanceof Error ? error.message : String(error))}`);
+    print(`${ICON.failure} ${paint("red", describeError(error))}`);
     return FAILURE_EXIT_CODE;
   }
 
@@ -869,13 +814,13 @@ export async function runMonorepoCreateVersion({ repositoryRoot, config, options
     spinner.succeed("Diagnóstico completo");
   } catch (error) {
     spinner.fail("No se pudo diagnosticar el monorepo");
-    print(paint("red", error instanceof Error ? error.message : String(error)));
+    print(paint("red", describeError(error)));
     return FAILURE_EXIT_CODE;
   }
 
   const rootName = (() => {
     try {
-      return String(JSON.parse(readFileSync(path.join(repositoryRoot, PACKAGE_MANIFEST_FILE), "utf8")).name ?? "monorepo");
+      return String(readJsonManifest(repositoryRoot).name ?? "monorepo");
     } catch {
       return "monorepo";
     }
@@ -938,32 +883,28 @@ export async function runMonorepoCreateVersion({ repositoryRoot, config, options
   };
 
   const changesToSetAside = options.ignoreLocalChanges ? listMonorepoChangesToSetAside(state, plan.mode) : [];
-  let setAside = null;
 
-  if (changesToSetAside.length > 0) {
-    try {
-      setAside = await setAsideLocalChanges(reader, {
+  return withLocalChangesSetAside(
+    {
+      reader,
+      repositoryRoot,
+      changeCount: changesToSetAside.length,
+      setAsideOptions: {
         keptPaths: plan.mode === RELEASE_MODE.newRelease ? units.map((unit) => unit.changelogPath) : [],
         createVersionCommand: commands.createVersion,
-      });
-    } catch (error) {
-      const hint = error instanceof ReleaseStepError ? ` ${error.hint}` : "";
-      print(`${ICON.failure} ${paint("red", `${error instanceof Error ? error.message : String(error)}${hint}`)}`);
-      return FAILURE_EXIT_CODE;
-    }
-    print(`${ICON.info} ${changesToSetAside.length} cambio(s) sin commitear apartados con git stash; al terminar vuelven igual.`);
-  }
-
-  try {
-    return await runPlanSteps(context, remoteUrl, startedAt);
-  } finally {
-    if (setAside) {
-      const restore = await restoreLocalChanges(reader, repositoryRoot, setAside);
-      print(
-        restore.restored
-          ? `${ICON.success} Cambios sin commitear restaurados como estaban.`
-          : `${ICON.warning} ${paint("yellow", `No se pudieron restaurar los cambios sin commitear (${restore.reason}): recuperalos con git stash pop --index.`)}`
-      );
-    }
-  }
+      },
+      messages: {
+        setAside: "cambio(s) sin commitear apartados con git stash; al terminar vuelven igual.",
+        restored: "Cambios sin commitear restaurados como estaban.",
+        recovery: "recuperalos con git stash pop --index.",
+      },
+    },
+    () => runPlanSteps(context, {
+      steps: plan.steps,
+      executors: STEP_EXECUTORS,
+      untouchedNote: "No se tocaron versiones ni tags.",
+      describeFailureFollowUp: describeMonorepoFailureFollowUp,
+      renderSummary: (finishedContext) => (finishedContext.pushed || finishedContext.published.length > 0 ? renderMonorepoSummary(finishedContext, remoteUrl, startedAt) : null),
+    }, startedAt)
+  );
 }

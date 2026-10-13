@@ -8,6 +8,7 @@
 
 import { spawn } from "node:child_process";
 
+import { isRecord } from "./json.js";
 import { FIELD_SEPARATOR, PACKAGE_MANIFEST_FILE, RECORD_SEPARATOR, VERSION_FIELD_CHANGE_PATTERN } from "../constants/create-version.js";
 
 /**
@@ -19,6 +20,17 @@ import { FIELD_SEPARATOR, PACKAGE_MANIFEST_FILE, RECORD_SEPARATOR, VERSION_FIELD
 
 /** Windows resolves `pnpm.cmd` and `npm.cmd` only through a shell. */
 export const USES_SHELL_FOR_PACKAGE_MANAGERS = process.platform === "win32";
+
+/**
+ * Double-quotes every argument for a Windows shell command line; callers validate them first against
+ * characters that could break out of the quotes.
+ *
+ * @param {readonly string[]} commandArguments - Validated arguments.
+ * @returns {string} Arguments quoted and joined with spaces.
+ */
+export function quoteShellArguments(commandArguments) {
+  return commandArguments.map((commandArgument) => `"${commandArgument}"`).join(" ");
+}
 
 /**
  * Runs a command and captures its output. Leading whitespace is kept because
@@ -190,7 +202,7 @@ export async function readPackageManifestAt(reader, revision, manifestPath = PAC
 
   try {
     const parsed = manifest ? JSON.parse(manifest) : null;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    return isRecord(parsed) ? parsed : null;
   } catch {
     return null;
   }

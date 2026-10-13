@@ -4,6 +4,8 @@
  * @module create-version/jsonc
  */
 
+import { isRecord } from "./json.js";
+
 /**
  * Replaces comments and trailing commas with whitespace, without touching string values or offsets.
  *
@@ -69,6 +71,6 @@ export function normalizeJsonc(content) {
  */
 export function parseJsoncManifest(content) {
   const parsed = JSON.parse(normalizeJsonc(content));
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Registry manifest must be a JSON object");
+  if (!isRecord(parsed)) throw new Error("Registry manifest must be a JSON object");
   return parsed;
 }

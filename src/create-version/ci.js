@@ -9,6 +9,7 @@ import {
   CI_COMMIT_SHA_PATTERN, CI_RELEASE_ENVIRONMENT, CI_RUNTIME_DISABLED_VALUES, CI_RUNTIME_ENVIRONMENT, CI_SETUP_CHOICE,
   CI_WORKFLOW_DIRECTORY, DEFAULT_CI_WORKFLOW, DISPATCH_CI_RELEASE_STEP, RELEASE_EXECUTION,
   CI_MIGRATION_ENVIRONMENT_PATTERN, CI_NODE_VERSION_PIN_PATTERN, CI_RELEASE_METADATA_FILE, CI_VERCEL_CONFIG_FILE, RELEASE_EXECUTION_TRAILER, CI_VERCEL_DEPLOYMENT, CI_WORKFLOW_DRIFT_PREVIEW_LINES,
+  CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_PERMISSION_LINE_PATTERN, CI_GITHUB_TOKEN_JOB_BINDING, CI_WORKFLOW_STEP_PREFIX,
 } from "../constants/ci-release.js";
 import { BROWSER_AUTHENTICATION, GITHUB_PACKAGES_REGISTRY_URL, GITHUB_REGISTRY_PROVIDER, GITHUB_REGISTRY_TOKEN_VARIABLE, JSR_REGISTRY_PROVIDER, NPM_OIDC_MINIMUM_NODE_VERSION, NPM_OIDC_MINIMUM_VERSION, NPM_REGISTRY_PROVIDER, OIDC_AUTHENTICATION, REGISTRY_TOKEN_VARIABLES, TOKEN_AUTHENTICATION } from "../constants/registry.js";
 import { LOCKFILE_PACKAGE_MANAGERS, PACKAGE_MANAGER } from "../constants/package-manager.js";
@@ -379,20 +380,74 @@ function haveSameWorkflowLines(committedContent, renderedContent) {
  * customized workflow is not the generated one; its own checks stay with the release flow. The
  * comparison renders without the generated workflow's GitHub Packages validations, so a customized
  * workflow that authenticates on its own is never blocked by them; they run only once the committed
- * workflow is known to be the generated one.
+ * workflow is known to be the generated one. A workflow that only lacks the GitHub Packages authentication
+ * lines (see {@link lacksOnlyGithubPackagesAuthentication}) was generated before that authentication existed:
+ * releasing with it would fail with 401 after the tag was pushed, so it is rejected instead of treated as customized.
  * @param {string} repositoryRoot - Project root.
  * @param {import("./config.js").ResolvedCreateVersionConfig} config - Project configuration.
  * @returns {Promise<boolean>} True when HEAD commits the generated workflow unchanged.
- * @throws {ReleaseStepError} When Git cannot list or read HEAD, or HEAD commits the generated workflow
- *   with a GitHub Packages setup it cannot authenticate.
+ * @throws {ReleaseStepError} When Git cannot list or read HEAD, HEAD commits the generated workflow
+ *   with a GitHub Packages setup it cannot authenticate, or a generated workflow without that authentication.
  */
 export async function isCommittedCiWorkflowGenerated(repositoryRoot, config) {
   if (!config.ci) return false;
-  const committedWorkflow = await readCommittedRegularFile(repositoryRoot, `${CI_WORKFLOW_DIRECTORY}/${config.ci.workflow}`);
+  const workflowPath = `${CI_WORKFLOW_DIRECTORY}/${config.ci.workflow}`;
+  const committedWorkflow = await readCommittedRegularFile(repositoryRoot, workflowPath);
   if (committedWorkflow === null) return false;
-  if (!haveSameWorkflowLines(committedWorkflow, await renderCiReleaseWorkflow(repositoryRoot, config, { validateGithubPackages: false }))) return false;
+  const renderedWorkflow = await renderCiReleaseWorkflow(repositoryRoot, config, { validateGithubPackages: false });
+  if (!haveSameWorkflowLines(committedWorkflow, renderedWorkflow)) {
+    if (!lacksOnlyGithubPackagesAuthentication(committedWorkflow, renderedWorkflow)) return false;
+    throw new ReleaseStepError(
+      `${workflowPath} se generó antes de que beez-rp autenticara GitHub Packages: le falta el paso "${CI_GITHUB_PACKAGES_AUTHENTICATION_STEP}" o su permiso packages, que el proyecto necesita para instalar dependencias; el worker fallaría con 401 después de subir el tag.`,
+      buildRegenerateCiWorkflowHint(),
+    );
+  }
   await assertCiGithubPackagesSetupSupported(repositoryRoot, config);
   return true;
+}
+
+/**
+ * Builds the recovery hint for a committed workflow that no longer matches what setup generates.
+ * @returns {string} Spanish hint that offers regenerating, updating or keeping a deliberate customization.
+ */
+function buildRegenerateCiWorkflowHint() {
+  return `Regeneralo con --${CREATE_VERSION_FLAG.setupCi} después de borrarlo en un commit propio, o actualizalo y commitealo a mano; si lo personalizaste a propósito, usá --${CREATE_VERSION_FLAG.ci}. No se creó la versión ni el tag.`;
+}
+
+/**
+ * Flags the rendered lines that only exist to authenticate GitHub Packages: the whole authentication step,
+ * the `packages` permission and the job-level Actions token binding.
+ * @param {string[]} renderedLines - Lines of the workflow setup renders.
+ * @returns {boolean[]} For each line, whether it belongs to the GitHub Packages authentication.
+ */
+function flagGithubPackagesAuthenticationLines(renderedLines) {
+  const authenticationStepLine = `${CI_WORKFLOW_STEP_PREFIX}name: ${CI_GITHUB_PACKAGES_AUTHENTICATION_STEP}`;
+  let insideAuthenticationStep = false;
+  return renderedLines.map((line) => {
+    if (line.startsWith(CI_WORKFLOW_STEP_PREFIX)) insideAuthenticationStep = line === authenticationStepLine;
+    return insideAuthenticationStep || CI_GITHUB_PACKAGES_PERMISSION_LINE_PATTERN.test(line) || line === CI_GITHUB_TOKEN_JOB_BINDING;
+  });
+}
+
+/**
+ * Tells whether a committed workflow is the rendered one minus some of its GitHub Packages authentication
+ * lines (see {@link flagGithubPackagesAuthenticationLines}), as a workflow generated before that
+ * authentication existed. Any other difference means the workflow was customized.
+ * @param {string} committedContent - Workflow committed at HEAD.
+ * @param {string} renderedContent - Workflow setup renders for the current configuration, with the authentication step.
+ * @returns {boolean} True when only authentication lines are missing from the committed workflow.
+ */
+function lacksOnlyGithubPackagesAuthentication(committedContent, renderedContent) {
+  const committedLines = toWorkflowLines(committedContent);
+  const renderedLines = toWorkflowLines(renderedContent);
+  const authenticationLines = flagGithubPackagesAuthenticationLines(renderedLines);
+  if (!renderedLines.some((line, index) => authenticationLines[index] && line.startsWith(CI_WORKFLOW_STEP_PREFIX))) return false;
+  let committedIndex = 0;
+  for (const [renderedIndex, renderedLine] of renderedLines.entries()) {
+    if (committedLines[committedIndex] === renderedLine) committedIndex += 1;
+    else if (!authenticationLines[renderedIndex]) return false;
+  }
+  return committedIndex === committedLines.length;
 }
 
 /**
@@ -408,7 +463,7 @@ export async function isCommittedCiWorkflowGenerated(repositoryRoot, config) {
 export async function assertGeneratedCiWorkflowCurrent(repositoryRoot, config) {
   if (!config.ci) return;
   const workflowPath = `${CI_WORKFLOW_DIRECTORY}/${config.ci.workflow}`;
-  const regenerateHint = `Regeneralo con --${CREATE_VERSION_FLAG.setupCi} después de borrarlo en un commit propio, o actualizalo y commitealo a mano; si lo personalizaste a propósito, usá --${CREATE_VERSION_FLAG.ci}. No se creó la versión ni el tag.`;
+  const regenerateHint = buildRegenerateCiWorkflowHint();
   const committedWorkflow = await readCommittedCiWorkflow(repositoryRoot, config.ci.workflow, regenerateHint);
   const renderedWorkflow = await renderCiReleaseWorkflow(repositoryRoot, config);
   if (haveSameWorkflowLines(committedWorkflow, renderedWorkflow)) return;

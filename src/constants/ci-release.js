@@ -171,11 +171,30 @@ export const NPM_CONFIG_JSON_QUOTE = '"';
 export const NPM_CONFIG_REGISTRY_KEY_PATTERN = /^(?:@[^\s:]+:)?registry$/u;
 
 /**
- * Start of every project `.npmrc` key bound to the GitHub Packages host, whatever its path or field
- * (owner paths, `certfile`, pnpm's `:@scope:_authToken`, array keys...). Only `CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY`
- * is accepted among them.
+ * Every project `.npmrc` key bound to the GitHub Packages host, whatever its path or field (owner paths,
+ * `certfile`, pnpm's `:@scope:_authToken`, array keys...). The host must end right there (followed by `/`,
+ * `:` or nothing), so another host that only starts with the same name, such as `//npm.pkg.github.com.corp.example/`,
+ * is not bound to GitHub Packages. Only `CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY` is accepted among them.
  */
-export const NPM_CONFIG_GITHUB_PACKAGES_KEY_PREFIX = "//npm.pkg.github.com";
+export const NPM_CONFIG_GITHUB_PACKAGES_KEY_PATTERN = /^\/\/npm\.pkg\.github\.com(?:[/:]|$)/u;
+
+/** Yarn Classic project config, which can select registries that the generated workflow cannot check. */
+export const YARN_CLASSIC_CONFIG_FILE = ".yarnrc";
+
+/**
+ * `.yarnrc` line selecting a registry, default (`registry`) or scoped (`@scope:registry`), with or without
+ * quotes or the `--` CLI form, separated from its value by whitespace or `:`.
+ */
+export const YARN_CLASSIC_CONFIG_REGISTRY_LINE_PATTERN = /^\s*(["']?)(?:--)?(?:@[^\s:"']+:)?registry\1(?=[\s:]|$)/u;
+
+/** Indentation and marker opening each job step in the generated workflow. */
+export const CI_WORKFLOW_STEP_PREFIX = "      - ";
+
+/** Job-level binding of the built-in Actions token in the generated workflow. */
+export const CI_GITHUB_TOKEN_JOB_BINDING = "      GITHUB_TOKEN: ${{ github.token }}";
+
+/** Permission line the generated workflow adds to read or publish GitHub Packages. */
+export const CI_GITHUB_PACKAGES_PERMISSION_LINE_PATTERN = /^ {2}packages: (?:read|write)$/u;
 
 /** Value npm's INI parser gives a `.npmrc` key written without `=`. */
 export const NPM_CONFIG_VALUELESS_KEY_VALUE = true;

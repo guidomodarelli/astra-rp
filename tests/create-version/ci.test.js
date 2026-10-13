@@ -281,8 +281,12 @@ describe("release location and configuration", () => {
     // npm's INI parser decodes double-quoted keys and values as JSON strings, escapes included.
     { source: "a double-quoted GitHub Packages registry with JSON escapes in .npmrc", npmrc: "@fixture-scope:registry=\"https:\\u002f\\u002fnpm.pkg.github.com\\u002f\"\n", secrets: [], authenticates: true, tokenBindings: [] },
     { source: "a double-quoted GitHub Packages registry key with JSON escapes in .npmrc", npmrc: "\"@fixture-scope\\u003aregistry\"=https://npm.pkg.github.com/\n", secrets: [], authenticates: true, tokenBindings: [] },
-    // Invalid JSON keeps the plain unquoting, so the step stays enabled for a value that still names the host.
-    { source: "a double-quoted GitHub Packages registry that is not valid JSON in .npmrc", npmrc: "@fixture-scope:registry=\"https://npm.pkg.github.com/\\q\"\n", secrets: [], authenticates: true, tokenBindings: [] },
+    // npm keeps a double-quoted value that is not valid JSON with its quotes, so it is not a GitHub Packages URL.
+    { source: "a double-quoted GitHub Packages registry that is not valid JSON in .npmrc", npmrc: "@fixture-scope:registry=\"https://npm.pkg.github.com/\\q\"\n", secrets: [], authenticates: false, tokenBindings: [] },
+    // The same applies to a key: npm keeps the quotes, so it is not the GitHub Packages host token.
+    { source: "a double-quoted GitHub Packages token key that is not valid JSON in .npmrc", npmrc: "\"//npm.pkg.github.com/:_authToken\\q\"=${GITHUB_TOKEN}\n", secrets: [], authenticates: false, tokenBindings: [] },
+    // A host that only starts with the GitHub Packages host name is a different registry.
+    { source: "a credential for a host that only starts with the GitHub Packages host name", npmrc: "//npm.pkg.github.com.corp.example/:_authToken=${CORP_TOKEN}\n", secrets: [], authenticates: false, tokenBindings: [] },
     { source: "a GitHub Packages registry followed by an inline comment in .npmrc", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/ ; private UI kit\n", secrets: [], authenticates: true, tokenBindings: [] },
     // npm strips single quotes and then decodes a remaining double-quoted string as JSON.
     { source: "a single-quoted JSON string GitHub Packages registry in .npmrc", npmrc: "@fixture-scope:registry='\"https://npm.pkg.github.com/\"'\n", secrets: [], authenticates: true, tokenBindings: [] },
@@ -493,6 +497,43 @@ describe("release location and configuration", () => {
     await expect(rendering).rejects.toBeInstanceOf(ReleaseStepError);
     await expect(rendering).rejects.toThrow(/\.npmrc.*no es un archivo regular/u);
     await expect(rendering).rejects.toMatchObject({ hint: expect.stringMatching(/archivo regular/u) });
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
+  it.each([
+    { source: "a default registry over HTTP", yarnrc: "registry \"http://npm.pkg.github.com\"\n" },
+    { source: "a quoted scoped registry", yarnrc: "\"@fixture-scope:registry\" \"https://npm.pkg.github.com\"\n" },
+    { source: "an unquoted scoped registry after a comment", yarnrc: "# yarn lockfile v1\n@fixture-scope:registry \"https://registry.example.test\"\n" },
+  ])("should reject the CI workflow before the bump when GitHub Packages is authenticated and the committed .yarnrc defines $source", async ({ yarnrc }) => {
+    // Arrange
+    const root = createTemporaryDirectory("beez-rp-ci-yarnrc-registry-");
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "yarn@1.22.22" }));
+    writeFileSync(path.join(root, ".npmrc"), "@fixture-scope:registry=https://npm.pkg.github.com/\n");
+    writeFileSync(path.join(root, ".yarnrc"), yarnrc);
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml" } });
+    commitFixtureRepository(root);
+    // Act
+    const rendering = renderCiReleaseWorkflow(root, config);
+    // Assert
+    await expect(rendering).rejects.toBeInstanceOf(ReleaseStepError);
+    await expect(rendering).rejects.toThrow(/\.yarnrc.*registry/u);
+    await expect(rendering).rejects.toMatchObject({ hint: expect.stringMatching(/\.npmrc.*https:\/\//u) });
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
+  it.each([
+    { source: "a .yarnrc without registries next to a GitHub Packages registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", yarnrc: "network-timeout 600000\n", authenticates: true },
+    { source: "a .yarnrc registry without GitHub Packages", npmrc: "registry=https://registry.npmjs.org/\n", yarnrc: "registry \"https://registry.yarnpkg.com\"\n", authenticates: false },
+  ])("should render the CI workflow when the project has $source", async ({ npmrc, yarnrc, authenticates }) => {
+    // Arrange
+    const root = createTemporaryDirectory("beez-rp-ci-yarnrc-accepted-");
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "yarn@1.22.22" }));
+    writeFileSync(path.join(root, ".npmrc"), npmrc);
+    writeFileSync(path.join(root, ".yarnrc"), yarnrc);
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml" } });
+    commitFixtureRepository(root);
+    // Act
+    const workflow = await renderCiReleaseWorkflow(root, config);
+    // Assert
+    expect(workflow.split("\n").includes(`      - name: ${CI_GITHUB_PACKAGES_AUTHENTICATION_STEP}`)).toBe(authenticates);
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it.each(["--ci-release", "--retry-ci"])("should reject invalid tags at the CLI boundary when using %s", (flag) => {
@@ -1076,6 +1117,45 @@ describe("local CI preparation with real Git", () => {
     expect(status).toBe(0);
     expect(runGit(["rev-parse", "v1.2.4^{commit}"], remote)).toBe(runGit(["rev-parse", "HEAD"], root));
     expect(github.dispatch).toHaveBeenCalledOnce();
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
+  it("should block an ordinary CI release before any commit, tag or dispatch when the generated workflow predates the GitHub Packages authentication", async () => {
+    // Arrange
+    const { root, remote } = createCiProject();
+    // The workflow is generated while the project does not read GitHub Packages yet, as before this authentication existed.
+    commitGeneratedWorkflow(root);
+    writeFileSync(path.join(root, ".npmrc"), "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n");
+    runGit(["add", ".npmrc"], root);
+    runGit(["commit", "--quiet", "-m", "chore: read private packages"], root);
+    runGit(["push", "--quiet", "origin", "main"], root);
+    const staleSha = runGit(["rev-parse", "HEAD"], root);
+    const github = isolateGithub();
+    // Act
+    const rejection = await isCommittedCiWorkflowGenerated(root, await loadCreateVersionConfig(root)).catch((caughtError) => caughtError);
+    const status = await runCreateVersion({ repositoryRoot: root, argv: ["--ci", "--bump", "patch"] });
+    // Assert
+    expect(rejection).toBeInstanceOf(ReleaseStepError);
+    expect(rejection.message).toMatch(/GitHub Packages/u);
+    expect(rejection.hint).toMatch(/--setup-ci después de borrarlo en un commit propio/u);
+    expect(status).toBe(1);
+    expect(runGit(["rev-parse", "HEAD"], root)).toBe(staleSha);
+    expect(runGit(["tag", "--list"], remote)).toBe("v1.2.3");
+    expect(github.dispatch).not.toHaveBeenCalled();
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
+  it("should keep treating a workflow customized in other lines as customized when the project reads GitHub Packages", async () => {
+    // Arrange
+    const { root } = createCiProject();
+    commitGeneratedWorkflow(root);
+    const workflowPath = path.join(root, ".github/workflows/release.yml");
+    writeFileSync(workflowPath, readFileSync(workflowPath, "utf8").replace("      - name: Instalar dependencias", "      - name: Instalar dependencias del proyecto"));
+    writeFileSync(path.join(root, ".npmrc"), "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n");
+    runGit(["add", "-A"], root);
+    runGit(["commit", "--quiet", "-m", "chore: customize the workflow and read private packages"], root);
+    // Act
+    const generated = isCommittedCiWorkflowGenerated(root, await loadCreateVersionConfig(root));
+    // Assert
+    await expect(generated).resolves.toBe(false);
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it("should preview setup without writes or GitHub calls when dry-run is requested", async () => {

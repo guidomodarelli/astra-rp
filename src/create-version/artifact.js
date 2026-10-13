@@ -43,6 +43,7 @@ import {
   SAFE_ARTIFACT_PATH_PATTERN,
   SHA256_HEX_PATTERN_SOURCE,
 } from "../constants/create-version.js";
+import { isRecord } from "./json.js";
 
 /**
  * @typedef {{ path: string, expectedSha256: string | null }} PreparedArtifact
@@ -184,16 +185,6 @@ export function computeSha256(filePath) {
  */
 export function computeNpmIntegrity(filePath) {
   return `${NPM_INTEGRITY_ALGORITHM}-${createHash(NPM_INTEGRITY_ALGORITHM).update(readFileSync(filePath)).digest("base64")}`;
-}
-
-/**
- * Tells whether a value is a plain JSON object.
- *
- * @param {unknown} value - Any value.
- * @returns {value is Record<string, unknown>} Whether it is a non-array object.
- */
-function isRecord(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /**

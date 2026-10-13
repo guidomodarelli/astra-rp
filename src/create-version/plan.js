@@ -43,6 +43,7 @@ import {
 import { RELEASE_TYPE } from "../constants/versions.js";
 import { compareReleaseVersions, findHighestStableVersion, isReleaseCommitSubject, isStableReleaseVersion, isStableVersionAbove, toReleaseTag } from "../versions.js";
 import { DEFAULT_PROJECT_COMMANDS } from "../package-manager.js";
+import { describeError } from "./errors.js";
 import { describeNpmAuthProblem, describeNpmFirstPublicationWarning } from "./npm-auth.js";
 
 /**
@@ -161,7 +162,7 @@ export function parseReleaseArguments(argv) {
       },
     }));
   } catch (error) {
-    throw new Error(`Opción inválida: ${error instanceof Error ? error.message : String(error)}. Usá --help para ver las opciones.`, { cause: error });
+    throw new Error(`Opción inválida: ${describeError(error)}. Usá --help para ver las opciones.`, { cause: error });
   }
 
   const releaseTypes = /** @type {string[]} */ (Object.values(RELEASE_TYPE));

@@ -54,7 +54,9 @@ import {
   UNSAFE_QUOTED_PATH_PATTERN,
 } from "../constants/create-version.js";
 import { PACKAGE_MANAGER_USER_AGENT_VARIABLE } from "../constants/guard-publish.js";
-import { USES_SHELL_FOR_PACKAGE_MANAGERS, runCaptured, runInherited } from "./process.js";
+import { describeError } from "./errors.js";
+import { isRecord } from "./json.js";
+import { USES_SHELL_FOR_PACKAGE_MANAGERS, quoteShellArguments, runCaptured, runInherited } from "./process.js";
 
 /**
  * @typedef {{ status: string, publishedVersions: string[], latestVersion?: string | null, reason: string | null, registryLabel?: string, tag?: string | null }} NpmLookup
@@ -100,7 +102,7 @@ function runNpmCaptured(npmArguments, repositoryRoot, environment = process.env)
   }
 
   return USES_SHELL_FOR_PACKAGE_MANAGERS
-    ? runCaptured(`npm ${npmArguments.map((npmArgument) => `"${npmArgument}"`).join(" ")}`, [], { cwd: repositoryRoot, shell: true, env: environment })
+    ? runCaptured(`npm ${quoteShellArguments(npmArguments)}`, [], { cwd: repositoryRoot, shell: true, env: environment })
     : runCaptured("npm", npmArguments, { cwd: repositoryRoot, env: environment });
 }
 
@@ -378,7 +380,7 @@ export async function checkNpmPublishAccess(packageName, repositoryRoot, registr
         : { ...check, status: NPM_AUTH_STATUS.notOwner, user, owners };
     });
   } catch (error) {
-    return { ...check, reason: error instanceof Error ? error.message : String(error) };
+    return { ...check, reason: describeError(error) };
   }
 }
 
@@ -407,7 +409,7 @@ export async function lookupPublishedVersions(packageName, repositoryRoot, regis
     const view = (userConfigPath) => runNpmCaptured(buildNpmViewArguments(packageName, registryUrl, userConfigPath, pinScope), repositoryRoot, environment);
     result = token ? await withNpmAuthConfig(buildNpmAuthConfigLine(registryUrl), view) : await view(null);
   } catch (error) {
-    return { status: NPM_LOOKUP_STATUS.failed, publishedVersions: [], reason: error instanceof Error ? error.message : String(error) };
+    return { status: NPM_LOOKUP_STATUS.failed, publishedVersions: [], reason: describeError(error) };
   }
 
   if (result.status !== 0) {
@@ -425,7 +427,7 @@ export async function lookupPublishedVersions(packageName, repositoryRoot, regis
     return {
       status: NPM_LOOKUP_STATUS.failed,
       publishedVersions: [],
-      reason: `respuesta inválida de npm view (${error instanceof Error ? error.message : String(error)})`,
+      reason: `respuesta inválida de npm view (${describeError(error)})`,
     };
   }
 }
@@ -441,7 +443,7 @@ export function parseNpmPackDryRunOutput(output) {
   try {
     parsed = JSON.parse(output);
   } catch (error) {
-    return { pack: null, problem: `la salida de npm pack --dry-run no es JSON válido (${error instanceof Error ? error.message : String(error)})` };
+    return { pack: null, problem: `la salida de npm pack --dry-run no es JSON válido (${describeError(error)})` };
   }
 
   const packages = Array.isArray(parsed) ? parsed : [];
@@ -515,7 +517,7 @@ function readPackageScope(packageName) {
  */
 function readPublishConfigRegistry(manifest) {
   const publishConfig = manifest[PUBLISH_CONFIG_FIELD];
-  const registries = publishConfig && typeof publishConfig === "object" ? /** @type {Record<string, unknown>} */ (publishConfig) : {};
+  const registries = isRecord(publishConfig) ? publishConfig : {};
   const scope = readPackageScope(manifest.name);
   const candidates = [scope ? registries[`@${scope}${SCOPED_REGISTRY_KEY_SUFFIX}`] : undefined, registries[PUBLISH_CONFIG_REGISTRY_KEY]];
   const declared = candidates.find((candidate) => typeof candidate === "string" && candidate !== "");

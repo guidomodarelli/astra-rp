@@ -5,6 +5,7 @@
 
 import { CREATE_VERSION_CONFIG_FILES, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE } from "./create-version.js";
 import { LOCKFILE_NAMES, PACKAGE_MANAGER } from "./package-manager.js";
+import { GITHUB_PACKAGES_HOST, GITHUB_REGISTRY_TOKEN_VARIABLE } from "./registry.js";
 
 /** Release execution locations offered by the CLI. */
 export const RELEASE_EXECUTION = Object.freeze({ local: "local", ci: "ci" });
@@ -67,7 +68,7 @@ export const GIT_REGULAR_FILE_MODES = Object.freeze(["100644", "100755"]);
 export const CI_DIAGNOSTIC_LIMIT = 800;
 
 /** Credentials that must be redacted from GitHub CLI diagnostics. */
-export const CI_GITHUB_TOKEN_VARIABLES = Object.freeze(["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"]);
+export const CI_GITHUB_TOKEN_VARIABLES = Object.freeze(["GH_TOKEN", GITHUB_REGISTRY_TOKEN_VARIABLE, "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"]);
 
 /** Maximum workflow runs considered when reconciling an uncertain dispatch. */
 export const CI_RUN_LOOKUP_LIMIT = 100;
@@ -141,7 +142,7 @@ export const CI_GITHUB_PACKAGES_TOKEN_VARIABLE = "GITHUB_PACKAGES_TOKEN";
  * User npm config key bound to GitHub Packages. The user config (`~/.npmrc`) is read by npm and pnpm (which
  * ignores credentials in the repository `.npmrc`), the only package managers the generated workflow authenticates.
  */
-export const CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY = "//npm.pkg.github.com/:_authToken";
+export const CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY = `//${GITHUB_PACKAGES_HOST}/:_authToken`;
 
 /** Shell path of the runner's user npm config, where the generated step stores the GitHub Packages token. */
 export const CI_RUNNER_NPM_USER_CONFIG_PATH = "$HOME/.npmrc";
@@ -175,6 +176,7 @@ export const NPM_CONFIG_REGISTRY_KEY_PATTERN = /^(?:@[^\s:]+:)?registry$/u;
  * `certfile`, pnpm's `:@scope:_authToken`, array keys...). The host must end right there (followed by `/`,
  * `:` or nothing), so another host that only starts with the same name, such as `//npm.pkg.github.com.corp.example/`,
  * is not bound to GitHub Packages. Only `CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY` is accepted among them.
+ * The pattern spells {@link GITHUB_PACKAGES_HOST} literally, escaped for a regular expression.
  */
 export const NPM_CONFIG_GITHUB_PACKAGES_KEY_PATTERN = /^\/\/npm\.pkg\.github\.com(?:[/:]|$)/u;
 
@@ -198,7 +200,7 @@ export const CI_UNAUTHENTICATED_PACKAGE_MANAGER_CONFIG_FILES = Object.freeze({
 /** Prefix of a comment line (after trimming) in `.yarnrc`, `.yarnrc.yml`, `bunfig.toml` and `pnpm-workspace.yaml`. */
 export const PACKAGE_MANAGER_CONFIG_COMMENT_PREFIX = "#";
 
-/** Mention of the GitHub Packages host in a package manager config line, in any casing. */
+/** Mention of the GitHub Packages host ({@link GITHUB_PACKAGES_HOST}, spelled literally) in a package manager config line, in any casing. */
 export const GITHUB_PACKAGES_HOST_MENTION_PATTERN = /npm\.pkg\.github\.com/iu;
 
 /** pnpm workspace config, from which pnpm 11+ reads registries and network settings besides the `.npmrc`. */
@@ -212,12 +214,13 @@ export const PNPM_WORKSPACE_CONFIG_FILE = "pnpm-workspace.yaml";
 export const PNPM_WORKSPACE_NETWORK_SETTING_LINE_PATTERN = /^\s*(["']?)(?:registry|registries|strictSsl|strict-ssl|ca|cafile|cert|key|proxy|httpsProxy|https-proxy|noProxy)\1\s*:/u;
 
 /** GitHub Packages origin over plain HTTP, named in the error about a lockfile that resolves packages from it. */
-export const LOCKFILE_GITHUB_PACKAGES_HTTP_URL = "http://npm.pkg.github.com";
+export const LOCKFILE_GITHUB_PACKAGES_HTTP_URL = `http://${GITHUB_PACKAGES_HOST}`;
 
 /**
  * {@link LOCKFILE_GITHUB_PACKAGES_HTTP_URL} inside a lockfile, matched as text in any casing. The host must end right
  * there (followed by `/`, `:`, a quote, whitespace or the end of the text), so another host that only starts with the
  * same name, such as `http://npm.pkg.github.com.corp.example/`, never receives the generated credential and is not matched.
+ * The pattern spells {@link GITHUB_PACKAGES_HOST} literally, escaped for a regular expression.
  */
 export const LOCKFILE_GITHUB_PACKAGES_HTTP_URL_PATTERN = /http:\/\/npm\.pkg\.github\.com(?=[/:"'\s]|$)/iu;
 
@@ -234,7 +237,7 @@ export const CI_TLS_VERIFICATION_DISABLING_VARIABLES = Object.freeze(["NODE_TLS_
 export const CI_WORKFLOW_STEP_PREFIX = "      - ";
 
 /** Job-level binding of the built-in Actions token in the generated workflow. */
-export const CI_GITHUB_TOKEN_JOB_BINDING = "      GITHUB_TOKEN: ${{ github.token }}";
+export const CI_GITHUB_TOKEN_JOB_BINDING = `      ${GITHUB_REGISTRY_TOKEN_VARIABLE}: \${{ github.token }}`;
 
 /** Permission line the generated workflow adds to read or publish GitHub Packages. */
 export const CI_GITHUB_PACKAGES_PERMISSION_LINE_PATTERN = /^ {2}packages: (?:read|write)$/u;
@@ -269,10 +272,10 @@ export const NPM_CONFIG_SECTION_HEADER_PATTERN = /^\[[^\]]*\]\s*$/u;
 export const NPM_CONFIG_ARRAY_KEY_SUFFIX = "[]";
 
 /** Prefixes of `.npmrc` comment lines. */
-export const NPM_CONFIG_COMMENT_PREFIXES = Object.freeze(["#", ";"]);
+export const NPM_CONFIG_COMMENT_PREFIXES = Object.freeze([PACKAGE_MANAGER_CONFIG_COMMENT_PREFIX, ";"]);
 
 /** Quote characters that may wrap a whole `.npmrc` key or value. */
-export const NPM_CONFIG_QUOTES = Object.freeze(['"', "'"]);
+export const NPM_CONFIG_QUOTES = Object.freeze([NPM_CONFIG_JSON_QUOTE, "'"]);
 
 /** Vercel CLI version used by generated workflows. */
 export const CI_VERCEL_CLI_VERSION = "62.2.0";
@@ -325,7 +328,7 @@ export const CI_RELEASE_WORKER_STEP_NAME = "Checks y publicación del release";
  * Environment the worker reads to query its own GitHub Actions history (set by Actions, plus the bound
  * job token); the run id and attempt identify the attempt executing the worker, excluded from that history.
  */
-export const CI_ACTIONS_HISTORY_ENVIRONMENT = Object.freeze({ apiUrl: "GITHUB_API_URL", repository: "GITHUB_REPOSITORY", token: "GITHUB_TOKEN", runId: "GITHUB_RUN_ID", runAttempt: "GITHUB_RUN_ATTEMPT" });
+export const CI_ACTIONS_HISTORY_ENVIRONMENT = Object.freeze({ apiUrl: "GITHUB_API_URL", repository: "GITHUB_REPOSITORY", token: GITHUB_REGISTRY_TOKEN_VARIABLE, runId: "GITHUB_RUN_ID", runAttempt: "GITHUB_RUN_ATTEMPT" });
 
 /** GitHub REST API used when the runner does not provide `GITHUB_API_URL`. */
 export const CI_DEFAULT_GITHUB_API_URL = "https://api.github.com";

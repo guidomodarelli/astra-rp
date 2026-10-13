@@ -33,6 +33,7 @@ import { DEFAULT_PROJECT_COMMANDS, describeProjectCommands, detectPackageManager
 import { isRegistryProvider, resolvePublicationOptions } from "./registry-config.js";
 import { isPreMajorShiftActive } from "../versions.js";
 import { resolveCiReleaseConfig } from "./ci-config.js";
+import { isRecord } from "./json.js";
 import { CI_CONFIG_EXPORT } from "../constants/ci-release.js";
 
 /**
@@ -217,7 +218,7 @@ function resolveChecks(checks, packageScripts, commands) {
  * @throws {Error} When a field has an unsupported type or value.
  */
 export function resolveCreateVersionConfig(rawConfig, { packageScripts = {}, commands = DEFAULT_PROJECT_COMMANDS } = {}) {
-  if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) {
+  if (!isRecord(rawConfig)) {
     throw invalidField("the default export", "an object");
   }
 
@@ -228,7 +229,7 @@ export function resolveCreateVersionConfig(rawConfig, { packageScripts = {}, com
   }
 
   const descriptions = config.releaseTypeDescriptions ?? {};
-  if (typeof descriptions !== "object" || descriptions === null || Array.isArray(descriptions)) {
+  if (!isRecord(descriptions)) {
     throw invalidField("releaseTypeDescriptions", "an object keyed by patch, minor and major");
   }
   for (const [releaseType, description] of Object.entries(descriptions)) {
@@ -389,10 +390,10 @@ export async function loadCreateVersionConfig(repositoryRoot) {
 
   const manifest = readProjectManifest(repositoryRoot);
   const scripts = manifest?.scripts;
-  return resolveCreateVersionConfig(module.default && typeof module.default === "object" && !Array.isArray(module.default)
+  return resolveCreateVersionConfig(isRecord(module.default)
     ? { ...module.default, ci: module.default.ci ?? module[CI_CONFIG_EXPORT] }
     : module.default, {
-    packageScripts: scripts && typeof scripts === "object" && !Array.isArray(scripts) ? /** @type {Record<string, unknown>} */ (scripts) : {},
+    packageScripts: isRecord(scripts) ? scripts : {},
     commands: describeProjectCommands(detectPackageManager(repositoryRoot, manifest ?? undefined)),
   });
 }

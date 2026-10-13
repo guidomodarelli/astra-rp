@@ -11,13 +11,13 @@
  * @module monorepo/state
  */
 
-import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { RELEASE_REMOTE, REMOTE_MAIN_REF } from "../constants/create-version.js";
 import { UNRELEASED_PLACEHOLDER_VERSION } from "../constants/versions.js";
 import { checkNpmPublishAccess, lookupPublishedVersions } from "../create-version/npm.js";
 import { readChangelogUpdateState } from "../create-version/changelog.js";
+import { readJsonManifest } from "../create-version/json.js";
 import { checkRegistryAccess, lookupRegistryVersions } from "../create-version/registry.js";
 import { createGitReader, findVersionChangeCommit, listCommits, readPackageVersionAt } from "../create-version/process.js";
 import {
@@ -170,7 +170,7 @@ export async function collectMonorepoState({
 
   for (const unit of units) {
     onProgress(`Revisando ${unit.name}`);
-    const manifest = JSON.parse(readFileSync(path.join(repositoryRoot, unit.manifestPath), "utf8"));
+    const manifest = readJsonManifest(repositoryRoot, unit.manifestPath);
     const releasedVersion = repository.remoteMainExists ? await readPackageVersionAt(reader, REMOTE_MAIN_REF, unit.manifestPath) : null;
     const lastRelease = repository.remoteMainExists ? await findLastPackageRelease(reader, REMOTE_MAIN_REF, unit, tagFormat, remoteTags) : null;
     const range = lastRelease ? `${lastRelease.sha}..${REMOTE_MAIN_REF}` : REMOTE_MAIN_REF;

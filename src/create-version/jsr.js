@@ -6,11 +6,11 @@
 
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { PACKAGE_VERSION_FIELD_PATTERN, UNSAFE_QUOTED_PATH_PATTERN } from "../constants/create-version.js";
+import { DEFAULT_NPM_REGISTRY_URL, PACKAGE_VERSION_FIELD_PATTERN, UNSAFE_QUOTED_PATH_PATTERN } from "../constants/create-version.js";
 import { JSR_CHILD_TOKEN_VARIABLE, JSR_CONFIG_FILES, JSR_NPM_CLIENT_SPEC, JSR_PACKAGE_NAME_PATTERN, JSR_SHELL_SAFE_TOKEN_PATTERN } from "../constants/registry.js";
 import { ReleaseStepError } from "./errors.js";
 import { normalizeJsonc, parseJsoncManifest } from "./jsonc.js";
-import { runRedactedInherited, USES_SHELL_FOR_PACKAGE_MANAGERS } from "./process.js";
+import { quoteShellArguments, runRedactedInherited, USES_SHELL_FOR_PACKAGE_MANAGERS } from "./process.js";
 import { buildNpmPublishEnvironment } from "./npm.js";
 
 /** Strict decoder used for version-only JSONC changes. */
@@ -87,14 +87,13 @@ export async function prepareJsrVersionUpdates(context, packageRoot, options, ve
 export async function publishToJsr(packageRoot, registry, token, dryRun = false) {
   const native = readJsrManifest(packageRoot, registry.options.configFile);
   const command = registry.options.jsrClient === "deno" ? "deno" : "npx";
-  const prefix = registry.options.jsrClient === "deno" ? [] : ["--yes", "--registry=https://registry.npmjs.org/", JSR_NPM_CLIENT_SPEC];
+  const prefix = registry.options.jsrClient === "deno" ? [] : ["--yes", `--registry=${DEFAULT_NPM_REGISTRY_URL}`, JSR_NPM_CLIENT_SPEC];
   const args = [...prefix, "publish", "--config", native.filePath, ...(dryRun ? ["--dry-run"] : [])];
   if (args.some((argument) => UNSAFE_QUOTED_PATH_PATTERN.test(argument))) throw new Error("JSR: un argumento del cliente no es seguro para el shell");
   if (token && !JSR_SHELL_SAFE_TOKEN_PATTERN.test(token)) throw new Error("JSR: el token no se puede pasar de forma segura al cliente");
   const env = { ...buildNpmPublishEnvironment(), JSR_URL: registry.registryUrl, DEBUG: "", ...(token ? { [JSR_CHILD_TOKEN_VARIABLE]: token } : {}) };
   if (USES_SHELL_FOR_PACKAGE_MANAGERS) {
-    const operands = args.map((argument) => `"${argument}"`).join(" ");
-    return runRedactedInherited(`${command} ${operands}${token ? ` --token "%${JSR_CHILD_TOKEN_VARIABLE}%"` : ""}`, [], { cwd: packageRoot, shell: true, env }, token ? [token] : []);
+    return runRedactedInherited(`${command} ${quoteShellArguments(args)}${token ? ` --token "%${JSR_CHILD_TOKEN_VARIABLE}%"` : ""}`, [], { cwd: packageRoot, shell: true, env }, token ? [token] : []);
   }
   return runRedactedInherited(command, [...args, ...(token ? ["--token", token] : [])], { cwd: packageRoot, env }, token ? [token] : []);
 }

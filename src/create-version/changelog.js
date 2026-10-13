@@ -7,7 +7,7 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { ReleaseStepError } from "./errors.js";
+import { ReleaseStepError, describeError } from "./errors.js";
 
 /**
  * @typedef {{ updated: boolean, reason: string | null }} ChangelogUpdateState
@@ -43,7 +43,7 @@ export async function readChangelogUpdateState(reader, repositoryRoot, filePath,
       ? { updated: true, reason: null }
       : { updated: false, reason: `${filePath} no fue actualizado desde el último release (${releaseRevision}).` };
   } catch (error) {
-    return { updated: false, reason: `No se pudo verificar ${filePath}: ${error instanceof Error ? error.message : String(error)}.` };
+    return { updated: false, reason: `No se pudo verificar ${filePath}: ${describeError(error)}.` };
   }
 }
 

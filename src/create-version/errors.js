@@ -4,6 +4,16 @@
  * @module create-version/errors
  */
 
+/**
+ * Describes any thrown value for a Spanish message: the message of an `Error`, otherwise its text.
+ *
+ * @param {unknown} error - Thrown value.
+ * @returns {string} Message to quote.
+ */
+export function describeError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Failure of a release step or hook, with a Spanish explanation and the next action to take. */
 export class ReleaseStepError extends Error {
   /**

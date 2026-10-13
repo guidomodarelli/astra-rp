@@ -25,13 +25,14 @@ import {
   NPM_LOOKUP_STATUS,
   NPM_NOT_FOUND_CODE,
   NO_PULL_REQUEST_MESSAGE_PATTERN,
-  PACKAGE_MANIFEST_FILE,
   PULL_REQUEST_JSON_FIELDS,
   RELEASE_REMOTE,
   REMOTE_MAIN_REF,
 } from "../constants/create-version.js";
 import { toReleaseTag } from "../versions.js";
 import { readChangelogUpdateState } from "./changelog.js";
+import { describeError } from "./errors.js";
+import { readJsonManifest } from "./json.js";
 import { checkRegistryAccess, lookupRegistryVersions } from "./registry.js";
 import { checkNpmPublishAccess, lookupPublishedVersions, resolvePublishRegistry } from "./npm.js";
 import { createGitReader, findVersionChangeCommit, listCommits, readPackageVersionAt, runCaptured } from "./process.js";
@@ -123,7 +124,7 @@ export async function lookupPullRequest(repositoryRoot, branchName) {
     try {
       return { pullRequest: JSON.parse(result.stdout), githubError: null };
     } catch (error) {
-      return { pullRequest: null, githubError: `respuesta inválida de gh (${error instanceof Error ? error.message : String(error)})` };
+      return { pullRequest: null, githubError: `respuesta inválida de gh (${describeError(error)})` };
     }
   }
 
@@ -186,7 +187,7 @@ export async function readMigrations(checkMigrations) {
   try {
     return await checkMigrations();
   } catch (error) {
-    return { status: MIGRATION_STATUS.unknown, pending: [], target: null, reason: error instanceof Error ? error.message : String(error) };
+    return { status: MIGRATION_STATUS.unknown, pending: [], target: null, reason: describeError(error) };
   }
 }
 
@@ -219,7 +220,7 @@ async function resolveRegistrySafely(manifest, repositoryRoot) {
   try {
     return { registryUrl: await resolvePublishRegistry(manifest, repositoryRoot), reason: null };
   } catch (error) {
-    return { registryUrl: null, reason: error instanceof Error ? error.message : String(error) };
+    return { registryUrl: null, reason: describeError(error) };
   }
 }
 
@@ -365,7 +366,7 @@ export async function collectReleaseState({
   const lastRelease = remoteMainExists ? await findLastRelease(reader, REMOTE_MAIN_REF) : null;
   const unreleasedCommits = remoteMainExists ? await listCommits(reader, lastRelease ? `${lastRelease.sha}..${REMOTE_MAIN_REF}` : REMOTE_MAIN_REF) : [];
 
-  const manifest = JSON.parse(readFileSync(path.join(repositoryRoot, PACKAGE_MANIFEST_FILE), "utf8"));
+  const manifest = readJsonManifest(repositoryRoot);
   let npm = null;
 
   if (trackNpm) {

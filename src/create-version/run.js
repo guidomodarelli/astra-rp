@@ -74,7 +74,8 @@ import {
 } from "./artifact.js";
 import { describeReleaseTypes, loadCreateVersionConfig } from "./config.js";
 import { assertPreservedFilesUnchanged, verifyChangelogUpdate } from "./changelog.js";
-import { ReleaseStepError } from "./errors.js";
+import { ReleaseStepError, describeError } from "./errors.js";
+import { readJsonManifest } from "./json.js";
 import {
   describePublishedRelease,
   readNpmPackIntegrity,
@@ -84,7 +85,7 @@ import { restoreLocalChanges, setAsideLocalChanges } from "./local-changes.js";
 import { describeProjectCommands, detectPackageManager } from "../package-manager.js";
 import { buildReleasePlan, buildReleaseUsage, listLocalChangesToSetAside, parseReleaseArguments } from "./plan.js";
 import { createGitReader, listCommits, runCommandLine, runInherited } from "./process.js";
-import { collectReleaseState } from "./state.js";
+import { collectReleaseState, findLastRelease } from "./state.js";
 import { isRegistryProvider } from "./registry-config.js";
 import { checkRegistryAccess, lookupRegistryVersions, publishRegistryRelease, resolveRegistry, selectProjectRegistry } from "./registry.js";
 import { prepareJsrVersionUpdates, readJsrManifest } from "./jsr.js";
@@ -96,7 +97,6 @@ import { assertCiSetupFilesUnchanged, describeCiEnvironment, prepareCiReleaseMet
 import { createGithubWorkflowClient } from "./github-workflow.js";
 import { loadReleaseTagConfig } from "./release-tag-config.js";
 import { formatReleaseExecutionTrailer } from "./release-execution.js";
-import { findLastRelease } from "./state.js";
 
 /**
  * @typedef {import("./config.js").ResolvedCreateVersionConfig} ResolvedCreateVersionConfig
@@ -418,16 +418,6 @@ export async function runConfiguredCommands(context, commandLines, hint) {
       throw new ReleaseStepError(`${commandLine} falló con código ${exitCode}.`, hint);
     }
   }
-}
-
-/**
- * Reads the working tree `package.json`, which syncing `main` may have changed after the diagnosis.
- *
- * @param {string} repositoryRoot - Repository root.
- * @returns {import("./artifact.js").PackageManifest} Current manifest.
- */
-function readWorkingManifest(repositoryRoot) {
-  return JSON.parse(readFileSync(path.join(repositoryRoot, PACKAGE_MANIFEST_FILE), "utf8"));
 }
 
 /**
@@ -885,7 +875,7 @@ export async function commitReleaseFiles(context, releaseFiles, subject, preserv
         mkdirSync(path.dirname(path.join(context.repositoryRoot, filePath)), { recursive: true });
         writeFileSync(path.join(context.repositoryRoot, filePath), content);
       } catch (error) {
-        throw new ReleaseStepError(`No se pudo escribir ${filePath} para el release (${error instanceof Error ? error.message : String(error)}).`, "Revisá que se pueda escribir (permisos, solo lectura).", {
+        throw new ReleaseStepError(`No se pudo escribir ${filePath} para el release (${describeError(error)}).`, "Revisá que se pueda escribir (permisos, solo lectura).", {
           cause: error,
         });
       }
@@ -899,7 +889,7 @@ export async function commitReleaseFiles(context, releaseFiles, subject, preserv
     const failure =
       error instanceof ReleaseStepError
         ? error
-        : new ReleaseStepError(`No se pudo preparar el commit de versión ${subject} (${error instanceof Error ? error.message : String(error)}).`, "Revisá git status.", { cause: error });
+        : new ReleaseStepError(`No se pudo preparar el commit de versión ${subject} (${describeError(error)}).`, "Revisá git status.", { cause: error });
     throw await rollBackRelease(context, releaseFiles, indexTree, failure, preservedFiles);
   }
 
@@ -1184,7 +1174,8 @@ async function publishReleaseStep(context) {
 
   if (isRegistryProvider(publish)) {
     // Syncing main may have renamed the package after the diagnosis: publish under the current name.
-    const manifest = readWorkingManifest(context.repositoryRoot);
+    /** @type {import("./artifact.js").PackageManifest} */
+    const manifest = readJsonManifest(context.repositoryRoot);
     const packageName = String(manifest.name);
     context.packageName = packageName;
     const selection = selectProjectRegistry(context.config);
@@ -1396,7 +1387,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
   try {
     options = parseReleaseArguments(argv);
   } catch (error) {
-    print(`${ICON.failure} ${paint("red", error instanceof Error ? error.message : String(error))}`);
+    print(`${ICON.failure} ${paint("red", describeError(error))}`);
     print(usage);
     return FAILURE_EXIT_CODE;
   }
@@ -1411,7 +1402,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
   try {
     config = await loadCreateVersionConfig(repositoryRoot);
   } catch (error) {
-    print(`${ICON.failure} ${paint("red", error instanceof Error ? error.message : String(error))}`);
+    print(`${ICON.failure} ${paint("red", describeError(error))}`);
     return FAILURE_EXIT_CODE;
   }
 
@@ -1430,7 +1421,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
   try {
     selection = await chooseReleaseExecution(config, options);
   } catch (error) {
-    print(`${ICON.failure} ${error instanceof Error ? error.message : String(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
+    print(`${ICON.failure} ${describeError(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
     return FAILURE_EXIT_CODE;
   }
   if (!selection) return 0;
@@ -1442,7 +1433,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
     try {
       await assertGeneratedCiWorkflowCurrent(repositoryRoot, config);
     } catch (error) {
-      print(`${ICON.failure} ${error instanceof Error ? error.message : String(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
+      print(`${ICON.failure} ${describeError(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
       return FAILURE_EXIT_CODE;
     }
     selection = { ...selection, setup: false };
@@ -1461,7 +1452,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
         await assertCiNodeVersionFileCommitted(repositoryRoot);
       }
     } catch (error) {
-      print(`${ICON.failure} ${error instanceof Error ? error.message : String(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
+      print(`${ICON.failure} ${describeError(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
       return FAILURE_EXIT_CODE;
     }
   }
@@ -1499,7 +1490,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
     spinner.succeed("Diagnóstico completo");
   } catch (error) {
     spinner.fail("No se pudo diagnosticar el repositorio");
-    print(paint("red", error instanceof Error ? error.message : String(error)));
+    print(paint("red", describeError(error)));
     return FAILURE_EXIT_CODE;
   }
 
@@ -1524,7 +1515,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
       plan = buildCiWorkerPlan(state, capabilities, release.version, config.ci?.deployment === CI_VERCEL_DEPLOYMENT, completedPublication !== null);
       plan.steps.unshift({ id: RELEASE_STEP.verifyChangelog, title: "Verificar el CHANGELOG del release recibido" });
     } catch (error) {
-      print(`${ICON.failure} ${error instanceof Error ? error.message : String(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
+      print(`${ICON.failure} ${describeError(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
       return FAILURE_EXIT_CODE;
     }
   }
@@ -1545,7 +1536,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
       print(`${release.tag} ${submitted.status === CI_DISPATCH_STATUS.existing ? "ya tiene una ejecución activa o exitosa" : "enviado a CI"}: ${submitted.url ?? "revisá Actions"}. No se creó otra versión.`);
       return 0;
     } catch (error) {
-      print(`${ICON.failure} ${error instanceof Error ? error.message : String(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
+      print(`${ICON.failure} ${describeError(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
       return FAILURE_EXIT_CODE;
     }
   }
@@ -1588,7 +1579,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
     try {
       resolveRequestedVersion(state.headVersion, options);
     } catch (error) {
-      print(`${ICON.failure} ${paint("red", error instanceof Error ? error.message : String(error))}`);
+      print(`${ICON.failure} ${paint("red", describeError(error))}`);
       return FAILURE_EXIT_CODE;
     }
   } else if (plan.mode === RELEASE_MODE.resume && (options.bump || options.setVersion)) {
@@ -1606,7 +1597,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
       }
     } catch (error) {
       const hint = error instanceof ReleaseStepError ? ` ${error.hint}` : "";
-      print(`${ICON.failure} ${paint("red", `${error instanceof Error ? error.message : String(error)}${hint}`)}`);
+      print(`${ICON.failure} ${paint("red", `${describeError(error)}${hint}`)}`);
       return FAILURE_EXIT_CODE;
     }
   }
@@ -1636,7 +1627,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
       if (config.migrations && environment.secrets.length === 0) print(`${ICON.warning} El worker necesita las variables de las migraciones: declaralas en ci.secrets o ci.variables y configurá Actions antes de publicar.`);
       print(`${ICON.info} CI ejecutará los checks y hooks; la preparación local omite los hooks de Git.`);
     } catch (error) {
-      print(`${ICON.failure} ${error instanceof Error ? error.message : String(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
+      print(`${ICON.failure} ${describeError(error)}${error instanceof ReleaseStepError ? ` ${error.hint}` : ""}`);
       return FAILURE_EXIT_CODE;
     }
   }
@@ -1670,7 +1661,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
       setAside = await setAsideLocalChanges(reader, { keepChangelog: plan.mode === RELEASE_MODE.newRelease, createVersionCommand: config.commands.createVersion });
     } catch (error) {
       const hint = error instanceof ReleaseStepError ? ` ${error.hint}` : "";
-      print(`${ICON.failure} ${paint("red", `${error instanceof Error ? error.message : String(error)}${hint}`)}`);
+      print(`${ICON.failure} ${paint("red", `${describeError(error)}${hint}`)}`);
       return FAILURE_EXIT_CODE;
     }
 
@@ -1723,7 +1714,7 @@ async function runPlanSteps(context, plan, remoteUrl, startedAt) {
         return 0;
       }
 
-      const lines = [`${ICON.failure} ${error instanceof Error ? error.message : String(error)}`];
+      const lines = [`${ICON.failure} ${describeError(error)}`];
       if (error instanceof ReleaseStepError) {
         lines.push("", `${paint("bold", "Qué hacer:")} ${error.hint}`);
       }

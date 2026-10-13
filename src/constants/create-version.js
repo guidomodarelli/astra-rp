@@ -7,6 +7,7 @@
 import { GITHUB_REGISTRY_PROVIDER, GITLAB_REGISTRY_PROVIDER, JSR_REGISTRY_PROVIDER, NPM_REGISTRY_PROVIDER, NPM_REGISTRY_TOKEN_VARIABLE } from "./registry.js";
 
 import { DEFAULT_CREATE_VERSION_COMMAND } from "./package-manager.js";
+import { COMMIT_SHORT_SHA_LENGTH } from "./changelog.js";
 
 /** Branch that receives releases. */
 export const MAIN_BRANCH = "main";
@@ -285,8 +286,8 @@ export const MAX_LISTED_COMMITS = 12;
 /** Maximum uncommitted files, foreign commits or pending migrations listed before summarizing. */
 export const MAX_LISTED_ITEMS = 5;
 
-/** Length of the abbreviated commit ids shown to the user. */
-export const SHORT_SHA_LENGTH = 7;
+/** Length of the abbreviated commit ids shown to the user: the same as in changelog entries. */
+export const SHORT_SHA_LENGTH = COMMIT_SHORT_SHA_LENGTH;
 
 /** Placeholders of the `artifact` pattern: the released version and the npm package name. */
 export const ARTIFACT_VERSION_PLACEHOLDER = "{version}";

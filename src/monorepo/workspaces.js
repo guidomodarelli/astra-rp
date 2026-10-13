@@ -24,6 +24,8 @@ import {
   WORKSPACES_PACKAGES,
 } from "../constants/monorepo.js";
 import { isPathInsideRoot } from "../create-version/config.js";
+import { describeError } from "../create-version/errors.js";
+import { isRecord } from "../create-version/json.js";
 import { isStableReleaseVersion } from "../versions.js";
 
 /**
@@ -68,7 +70,7 @@ function toPosixPath(relativePath) {
 function readManifest(manifestPath) {
   try {
     const parsed = JSON.parse(readFileSync(manifestPath, "utf8"));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    return isRecord(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -88,9 +90,9 @@ function readWorkspaceManifest(repositoryRoot, directory) {
   try {
     parsed = JSON.parse(readFileSync(path.join(repositoryRoot, manifestPath), "utf8"));
   } catch (error) {
-    throw new Error(`beez-rp create-version: no se pudo leer ${manifestPath}: ${error instanceof Error ? error.message : String(error)}; corregilo o excluí ese workspace`, { cause: error });
+    throw new Error(`beez-rp create-version: no se pudo leer ${manifestPath}: ${describeError(error)}; corregilo o excluí ese workspace`, { cause: error });
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isRecord(parsed)) {
     throw new Error(`beez-rp create-version: ${manifestPath} no es un objeto JSON; corregilo o excluí ese workspace`);
   }
   return parsed;

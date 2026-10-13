@@ -13,7 +13,7 @@
  * @module monorepo/run
  */
 
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -25,7 +25,6 @@ import {
   MAIN_BRANCH,
   MAX_LISTED_ITEMS,
   NPM_LOOKUP_STATUS,
-  PACKAGE_MANIFEST_FILE,
   RELEASE_MODE,
   RELEASE_REGISTRY,
   RELEASE_REMOTE,
@@ -43,7 +42,8 @@ import { checkRegistryAccess, publishRegistryRelease, resolveRegistry, selectPro
 import { prepareJsrVersionUpdates } from "../create-version/jsr.js";
 import { JSR_REGISTRY_PROVIDER } from "../constants/registry.js";
 import { verifyChangelogUpdate } from "../create-version/changelog.js";
-import { ReleaseStepError } from "../create-version/errors.js";
+import { ReleaseStepError, describeError } from "../create-version/errors.js";
+import { readJsonManifest } from "../create-version/json.js";
 import { restoreLocalChanges, setAsideLocalChanges } from "../create-version/local-changes.js";
 import { describePublishedRelease, readNpmPackIntegrity } from "../create-version/npm.js";
 import { describeNpmPublishFailure } from "../create-version/npm-auth.js";
@@ -185,7 +185,7 @@ function requirePackage(context, name) {
  * @throws {ReleaseStepError} When it is not a stable `X.Y.Z` version.
  */
 function readWorkingVersion(context, unit) {
-  const version = JSON.parse(readFileSync(path.join(context.repositoryRoot, unit.manifestPath), "utf8")).version;
+  const version = readJsonManifest(context.repositoryRoot, unit.manifestPath).version;
   if (!isStableReleaseVersion(version)) {
     throw new ReleaseStepError(`${unit.manifestPath} tiene la versión ${String(version)}, que no es X.Y.Z.`, `Corregila y volvé a correr ${context.commands.createVersion}.`);
   }
@@ -381,7 +381,7 @@ async function assertOnlyReleaseChanges(context, releasePaths) {
   const chosenNames = new Set(context.chosen.map(({ unit }) => unit.name));
   const skippedChangelogs = new Set(context.units.filter((unit) => !chosenNames.has(unit.name)).map((unit) => unit.changelogPath));
   // `git diff HEAD` does not list untracked files, yet `npm publish` packs them from the package directory.
-  const untrackedPaths = (await context.reader.git(["ls-files", "--others", "--exclude-standard", "-z"])).split(" ").filter(Boolean);
+  const untrackedPaths = (await context.reader.git(["ls-files", "--others", "--exclude-standard", "-z"])).split("\0").filter(Boolean);
   const changedPaths = [...(await listDiffPaths(context, ["HEAD"])), ...untrackedPaths];
   const dirtySkippedChangelogs = changedPaths.filter((filePath) => skippedChangelogs.has(filePath));
   if (dirtySkippedChangelogs.length > 0) {
@@ -608,7 +608,7 @@ async function publishPackage(context, checkoutRoot, release) {
   // npm publishes the checkout of the release commit: no tracked file may differ from it, and npm
   // would upload as they are the specifiers only pnpm rewrites when packing.
   await assertNoTrackedChanges({ reader: createGitReader(checkoutRoot), commands: context.commands });
-  const manifest = JSON.parse(readFileSync(path.join(packageRoot, PACKAGE_MANIFEST_FILE), "utf8"));
+  const manifest = readJsonManifest(packageRoot);
   if (manifest.name !== release.name) {
     throw new ReleaseStepError(
       `El commit de release ${release.tag} publica ${String(manifest.name)} desde ${unit.manifestPath}, pero el paquete ahora se llama ${release.name}.`,
@@ -626,7 +626,7 @@ async function publishPackage(context, checkoutRoot, release) {
     // Resolved in the repository, as the diagnosis did: a temporary release checkout lacks an untracked project .npmrc.
     registry = await resolveRegistry(selection, manifest, context.repositoryRoot, packageRoot);
   } catch (error) {
-    throw new ReleaseStepError(`No se puede publicar ${release.name}: ${error instanceof Error ? error.message : String(error)}.`, "Corregí el registry (publishConfig) y volvé a correr el comando.");
+    throw new ReleaseStepError(`No se puede publicar ${release.name}: ${describeError(error)}.`, "Corregí el registry (publishConfig) y volvé a correr el comando.");
   }
 
   const registryUrl = registry.registryUrl;
@@ -789,7 +789,7 @@ async function runPlanSteps(context, remoteUrl, startedAt) {
         return 0;
       }
 
-      const lines = [`${ICON.failure} ${error instanceof Error ? error.message : String(error)}`];
+      const lines = [`${ICON.failure} ${describeError(error)}`];
       if (error instanceof ReleaseStepError) {
         lines.push("", `${paint("bold", "Qué hacer:")} ${error.hint}`);
       }
@@ -838,7 +838,7 @@ export async function runMonorepoCreateVersion({ repositoryRoot, config, options
   try {
     units = resolveReleaseUnits(discoverWorkspacePackages(repositoryRoot, /** @type {"workspaces" | string[]} */ (config.packages)));
   } catch (error) {
-    print(`${ICON.failure} ${paint("red", error instanceof Error ? error.message : String(error))}`);
+    print(`${ICON.failure} ${paint("red", describeError(error))}`);
     return FAILURE_EXIT_CODE;
   }
 
@@ -869,13 +869,13 @@ export async function runMonorepoCreateVersion({ repositoryRoot, config, options
     spinner.succeed("Diagnóstico completo");
   } catch (error) {
     spinner.fail("No se pudo diagnosticar el monorepo");
-    print(paint("red", error instanceof Error ? error.message : String(error)));
+    print(paint("red", describeError(error)));
     return FAILURE_EXIT_CODE;
   }
 
   const rootName = (() => {
     try {
-      return String(JSON.parse(readFileSync(path.join(repositoryRoot, PACKAGE_MANIFEST_FILE), "utf8")).name ?? "monorepo");
+      return String(readJsonManifest(repositoryRoot).name ?? "monorepo");
     } catch {
       return "monorepo";
     }
@@ -948,7 +948,7 @@ export async function runMonorepoCreateVersion({ repositoryRoot, config, options
       });
     } catch (error) {
       const hint = error instanceof ReleaseStepError ? ` ${error.hint}` : "";
-      print(`${ICON.failure} ${paint("red", `${error instanceof Error ? error.message : String(error)}${hint}`)}`);
+      print(`${ICON.failure} ${paint("red", `${describeError(error)}${hint}`)}`);
       return FAILURE_EXIT_CODE;
     }
     print(`${ICON.info} ${changesToSetAside.length} cambio(s) sin commitear apartados con git stash; al terminar vuelven igual.`);

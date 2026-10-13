@@ -20,7 +20,8 @@ import {
   REGISTRY_TOKEN_VARIABLES,
   TOKEN_AUTHENTICATION,
 } from "../constants/registry.js";
-import { NPM_DIST_TAG } from "../constants/create-version.js";
+import { NPM_DIST_TAG, NPM_REGISTRY_PROTOCOLS } from "../constants/create-version.js";
+import { isRecord } from "./json.js";
 
 /**
  * @typedef {"npm" | "github" | "gitlab" | "jsr"} RegistryProvider
@@ -48,7 +49,7 @@ export function isRegistryProvider(value) {
  * @throws {Error} When a field is invalid or unsupported by the selected provider.
  */
 export function resolvePublicationOptions(value, provider = NPM_REGISTRY_PROVIDER) {
-  if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) {
+  if (value !== undefined && !isRecord(value)) {
     throw new Error("beez-rp create-version: publication must be an object for a single registry");
   }
   const options = /** @type {PublicationOptions} */ (value ?? {});
@@ -74,7 +75,7 @@ export function resolvePublicationOptions(value, provider = NPM_REGISTRY_PROVIDE
   }
   if (options.registryUrl !== undefined) {
     const url = new URL(options.registryUrl);
-    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    if (!NPM_REGISTRY_PROTOCOLS.includes(url.protocol) || url.username || url.password || url.search || url.hash) {
       throw new Error("beez-rp create-version: publication.registryUrl must be an http(s) URL without credentials, query or fragment");
     }
   }

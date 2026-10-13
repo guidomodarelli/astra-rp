@@ -17,7 +17,7 @@ import { CREATE_VERSION_FLAG, DEFAULT_NPM_REGISTRY_URL, MAIN_BRANCH, MIGRATION_S
 import { RELEASE_TAG_PREFIX } from "../constants/versions.js";
 import { compareReleaseVersions, findHighestStableVersion, isStableReleaseVersion, parseReleaseVersion, toReleaseTag } from "../versions.js";
 import { print, select } from "../terminal-ui.js";
-import { ReleaseStepError } from "./errors.js";
+import { ReleaseStepError, describeError } from "./errors.js";
 import { assertCiGithubPackagesSetupSupported, assertSafeCiPath, describeCiNodeVersion, extractPinnedPackageManagerVersion, readRunningNodeMajor, renderCiReleaseWorkflow } from "./ci-setup.js";
 import { listCommittedTreeEntries, readCommittedRegularFile } from "./committed-tree.js";
 import { runCaptured } from "./process.js";
@@ -204,7 +204,7 @@ async function resolveCiPublicationRegistry(config, manifest, repositoryRoot, pu
     return await resolveRegistry(selectProjectRegistry(config), manifest, repositoryRoot);
   } catch (error) {
     throw new ReleaseStepError(
-      `No se pudo resolver el registry de ${publicationDescription} para comprobarlo antes del release en CI: ${error instanceof Error ? error.message : String(error)}.`,
+      `No se pudo resolver el registry de ${publicationDescription} para comprobarlo antes del release en CI: ${describeError(error)}.`,
       `Corregí publication.registryUrl, publishConfig o la configuración de npm del proyecto; no se creó, subió ni reenvió ningún release.`,
       { cause: error }
     );

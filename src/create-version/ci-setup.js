@@ -19,14 +19,15 @@ import {
   CI_TLS_VERIFICATION_DISABLING_VARIABLES, LOCKFILE_GITHUB_PACKAGES_HTTP_URL, LOCKFILE_GITHUB_PACKAGES_HTTP_URL_PATTERN,
   NPM_CONFIG_DISABLED_VALUE, NPM_CONFIG_STRICT_SSL_KEY,
 } from "../constants/ci-release.js";
-import { CREATE_VERSION_CONFIG_FILES, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
+import { CREATE_VERSION_CONFIG_FILES, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
 import { LOCKFILE_NAMES, PACKAGE_MANAGER } from "../constants/package-manager.js";
 import { requiresCiPublicationHistory } from "./ci-publication-history.js";
 import { isCommittedRegularFile, listCommittedTreeEntries, readCommittedFileEntry, readCommittedRegularFile } from "./committed-tree.js";
 import { renderCiReleaseIdentityStep } from "./ci-release-identity-step.js";
 import { ReleaseStepError } from "./errors.js";
+import { readJsonManifest } from "./json.js";
 import { runCaptured } from "./process.js";
-import { GITHUB_PACKAGES_REGISTRY_URL, GITHUB_REGISTRY_TOKEN_VARIABLE, JSR_REGISTRY_PROVIDER, NPM_OIDC_MINIMUM_VERSION, NPM_REGISTRY_PROVIDER, OIDC_AUTHENTICATION, TOKEN_AUTHENTICATION } from "../constants/registry.js";
+import { GITHUB_PACKAGES_HOST, GITHUB_PACKAGES_REGISTRY_URL, GITHUB_REGISTRY_TOKEN_VARIABLE, JSR_REGISTRY_PROVIDER, NPM_OIDC_MINIMUM_VERSION, NPM_REGISTRY_PROVIDER, OIDC_AUTHENTICATION, TOKEN_AUTHENTICATION } from "../constants/registry.js";
 import { GIT_LITERAL_PATHSPEC_PREFIX } from "../constants/version-files.js";
 
 /**
@@ -225,7 +226,7 @@ function readAcceptedGithubPackagesTokenVariable(value) {
  * @returns {boolean} True for a registry key whose URL host is GitHub Packages.
  */
 function selectsGithubPackagesRegistry(key, value) {
-  return NPM_CONFIG_REGISTRY_KEY_PATTERN.test(key) && typeof value === "string" && URL.canParse(value) && new URL(value).host === new URL(GITHUB_PACKAGES_REGISTRY_URL).host;
+  return NPM_CONFIG_REGISTRY_KEY_PATTERN.test(key) && typeof value === "string" && URL.canParse(value) && new URL(value).host === GITHUB_PACKAGES_HOST;
 }
 
 /**
@@ -579,7 +580,7 @@ export async function assertCiGithubPackagesSetupSupported(repositoryRoot, confi
  *   setup is unsupported (see {@link assertCiGithubPackagesSetupSupported}).
  */
 export async function renderCiReleaseWorkflow(repositoryRoot, config, { validateGithubPackages = true } = {}) {
-  const manifest = JSON.parse(readFileSync(path.join(repositoryRoot, PACKAGE_MANIFEST_FILE), "utf8"));
+  const manifest = readJsonManifest(repositoryRoot);
   const manager = config.commands.packageManager;
   const pinnedVersion = extractPinnedPackageManagerVersion(manifest);
   const nodeVersion = await describeCiNodeVersion(repositoryRoot);

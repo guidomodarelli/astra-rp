@@ -10,6 +10,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 - `create-version` cierra la sección `## [Unreleased]` del CHANGELOG en el commit de versión: la renombra a `## [X.Y.Z] - AAAA-MM-DD` (con el día local de la máquina que crea el commit) y deja arriba un `## [Unreleased]` nuevo y vacío; en un monorepo lo hace en el `CHANGELOG.md` de cada paquete que sale. Un release nuevo se bloquea antes del bump, también con `--dry-run`, si el CHANGELOG no tiene `## [Unreleased]` o si ese bloque no tiene ninguna entrada (`- …`). Si falla la escritura o el commit, el CHANGELOG vuelve a su contenido y staging anteriores sin crear el tag; al retomar un release ya commiteado y en el worker de CI no se modifica.
 - El encabezado de cada paso (`━━ PASO N/M ━ …`) muestra el título del paso en texto normal (solo `PASO N/M` sigue en negrita) y deja una línea en blanco antes de la salida del paso, para que no quede pegada al encabezado.
+- Si el CHANGELOG no es texto UTF-8 válido (por ejemplo, está en ISO-8859-1), `create-version` se detiene antes del bump con un aviso para convertirlo a UTF-8, en lugar de cerrar `## [Unreleased]` reemplazando sus caracteres por `�` en el commit de versión.
 
 ## [0.7.5] - 2026-10-13
 

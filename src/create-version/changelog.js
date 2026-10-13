@@ -19,6 +19,7 @@ import {
   UNRELEASED_LINE_PATTERN,
 } from "../constants/changelog.js";
 import { ReleaseStepError, describeError } from "./errors.js";
+import { STRICT_UTF8_DECODER } from "./strict-utf8.js";
 
 /**
  * @typedef {{ updated: boolean, reason: string | null }} ChangelogUpdateState
@@ -109,18 +110,41 @@ export async function verifyChangelogUpdate(context, filePath, releaseRevision) 
 }
 
 /**
+ * Decodes a verified changelog as strict UTF-8: closing `[Unreleased]` over text decoded from other
+ * bytes (such as ISO-8859-1) would write U+FFFD in their place in the release commit.
+ *
+ * @param {ChangelogContext} context - Release context.
+ * @param {PreservedReleaseFile} changelog - Changelog captured by {@link verifyChangelogUpdate}.
+ * @returns {string} Changelog text.
+ * @throws {ReleaseStepError} When the changelog is not valid UTF-8.
+ */
+function decodeChangelog(context, changelog) {
+  try {
+    return STRICT_UTF8_DECODER.decode(changelog.originalBytes);
+  } catch (error) {
+    throw new ReleaseStepError(
+      `${changelog.filePath} no es texto UTF-8 válido: cerrar su sección ${UNRELEASED_HEADING} cambiaría también otros bytes.`,
+      `Convertilo a UTF-8 y commitealo, y volvé a correr ${context.commands.createVersion}; no se tocó la versión.`,
+      { cause: error }
+    );
+  }
+}
+
+/**
  * Requires entries in the `[Unreleased]` block of a verified changelog, which the release commit closes.
  *
  * @param {ChangelogContext} context - Release context.
  * @param {PreservedReleaseFile} changelog - Changelog captured by {@link verifyChangelogUpdate}.
- * @returns {void}
- * @throws {ReleaseStepError} When `[Unreleased]` is missing or has no entries.
+ * @returns {string} Changelog text, decoded as strict UTF-8.
+ * @throws {ReleaseStepError} When the changelog is not valid UTF-8, or `[Unreleased]` is missing or has no entries.
  */
 export function assertUnreleasedEntries(context, changelog) {
-  const reason = describeMissingUnreleasedEntries(readUnreleased(changelog.originalBytes.toString("utf8")), changelog.filePath);
+  const text = decodeChangelog(context, changelog);
+  const reason = describeMissingUnreleasedEntries(readUnreleased(text), changelog.filePath);
   if (reason) {
     throw new ReleaseStepError(`${reason}.`, describeUnreleasedEntriesHint(changelog.filePath, context.commands.createVersion));
   }
+  return text;
 }
 
 /**
@@ -187,14 +211,14 @@ export function closeUnreleasedSection(changelog, version, releaseDate) {
  * @param {string} version - Version being released.
  * @param {string} releaseDate - Release day in `YYYY-MM-DD` format.
  * @returns {import("./run.js").ReleaseFileUpdate} File to write, with its bytes before the release.
- * @throws {ReleaseStepError} When a step changed the changelog or `[Unreleased]` cannot be closed.
+ * @throws {ReleaseStepError} When a step changed the changelog, it is not valid UTF-8 or `[Unreleased]` cannot be closed.
  */
 export function prepareChangelogClosing(context, changelog, version, releaseDate) {
   assertPreservedFilesUnchanged(context, [changelog]);
-  assertUnreleasedEntries(context, changelog);
+  const text = assertUnreleasedEntries(context, changelog);
   return {
     filePath: changelog.filePath,
     originalBytes: changelog.originalBytes,
-    content: closeUnreleasedSection(changelog.originalBytes.toString("utf8"), version, releaseDate),
+    content: closeUnreleasedSection(text, version, releaseDate),
   };
 }

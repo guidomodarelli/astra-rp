@@ -179,4 +179,21 @@ describe("closing [Unreleased] in the release commit", () => {
     writeFileSync(changelogPath, "# Notas modificadas por un check\n\n## [Unreleased]\n\n- Algo.\n");
     expect(() => prepareChangelogClosing(context, verified, "1.1.0", "2026-10-13")).toThrow("Un paso anterior modificó CHANGELOG.md");
   });
+
+  it("should stop before the bump, without rewriting it, when the changelog is not valid UTF-8", async () => {
+    // Arrange
+    const { context, changelogPath } = createChangelogRepository();
+    const latin1Changelog = Buffer.from("# Notas\n\n## [Unreleased]\n\n- Corrección de la canción.\n", "latin1");
+    writeFileSync(changelogPath, latin1Changelog);
+    const verified = await verifyChangelogUpdate(context, "CHANGELOG.md", null);
+
+    // Act and Assert
+    const expectedFailure = expect.objectContaining({
+      message: expect.stringContaining("CHANGELOG.md no es texto UTF-8 válido"),
+      hint: expect.stringContaining("Convertilo a UTF-8"),
+    });
+    expect(() => assertUnreleasedEntries(context, verified)).toThrow(expectedFailure);
+    expect(() => prepareChangelogClosing(context, verified, "1.1.0", "2026-10-13")).toThrow(expectedFailure);
+    expect(readFileSync(changelogPath)).toEqual(latin1Changelog);
+  });
 });

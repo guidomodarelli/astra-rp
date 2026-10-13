@@ -1,6 +1,6 @@
 {
   "name": "beez-rp",
-  "version": "0.7.5",
+  "version": "0.8.0",
   "description": "Dependency-free release process shared by the Beez projects: stable version rules, Vercel build gate, manual changelog checks with automatic closing of [Unreleased], and terminal UI.",
   "license": "MIT",
   "author": "Guido Modarelli",

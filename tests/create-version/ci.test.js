@@ -284,30 +284,18 @@ describe("release location and configuration", () => {
     // Invalid JSON keeps the plain unquoting, so the step stays enabled for a value that still names the host.
     { source: "a double-quoted GitHub Packages registry that is not valid JSON in .npmrc", npmrc: "@fixture-scope:registry=\"https://npm.pkg.github.com/\\q\"\n", secrets: [], authenticates: true, tokenBindings: [] },
     { source: "a GitHub Packages registry followed by an inline comment in .npmrc", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/ ; private UI kit\n", secrets: [], authenticates: true, tokenBindings: [] },
-    { source: "a project GitHub Packages credential that expands an environment variable", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["NODE_AUTH_TOKEN"] },
-    { source: "a literal project GitHub Packages token", npmrc: "//npm.pkg.github.com/:_authToken=fixture-literal-token\n", secrets: [], authenticates: true, tokenBindings: [] },
-    { source: "a quoted project GitHub Packages basic credential key", npmrc: "\"//npm.pkg.github.com/fixture-owner/:_auth\"=Zml4dHVyZTpmaXh0dXJl\n", secrets: [], authenticates: true, tokenBindings: [] },
-    { source: "a project GitHub Packages username", npmrc: "//npm.pkg.github.com/:username=fixture-user\n", secrets: [], authenticates: true, tokenBindings: [] },
+    // The only accepted project credential is the host token expanding one variable, which gets the Actions token at job level.
+    { source: "the accepted host token expanding an environment variable", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["NODE_AUTH_TOKEN"] },
+    // GITHUB_TOKEN comes from the workflow token, not from the runner's immutable defaults, so the job binds it.
+    { source: "the accepted host token expanding GITHUB_TOKEN", npmrc: "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["GITHUB_TOKEN"] },
     { source: "a GitHub Packages registry only in an uncommitted .npmrc", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n", committed: false, secrets: [], authenticates: false, tokenBindings: [] },
     { source: "only public or commented registries in .npmrc", npmrc: "@fixture-scope:registry=https://registry.npmjs.org/\n; registry=https://npm.pkg.github.com\n//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n", secrets: [], authenticates: false, tokenBindings: [] },
-    // GITHUB_TOKEN comes from the workflow token, not from the runner's immutable defaults, so the job binds it.
-    { source: "a project GitHub Packages token expanding GITHUB_TOKEN", npmrc: "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["GITHUB_TOKEN"] },
     // npm keeps the last assignment of a repeated key, so only effective values are validated and bound.
-    { source: "an empty GitHub Packages token replaced by a later assignment", npmrc: "//npm.pkg.github.com/:_authToken=\n//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["GITHUB_TOKEN"] },
+    { source: "a rejected GitHub Packages token replaced by a later accepted one", npmrc: "//npm.pkg.github.com/:_authToken=\n//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["GITHUB_TOKEN"] },
     { source: "a reserved token variable replaced by a later quoted-key assignment", npmrc: "//npm.pkg.github.com/:_authToken=${HUSKY}\n\"//npm.pkg.github.com/:_authToken\"=${NODE_AUTH_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["NODE_AUTH_TOKEN"] },
-    { source: "a runner default variable replaced by a later assignment", npmrc: "//npm.pkg.github.com/:_authToken=${GITHUB_REPOSITORY}\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["NODE_AUTH_TOKEN"] },
     { source: "a GitHub Packages registry replaced by a later public registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n@fixture-scope:registry=https://registry.npmjs.org/\n", secrets: [], authenticates: false, tokenBindings: [] },
-    // npm skips an empty owner-path token and empty basic credentials in favor of the host token the worker writes.
-    { source: "an empty owner-scoped GitHub Packages token", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/fixture-owner/:_authToken=\n", secrets: [], authenticates: true, tokenBindings: [] },
-    { source: "an empty owner-scoped GitHub Packages basic credential followed by a comment", npmrc: "//npm.pkg.github.com/fixture-owner/:_auth= ; filled locally\n", secrets: [], authenticates: true, tokenBindings: [] },
-    { source: "an empty GitHub Packages username and password", npmrc: "//npm.pkg.github.com/:username=\n//npm.pkg.github.com/:_password=\n", secrets: [], authenticates: true, tokenBindings: [] },
     // npm nests keys under an INI [section], so they never configure the top-level registry or its credentials.
     { source: "GitHub Packages settings only inside an INI section", npmrc: "[fixture-section]\n@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=\n", secrets: [], authenticates: false, tokenBindings: [] },
-    // A basic credential reading a declared secret gets that secret, not the Actions token.
-    { source: "a GitHub Packages basic credential expanding a declared secret", npmrc: "//npm.pkg.github.com/:_auth=${GITHUB_PACKAGES_BASIC_AUTH}\n", secrets: ["GITHUB_PACKAGES_BASIC_AUTH"], authenticates: true, tokenBindings: [] },
-    // npm prefers the host token the worker writes over host-level basic credentials, so an undeclared reference there is harmless.
-    { source: "a host-level GitHub Packages basic credential expanding an undeclared variable", npmrc: "//npm.pkg.github.com/:_auth=${GITHUB_PACKAGES_BASIC_AUTH}\n", secrets: [], authenticates: true, tokenBindings: [] },
-    { source: "a host-level GitHub Packages password expanding an undeclared variable", npmrc: "//npm.pkg.github.com/:username=fixture-user\n//npm.pkg.github.com/:_password=${GITHUB_PACKAGES_PASSWORD}\n", secrets: [], authenticates: true, tokenBindings: [] },
     // npm also ends a line at a lone carriage return, so the second CR-only line still sets the GitHub Packages token.
     { source: "a GitHub Packages token on a CR-only line", npmrc: "registry=https://registry.npmjs.org/\r//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\r", secrets: [], authenticates: true, tokenBindings: ["GITHUB_TOKEN"] },
   ])("should authenticate dependency installs against GitHub Packages when the project uses $source: $authenticates", async ({ npmrc, committed = true, secrets, authenticates, tokenBindings }) => {
@@ -342,62 +330,93 @@ describe("release location and configuration", () => {
     expect(readFileSync(path.join(runnerHome, ".npmrc"), "utf8")).toBe("//npm.pkg.github.com/:_authToken=fixture-actions-token\n");
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
-  it.each([
-    { source: "an empty GitHub Packages token",npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*vacía/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    { source: "a quoted empty GitHub Packages token", npmrc: "//npm.pkg.github.com/:_authToken=\"\"\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*vacía/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    { source: "a quoted-key empty GitHub Packages token followed by a comment", npmrc: "\"//npm.pkg.github.com/:_authToken\"= ; filled locally\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*vacía/u, hint: /\$\{GITHUB_TOKEN\}/u },
+  /** Hint shared by every GitHub Packages credential outside the accepted `//npm.pkg.github.com/:_authToken=${NAME}` form. */
+  const ACCEPTED_CREDENTIAL_HINT = /\/\/npm\.pkg\.github\.com\/:_authToken=\$\{GITHUB_TOKEN\} o quitá la línea/u;
+
+  /**
+   * @typedef {object} GithubPackagesRejectionRow
+   * @property {string} source - Scenario description.
+   * @property {string} npmrc - Committed `.npmrc` contents.
+   * @property {RegExp} message - Expected error message.
+   * @property {RegExp} hint - Expected error hint.
+   * @property {string[]} [secrets] - `ci.secrets`.
+   * @property {string[]} [variables] - `ci.variables`.
+   * @property {string} [deployment] - `ci.deployment`.
+   * @property {string} [publish] - Publication provider.
+   * @property {Record<string, string>} [publication] - Publication settings.
+   */
+
+  /**
+   * Builds a rejection row for a GitHub Packages credential the closed policy does not accept.
+   * @param {string} source - Scenario description.
+   * @param {string} npmrc - Committed `.npmrc` contents.
+   * @param {string} credentialKey - Effective key the message must name.
+   * @param {Partial<GithubPackagesRejectionRow>} [overrides] - Extra configuration for the row.
+   * @returns {GithubPackagesRejectionRow} Table row.
+   */
+  function rejectedCredentialRow(source, npmrc, credentialKey, overrides = {}) {
+    const escapedKey = credentialKey.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&");
+    return { source, npmrc, message: new RegExp(`${escapedKey}.*solo admite`, "u"), hint: ACCEPTED_CREDENTIAL_HINT, ...overrides };
+  }
+
+  it.each(/** @type {GithubPackagesRejectionRow[]} */ ([
+    // Policy A: the only accepted project credential for GitHub Packages is the host token expanding exactly one `${NAME}`.
+    rejectedCredentialRow("an empty GitHub Packages token", "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=\n", "//npm.pkg.github.com/:_authToken"),
+    rejectedCredentialRow("a quoted-key empty GitHub Packages token followed by a comment", "\"//npm.pkg.github.com/:_authToken\"= ; filled locally\n", "//npm.pkg.github.com/:_authToken"),
+    rejectedCredentialRow("a later assignment that empties the accepted GitHub Packages token", "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n//npm.pkg.github.com/:_authToken=\n", "//npm.pkg.github.com/:_authToken"),
+    rejectedCredentialRow("a GitHub Packages host token without a value", "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken\n", "//npm.pkg.github.com/:_authToken"),
+    rejectedCredentialRow("a GitHub Packages host token set to true", "//npm.pkg.github.com/:_authToken=true\n", "//npm.pkg.github.com/:_authToken"),
+    rejectedCredentialRow("a quoted GitHub Packages host token set to false", "//npm.pkg.github.com/:_authToken=\"false\"\n", "//npm.pkg.github.com/:_authToken"),
+    rejectedCredentialRow("a GitHub Packages host token set to undefined", "//npm.pkg.github.com/:_authToken=undefined\n", "//npm.pkg.github.com/:_authToken"),
+    rejectedCredentialRow("a quoted GitHub Packages host token set to undefined", "//npm.pkg.github.com/:_authToken='undefined'\n", "//npm.pkg.github.com/:_authToken"),
+    rejectedCredentialRow("a literal GitHub Packages host token", "//npm.pkg.github.com/:_authToken=fixture-secret-token\n", "//npm.pkg.github.com/:_authToken"),
+    rejectedCredentialRow("a composite GitHub Packages host token", "//npm.pkg.github.com/:_authToken=${PACKAGE_TOKEN}-suffix\n", "//npm.pkg.github.com/:_authToken"),
+    rejectedCredentialRow("an owner-path GitHub Packages token expanding GITHUB_TOKEN", "//npm.pkg.github.com/fixture-owner/:_authToken=${GITHUB_TOKEN}\n", "//npm.pkg.github.com/fixture-owner/:_authToken"),
+    rejectedCredentialRow("an owner-path GitHub Packages token set to true", "//npm.pkg.github.com/fixture-owner/:_authToken=true\n", "//npm.pkg.github.com/fixture-owner/:_authToken"),
+    rejectedCredentialRow("an owner-path GitHub Packages basic credential without a value", "//npm.pkg.github.com/fixture-owner/:_auth\n", "//npm.pkg.github.com/fixture-owner/:_auth"),
+    rejectedCredentialRow("an owner-path GitHub Packages basic credential expanding a declared secret", "//npm.pkg.github.com/fixture-owner/:_auth=${GITHUB_PACKAGES_BASIC_AUTH}\n", "//npm.pkg.github.com/fixture-owner/:_auth", { secrets: ["GITHUB_PACKAGES_BASIC_AUTH"] }),
+    rejectedCredentialRow("an owner-path GitHub Packages basic credential expanding the publication token", "//npm.pkg.github.com/fixture-owner/:_auth=${NPM_TOKEN}\n", "//npm.pkg.github.com/fixture-owner/:_auth", { secrets: ["NPM_TOKEN"], publish: "npm", publication: { authentication: "token", tokenEnv: "NPM_TOKEN" } }),
+    rejectedCredentialRow("an owner-path GitHub Packages basic credential expanding a declared VERCEL_TOKEN deployment secret", "//npm.pkg.github.com/fixture-owner/:_auth=${VERCEL_TOKEN}\n", "//npm.pkg.github.com/fixture-owner/:_auth", { deployment: "vercel", secrets: ["VERCEL_TOKEN"] }),
+    rejectedCredentialRow("an owner-path GitHub Packages username alone", "//npm.pkg.github.com/fixture-owner/:username=${GITHUB_PACKAGES_USER}\n", "//npm.pkg.github.com/fixture-owner/:username"),
+    rejectedCredentialRow("an owner-path GitHub Packages password alone", "//npm.pkg.github.com/fixture-owner/:_password=${GITHUB_PACKAGES_PASSWORD}\n", "//npm.pkg.github.com/fixture-owner/:_password"),
+    rejectedCredentialRow("a quoted host-level GitHub Packages basic credential key", "\"//npm.pkg.github.com/:_auth\"=${GITHUB_PACKAGES_BASIC_AUTH}\n", "//npm.pkg.github.com/:_auth", { secrets: ["GITHUB_PACKAGES_BASIC_AUTH"] }),
+    rejectedCredentialRow("a host-level GitHub Packages username", "//npm.pkg.github.com/:username=fixture-user\n", "//npm.pkg.github.com/:username"),
+    // Policy B: the accepted token still cannot expand a binding the workflow cannot give the Actions token.
     { source: "a GitHub Packages token expanding the reserved HUSKY binding", npmrc: "//npm.pkg.github.com/:_authToken=${HUSKY}\n", message: /HUSKY.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding the reserved release tag binding", npmrc: "//npm.pkg.github.com/:_authToken=${RELEASE_TAG}\n", message: /RELEASE_TAG.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    { source: "a GitHub Packages token expanding a reserved release input binding", npmrc: "//npm.pkg.github.com/fixture-owner/:_authToken=${BEEZ_RP_RELEASE_VERSION}\n", message: /BEEZ_RP_RELEASE_VERSION.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    { source: "a later assignment that empties a valid GitHub Packages token", npmrc: "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n//npm.pkg.github.com/:_authToken=\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*vacía/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a GitHub Packages token expanding a reserved release input binding", npmrc: "//npm.pkg.github.com/:_authToken=${BEEZ_RP_RELEASE_VERSION}\n", message: /BEEZ_RP_RELEASE_VERSION.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding the runner's GITHUB_REPOSITORY default", npmrc: "//npm.pkg.github.com/:_authToken=${GITHUB_REPOSITORY}\n", message: /GITHUB_REPOSITORY.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    { source: "a GitHub Packages token expanding the runner's GITHUB_ENV default", npmrc: "//npm.pkg.github.com/fixture-owner/:_authToken=${GITHUB_ENV}\n", message: /GITHUB_ENV.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding the runner's RUNNER_TEMP default", npmrc: "//npm.pkg.github.com/:_authToken=${RUNNER_TEMP}\n", message: /RUNNER_TEMP.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding the runner's CI default", npmrc: "//npm.pkg.github.com/:_authToken=${CI}\n", message: /\$\{CI\}.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
     // Binding the token to a variable that locates the user npm config would break the step that writes ~/.npmrc.
     { source: "a GitHub Packages token expanding HOME", npmrc: "//npm.pkg.github.com/:_authToken=${HOME}\n", message: /\$\{HOME\}.*configuración de usuario de npm/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    { source: "a GitHub Packages owner-path token expanding NPM_CONFIG_USERCONFIG", npmrc: "//npm.pkg.github.com/fixture-owner/:_authToken=${NPM_CONFIG_USERCONFIG}\n", message: /NPM_CONFIG_USERCONFIG.*configuración de usuario de npm/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a GitHub Packages token expanding NPM_CONFIG_USERCONFIG", npmrc: "//npm.pkg.github.com/:_authToken=${NPM_CONFIG_USERCONFIG}\n", message: /NPM_CONFIG_USERCONFIG.*configuración de usuario de npm/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    // The Vercel steps bind their own secrets, so a dependency install there would send the Vercel value as the token.
+    { source: "a GitHub Packages token expanding the VERCEL_TOKEN deployment secret", npmrc: "//npm.pkg.github.com/:_authToken=${VERCEL_TOKEN}\n", deployment: "vercel", message: /VERCEL_TOKEN.*Vercel/u, hint: /\$\{GITHUB_TOKEN\}/u },
     // ci.variables would bind GITHUB_TOKEN to a repository variable instead of the Actions token npm needs.
     { source: "a GitHub Packages token expanding GITHUB_TOKEN while ci.variables declares it", npmrc: "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n", variables: ["GITHUB_TOKEN"], message: /GITHUB_TOKEN.*ci\.variables/u, hint: /ci\.variables/u },
+    // The publication token is bound from its own secret, so npm would send it to GitHub Packages instead of the Actions token.
+    { source: "a GitHub Packages token expanding the publication token variable", npmrc: "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n", publish: "npm", publication: { authentication: "token", tokenEnv: "NODE_AUTH_TOKEN" }, message: /NODE_AUTH_TOKEN.*publication\.tokenEnv/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    // Policy C: npm expands references in keys and registries, so their host cannot be known before the bump.
+    { source: "a credential key whose host is read from the environment next to a GitHub Packages registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//${GH_HOST}/:_authToken=${GITHUB_TOKEN}\n", message: /\/\/\$\{GH_HOST\}\/:_authToken.*variables de entorno/u, hint: /clave literal/u },
+    { source: "a credential key whose host is read from the environment as the only signal", npmrc: "//${GH_HOST}/:_authToken=${GITHUB_TOKEN}\n", variables: ["GH_HOST"], message: /\/\/\$\{GH_HOST\}\/:_authToken.*variables de entorno/u, hint: /clave literal/u },
+    { source: "a basic credential key read from the environment with a declared GITHUB_TOKEN secret", npmrc: "//${GH_HOST}/fixture-owner/:_auth=${GITHUB_PACKAGES_BASIC_AUTH}\n", secrets: ["GITHUB_TOKEN", "GITHUB_PACKAGES_BASIC_AUTH"], message: /\$\{GH_HOST\}\/fixture-owner\/:_auth.*variables de entorno/u, hint: /clave literal/u },
+    { source: "a scoped registry read from an environment variable as the only signal", npmrc: "@private:registry=${PRIVATE_REGISTRY_URL}\n", message: /@private:registry.*variable de entorno/u, hint: /URL literal https:\/\//u },
+    { source: "a registry from the environment next to a literal GitHub Packages registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n@private:registry=${PRIVATE_REGISTRY_URL}\n", message: /@private:registry.*variable de entorno/u, hint: /URL literal https:\/\//u },
+    { source: "a registry from the environment with a declared GITHUB_TOKEN secret", npmrc: "@private:registry=${PRIVATE_REGISTRY_URL}\n", secrets: ["GITHUB_TOKEN"], message: /@private:registry.*variable de entorno/u, hint: /URL literal https:\/\//u },
     // The workflow token must never travel in clear text, so a GitHub Packages registry over HTTP is rejected instead of ignored.
     { source: "a scoped GitHub Packages registry over HTTP", npmrc: "@fixture-scope:registry=http://npm.pkg.github.com/\n", message: /@fixture-scope:registry.*http:/u, hint: /https:\/\/npm\.pkg\.github\.com/u },
     { source: "a default GitHub Packages registry over HTTP with a token", npmrc: "registry=http://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n", message: /registry.*http:/u, hint: /https:\/\/npm\.pkg\.github\.com/u },
-    // The Vercel steps bind their own secrets, so a dependency install there would send the Vercel value as the token.
-    { source: "a GitHub Packages token expanding the VERCEL_TOKEN deployment secret", npmrc: "//npm.pkg.github.com/:_authToken=${VERCEL_TOKEN}\n", deployment: "vercel", message: /VERCEL_TOKEN.*Vercel/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    { source: "a GitHub Packages owner-path token expanding the VERCEL_PROJECT_ID deployment secret", npmrc: "//npm.pkg.github.com/fixture-owner/:_authToken=${VERCEL_PROJECT_ID}\n", deployment: "vercel", message: /VERCEL_PROJECT_ID.*Vercel/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    // Policy D: an environment registry override outranks the committed .npmrc and cannot be proven to use https:.
+    { source: "a GitHub Packages registry while ci.variables overrides the npm registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", variables: ["NPM_CONFIG_REGISTRY"], message: /NPM_CONFIG_REGISTRY.*registry/u, hint: /NPM_CONFIG_REGISTRY/u },
+    { source: "a declared GITHUB_TOKEN while ci.secrets overrides the npm registry", npmrc: "registry=https://registry.npmjs.org/\n", secrets: ["GITHUB_TOKEN", "NPM_CONFIG_REGISTRY"], message: /NPM_CONFIG_REGISTRY.*registry/u, hint: /NPM_CONFIG_REGISTRY/u },
     // The workflow writes the Actions token only to the runner's ~/.npmrc, so moving the user config would hide it.
     { source: "a GitHub Packages registry while ci.variables moves the npm user config", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", variables: ["NPM_CONFIG_USERCONFIG"], message: /NPM_CONFIG_USERCONFIG.*~\/\.npmrc/u, hint: /NPM_CONFIG_USERCONFIG/u },
     { source: "a GitHub Packages registry while ci.secrets moves the npm user config", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", secrets: ["NPM_CONFIG_USERCONFIG"], message: /NPM_CONFIG_USERCONFIG.*~\/\.npmrc/u, hint: /NPM_CONFIG_USERCONFIG/u },
     { source: "a declared GITHUB_TOKEN while ci.secrets moves the Bun user config through XDG_CONFIG_HOME", npmrc: "registry=https://registry.npmjs.org/\n", secrets: ["GITHUB_TOKEN", "XDG_CONFIG_HOME"], message: /XDG_CONFIG_HOME.*~\/\.npmrc/u, hint: /XDG_CONFIG_HOME/u },
-    { source: "a GitHub Packages registry while ci.variables moves XDG_CONFIG_HOME", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", variables: ["XDG_CONFIG_HOME"], message: /XDG_CONFIG_HOME.*~\/\.npmrc/u, hint: /XDG_CONFIG_HOME/u },
-    // The publication token is bound from its own secret, so npm would send it to GitHub Packages instead of the Actions token.
-    { source: "a GitHub Packages token expanding the publication token variable", npmrc: "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n", publish: "npm", publication: { authentication: "token", tokenEnv: "NODE_AUTH_TOKEN" }, message: /NODE_AUTH_TOKEN.*publication\.tokenEnv/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    // Without another GitHub Packages signal, a registry read from the environment could need the token step that is never added.
-    { source: "a scoped registry read from an environment variable", npmrc: "@private:registry=${PRIVATE_REGISTRY_URL}\n", message: /@private:registry.*PRIVATE_REGISTRY_URL/u, hint: /GITHUB_TOKEN.*ci\.secrets/u },
-    // An undeclared reference stays literal in npm, takes precedence over the generated token and fails with 401.
-    // An owner-path credential is more specific than the host token the worker writes, so npm would send it unresolved.
-    { source: "an owner-path GitHub Packages basic credential expanding an undeclared variable", npmrc: "//npm.pkg.github.com/fixture-owner/:_auth=${GITHUB_PACKAGES_BASIC_AUTH}\n", message: /_auth.*GITHUB_PACKAGES_BASIC_AUTH/u, hint: /ci\.secrets/u },
-    { source: "an owner-path GitHub Packages username expanding an undeclared variable", npmrc: "//npm.pkg.github.com/fixture-owner/:username=${GITHUB_PACKAGES_USER}\n", message: /username.*GITHUB_PACKAGES_USER/u, hint: /ci\.secrets/u },
-    { source: "an owner-path GitHub Packages password expanding an undeclared variable", npmrc: "//npm.pkg.github.com/fixture-owner/:_password=${GITHUB_PACKAGES_PASSWORD}\n", message: /_password.*GITHUB_PACKAGES_PASSWORD/u, hint: /ci\.secrets/u },
-    // npm reads a key without `=` as `true`, which would replace the generated token with that literal.
-    { source: "a GitHub Packages host token without a value", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*sin valor/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    { source: "an owner-path GitHub Packages basic credential without a value", npmrc: "//npm.pkg.github.com/fixture-owner/:_auth\n", message: /fixture-owner\/:_auth.*sin valor/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    // A registry read from the environment cannot be proven https: once the workflow hands npm the Actions token.
-    { source: "a registry from the environment next to a literal GitHub Packages registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n@private:registry=${PRIVATE_REGISTRY_URL}\n", message: /@private:registry.*PRIVATE_REGISTRY_URL.*https:/u, hint: /URL literal https:\/\//u },
-    { source: "a registry from the environment with a declared GITHUB_TOKEN secret", npmrc: "@private:registry=${PRIVATE_REGISTRY_URL}\n", secrets: ["GITHUB_TOKEN"], message: /@private:registry.*PRIVATE_REGISTRY_URL.*https:/u, hint: /URL literal https:\/\//u },
-    // HOME locates the runner's ~/.npmrc too, so redeclaring it would hide the token the workflow stores there.
     { source: "a GitHub Packages registry while ci.secrets declares HOME", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", secrets: ["HOME"], message: /HOME.*~\/\.npmrc/u, hint: /HOME/u },
     { source: "a declared GITHUB_TOKEN while ci.variables declares HOME", npmrc: "registry=https://registry.npmjs.org/\n", secrets: ["GITHUB_TOKEN"], variables: ["HOME"], message: /HOME.*~\/\.npmrc/u, hint: /HOME/u },
-    // npm also expands references inside keys, so a credential key whose host comes from the environment may target GitHub Packages.
-    { source: "a credential key whose host is read from the environment", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//${GH_HOST}/:_authToken=${GITHUB_TOKEN}\n", message: /\/\/\$\{GH_HOST\}\/:_authToken/u, hint: /host literal/u },
-    { source: "a basic credential key read from the environment with a declared GITHUB_TOKEN secret", npmrc: "//${GH_HOST}/fixture-owner/:_auth=${GITHUB_PACKAGES_BASIC_AUTH}\n", secrets: ["GITHUB_TOKEN", "GITHUB_PACKAGES_BASIC_AUTH"], message: /\$\{GH_HOST\}\/fixture-owner\/:_auth/u, hint: /host literal/u },
-    // npm turns `true` and `false` into booleans, which replace the token the workflow writes to ~/.npmrc.
-    { source: "a GitHub Packages host token set to true", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=true\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*booleano/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    { source: "a quoted GitHub Packages host token set to false", npmrc: "//npm.pkg.github.com/:_authToken=\"false\"\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*booleano/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    // Deployment secrets reach only the Vercel steps, so an owner-path credential expanding one stays unresolved in the job install.
-    { source: "an owner-path GitHub Packages basic credential expanding a declared VERCEL_TOKEN deployment secret", npmrc: "//npm.pkg.github.com/fixture-owner/:_auth=${VERCEL_TOKEN}\n", deployment: "vercel", secrets: ["VERCEL_TOKEN"], message: /fixture-owner\/:_auth.*VERCEL_TOKEN.*Vercel/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    { source: "an owner-path GitHub Packages username expanding a declared VERCEL_ORG_ID deployment secret", npmrc: "//npm.pkg.github.com/fixture-owner/:username=${VERCEL_ORG_ID}\n//npm.pkg.github.com/fixture-owner/:_password=${GITHUB_PACKAGES_PASSWORD}\n", deployment: "vercel", secrets: ["VERCEL_ORG_ID", "GITHUB_PACKAGES_PASSWORD"], message: /fixture-owner\/:username.*VERCEL_ORG_ID.*Vercel/u, hint: /\$\{GITHUB_TOKEN\}/u },
-  ])("should reject the CI workflow before the bump when the committed .npmrc uses $source", async ({ npmrc, deployment = null, secrets = [], variables = [], publish = undefined, publication = undefined, message, hint }) => {
+  ]))("should reject the CI workflow before the bump when the committed .npmrc uses $source", async ({ npmrc, deployment = null, secrets = [], variables = [], publish = undefined, publication = undefined, message, hint }) => {
     // Arrange
     const root = createTemporaryDirectory("beez-rp-ci-github-packages-rejected-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "npm@11.11.1" }));
@@ -405,11 +424,13 @@ describe("release location and configuration", () => {
     const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], publish, publication, ci: { workflow: "release.yml", deployment, secrets, variables } });
     commitFixtureRepository(root);
     // Act
-    const rendering = renderCiReleaseWorkflow(root, config);
+    const rejection = await renderCiReleaseWorkflow(root, config).catch((caughtError) => caughtError);
     // Assert
-    await expect(rendering).rejects.toBeInstanceOf(ReleaseStepError);
-    await expect(rendering).rejects.toThrow(message);
-    await expect(rendering).rejects.toMatchObject({ hint: expect.stringMatching(hint) });
+    expect(rejection).toBeInstanceOf(ReleaseStepError);
+    expect(rejection.message).toMatch(message);
+    expect(rejection.hint).toMatch(hint);
+    // Credential values never reach the message, so a committed literal token is not echoed back.
+    expect(`${rejection.message}\n${rejection.hint}`).not.toContain("fixture-secret-token");
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it("should reject the CI workflow before the bump when the committed .npmrc is a symlink the worker would follow", async () => {

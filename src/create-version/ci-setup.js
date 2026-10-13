@@ -13,8 +13,8 @@ import {
   CI_VERCEL_CONFIG_FILE, CI_VERCEL_GATE_FILE, CI_VERCEL_GATE_TEMPLATE, CI_VERCEL_IGNORE_PLACEHOLDER, CI_VERCEL_WORKER_WRITTEN_PATHS,
   CI_DENO_JSR_CLIENT, CI_DENO_VERSION, CI_RESERVED_ENVIRONMENT_NAMES,
   CI_RUNNER_BINDABLE_PREFIXED_ENVIRONMENT_NAMES, CI_RUNNER_DEFAULT_ENVIRONMENT_NAMES, CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES,
-  CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY, CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL, CI_GITHUB_PACKAGES_TOKEN_VARIABLE, CI_NPM_USER_CONFIG_LOCATION_VARIABLES, CI_RUNNER_NPM_USER_CONFIG_PATH,
-  NPM_CONFIG_BOOLEAN_VALUES, NPM_CONFIG_COMMENT_PREFIXES, NPM_CONFIG_JSON_QUOTE, NPM_CONFIG_LINE_BREAK_PATTERN, NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN, NPM_CONFIG_ENVIRONMENT_REFERENCES_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_BOUND_KEY_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_OWNER_PATH_KEY_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN, NPM_CONFIG_INLINE_COMMENT_PATTERN, NPM_CONFIG_KEY_FIELD_PATTERN, NPM_CONFIG_QUOTES, NPM_CONFIG_REGISTRY_KEY_PATTERN, NPM_CONFIG_SECTION_HEADER_PATTERN, NPM_CONFIG_VALUELESS_KEY_VALUE,
+  CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY, CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL, CI_GITHUB_PACKAGES_TOKEN_VARIABLE, CI_NPM_REGISTRY_OVERRIDE_VARIABLES, CI_NPM_USER_CONFIG_LOCATION_VARIABLES, CI_RUNNER_NPM_USER_CONFIG_PATH,
+  NPM_CONFIG_COMMENT_PREFIXES, NPM_CONFIG_JSON_QUOTE, NPM_CONFIG_LINE_BREAK_PATTERN, NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN, NPM_CONFIG_ENVIRONMENT_REFERENCES_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_BOUND_KEY_PATTERN, NPM_CONFIG_INLINE_COMMENT_PATTERN, NPM_CONFIG_QUOTES, NPM_CONFIG_REGISTRY_KEY_PATTERN, NPM_CONFIG_SECTION_HEADER_PATTERN, NPM_CONFIG_VALUELESS_KEY_VALUE,
 } from "../constants/ci-release.js";
 import { CREATE_VERSION_CONFIG_FILES, NPM_CREDENTIAL_CONFIG_FIELDS, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
 import { PACKAGE_MANAGER } from "../constants/package-manager.js";
@@ -146,8 +146,9 @@ function decodeNpmConfigJsonString(quotedText) {
 }
 
 /**
- * Tells whether a project `.npmrc` key sets a credential for GitHub Packages, whatever its value:
- * pnpm ignores repository credentials, so the worker still needs the user-level token.
+ * Tells whether a project `.npmrc` key sets a credential for GitHub Packages, on the host or an
+ * owner path, whatever its value: pnpm ignores repository credentials, so the worker still needs the
+ * user-level token.
  * @param {string} key - Effective `.npmrc` key.
  * @returns {boolean} True for a GitHub Packages-bound field listed in {@link NPM_CREDENTIAL_CONFIG_FIELDS}.
  */
@@ -183,23 +184,22 @@ function readTopLevelNpmConfigEntries(npmConfigText) {
 }
 
 /**
- * Lists the `${NAME}` environment references npm expands inside a `.npmrc` key or value.
+ * Tells whether npm would expand a `${NAME}` environment reference inside a `.npmrc` key or value.
  * @param {string | true} text - Effective key or value; a valueless key has no references.
- * @returns {string[]} Referenced variable names, in order.
+ * @returns {boolean} True when the text contains at least one reference.
  */
-function readNpmConfigEnvironmentReferences(text) {
-  return typeof text === "string" ? [...text.matchAll(NPM_CONFIG_ENVIRONMENT_REFERENCES_PATTERN)].map((match) => match[1]) : [];
+function containsNpmConfigEnvironmentReference(text) {
+  return typeof text === "string" && text.search(NPM_CONFIG_ENVIRONMENT_REFERENCES_PATTERN) !== -1;
 }
 
 /**
- * Tells whether a `.npmrc` key sets a credential field (`_authToken`, `_auth`, `username` or
- * `_password`) for any registry or globally, whatever its host.
- * @param {string} key - Effective `.npmrc` key.
- * @returns {boolean} True when the key's field is listed in {@link NPM_CREDENTIAL_CONFIG_FIELDS}.
+ * Reads the variable of the only project credential the generated workflow accepts for GitHub
+ * Packages: {@link CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY} whose whole value is one `${NAME}` reference.
+ * @param {string | true | undefined} value - Effective value of that host token, if the `.npmrc` sets it.
+ * @returns {string | null} `NAME`, or `null` when the value has any other form.
  */
-function isNpmCredentialKey(key) {
-  const configField = NPM_CONFIG_KEY_FIELD_PATTERN.exec(key)?.[1];
-  return configField !== undefined && NPM_CREDENTIAL_CONFIG_FIELDS.includes(configField);
+function readAcceptedGithubPackagesTokenVariable(value) {
+  return typeof value === "string" ? NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN.exec(value)?.[1] ?? null : null;
 }
 
 /**
@@ -225,13 +225,8 @@ function isRunnerDefaultEnvironmentVariable(variableName) {
 
 /**
  * @typedef {object} ProjectGithubPackagesConfig
- * @property {boolean} usesGithubPackages - A scope, the default registry or a project credential selects GitHub Packages.
- * @property {string[]} tokenVariables - Variables the GitHub Packages tokens expand (`${NAME}`).
- * @property {Array<{ key: string, variable: string }>} registryReferences - Variables expanded by registry keys, which cannot be resolved before the bump.
- * @property {Array<{ key: string, variable: string }>} credentialReferences - Variables expanded by the other
- *   GitHub Packages credentials bound to an owner path (`_auth`, `username`, `_password`), which npm prefers
- *   over the host token the workflow writes; host-level ones lose against that token and are not listed.
- * @property {string[]} environmentCredentialKeys - Credential keys whose host or scope npm reads from the environment (`${NAME}` in the key).
+ * @property {boolean} usesGithubPackages - A literal registry or any project credential selects GitHub Packages.
+ * @property {string | null} tokenVariable - Variable expanded by the accepted host token (`${NAME}`), or `null`.
  * @property {Array<{ key: string, value: string | true }>} entries - Effective top-level entries, validated by
  *   {@link assertProjectNpmConfigEntriesSupported}.
  * @property {string | null} irregularFileMode - Git tree mode of a committed `.npmrc` that is not a regular file
@@ -252,54 +247,58 @@ function isRunnerDefaultEnvironmentVariable(variableName) {
  */
 async function describeProjectGithubPackagesConfig(repositoryRoot) {
   /** @type {ProjectGithubPackagesConfig} */
-  const description = { usesGithubPackages: false, tokenVariables: [], registryReferences: [], credentialReferences: [], environmentCredentialKeys: [], entries: [], irregularFileMode: null };
+  const description = { usesGithubPackages: false, tokenVariable: null, entries: [], irregularFileMode: null };
   const [npmConfigEntry] = await listCommittedTreeEntries(repositoryRoot, [PROJECT_NPM_CONFIG_FILE]);
   if (npmConfigEntry === undefined) return description;
   if (!isCommittedRegularFile(npmConfigEntry)) {
     description.irregularFileMode = npmConfigEntry.mode;
     return description;
   }
-  const committedNpmConfig = await readCommittedFileEntry(repositoryRoot, npmConfigEntry);
-  for (const [key, value] of readTopLevelNpmConfigEntries(committedNpmConfig)) {
-    description.entries.push({ key, value });
-    const setsGithubPackagesCredential = isGithubPackagesCredentialKey(key);
-    const setsGithubPackagesToken = NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN.test(key);
-    const referencedVariables = readNpmConfigEnvironmentReferences(value);
-    if (selectsGithubPackagesRegistry(key, value) || setsGithubPackagesCredential) description.usesGithubPackages = true;
-    if (NPM_CONFIG_REGISTRY_KEY_PATTERN.test(key)) description.registryReferences.push(...referencedVariables.map((variable) => ({ key, variable })));
-    if (isNpmCredentialKey(key) && readNpmConfigEnvironmentReferences(key).length > 0) description.environmentCredentialKeys.push(key);
-    if (setsGithubPackagesCredential && !setsGithubPackagesToken && NPM_CONFIG_GITHUB_PACKAGES_OWNER_PATH_KEY_PATTERN.test(key)) {
-      description.credentialReferences.push(...referencedVariables.map((variable) => ({ key, variable })));
-    }
-    const tokenVariable = setsGithubPackagesToken && typeof value === "string" ? NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN.exec(value)?.[1] : undefined;
-    if (tokenVariable && !description.tokenVariables.includes(tokenVariable)) description.tokenVariables.push(tokenVariable);
-  }
+  const npmConfigEntries = readTopLevelNpmConfigEntries(await readCommittedFileEntry(repositoryRoot, npmConfigEntry));
+  description.entries = [...npmConfigEntries].map(([key, value]) => ({ key, value }));
+  description.usesGithubPackages = description.entries.some(({ key, value }) => selectsGithubPackagesRegistry(key, value) || isGithubPackagesCredentialKey(key));
+  description.tokenVariable = readAcceptedGithubPackagesTokenVariable(npmConfigEntries.get(CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY));
   return description;
 }
 
 /**
- * Rejects a committed `.npmrc` the generated workflow cannot authenticate: one that is not a regular
- * file, then its entries one at a time: a GitHub Packages registry without `https:`, a GitHub Packages
- * credential without a value, an empty or boolean host token, a GitHub Packages token expanding a binding
- * the workflow cannot give the Actions token, or an owner-path credential expanding a deployment secret.
+ * Applies the closed `.npmrc` policy of the generated workflow, entry by entry, before the bump:
+ * - the committed `.npmrc` must be a regular file;
+ * - no key may contain `${...}` and no registry may read `${...}`, because npm expands them and their
+ *   host cannot be known before the bump;
+ * - a literal GitHub Packages registry must use {@link CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL};
+ * - the only accepted GitHub Packages credential is {@link CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}`=${NAME}`, whose
+ *   `NAME` the workflow can bind to the Actions token (see {@link assertGithubPackagesTokenVariableBindable}).
  * @param {ProjectGithubPackagesConfig} projectGithubPackages - Committed `.npmrc` description.
  * @param {readonly string[]} deploymentSecrets - Credentials the deployment steps bind themselves (see {@link describeCiEnvironment}).
  * @returns {void}
- * @throws {ReleaseStepError} When an entry is unsupported.
+ * @throws {ReleaseStepError} When an entry is outside the policy.
  */
 function assertProjectNpmConfigEntriesSupported(projectGithubPackages, deploymentSecrets) {
   assertProjectNpmConfigRegularFile(projectGithubPackages.irregularFileMode);
   for (const { key, value } of projectGithubPackages.entries) {
-    if (selectsGithubPackagesRegistry(key, value)) assertGithubPackagesRegistrySecure(key, /** @type {string} */ (value));
-    if (isGithubPackagesCredentialKey(key)) assertGithubPackagesCredentialHasValue(key, value);
-    if (key === CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY) {
-      assertGithubPackagesHostTokenNotEmpty(/** @type {string} */ (value));
-      assertGithubPackagesHostTokenNotBoolean(/** @type {string} */ (value));
+    if (containsNpmConfigEnvironmentReference(key)) throwProjectNpmConfigError(`define la clave ${key}, que npm completa con variables de entorno; antes del bump no se puede saber a qué host apunta ni si reemplazaría el token del workflow.`, `Escribí la clave literal (por ejemplo ${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}) o quitá la línea`);
+    const isRegistryKey = NPM_CONFIG_REGISTRY_KEY_PATTERN.test(key);
+    if (isRegistryKey && containsNpmConfigEnvironmentReference(value)) throwProjectNpmConfigError(`define ${key} con una variable de entorno; antes del bump no se puede comprobar si apunta a GitHub Packages ni que use ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}.`, `Escribí la URL literal ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}// del registry`);
+    if (selectsGithubPackagesRegistry(key, value) && new URL(/** @type {string} */ (value)).protocol !== CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL) {
+      throwProjectNpmConfigError(`define ${key} con GitHub Packages sobre ${new URL(/** @type {string} */ (value)).protocol}; el workflow le daría a npm el token de Actions y npm lo enviaría sin cifrar.`, `Usá ${GITHUB_PACKAGES_REGISTRY_URL} como registry`);
     }
-    const tokenVariable = NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN.test(key) && typeof value === "string" ? NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN.exec(value)?.[1] : undefined;
-    if (tokenVariable) assertGithubPackagesTokenVariableNotReserved(key, tokenVariable, deploymentSecrets);
+    if (isGithubPackagesCredentialKey(key) && (key !== CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY || readAcceptedGithubPackagesTokenVariable(value) === null)) {
+      throwProjectNpmConfigError(`define la credencial ${key} con una forma que el workflow generado no acepta: solo admite ${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}=\${NOMBRE}, porque cualquier otra credencial de GitHub Packages podría tener prioridad sobre el token de Actions y la instalación fallaría con 401.`, `Usá ${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}=\${${GITHUB_REGISTRY_TOKEN_VARIABLE}} o quitá la línea`);
+    }
   }
-  for (const { key, variable } of projectGithubPackages.credentialReferences) assertGithubPackagesCredentialVariableNotDeploymentSecret(key, variable, deploymentSecrets);
+  if (projectGithubPackages.tokenVariable !== null) assertGithubPackagesTokenVariableBindable(projectGithubPackages.tokenVariable, deploymentSecrets);
+}
+
+/**
+ * Throws a {@link ReleaseStepError} about the committed `.npmrc` with the shared closing instructions.
+ * @param {string} problem - Spanish description following "El .npmrc commiteado ".
+ * @param {string} action - Spanish instruction the hint starts with.
+ * @returns {never}
+ * @throws {ReleaseStepError} Always.
+ */
+function throwProjectNpmConfigError(problem, action) {
+  throw new ReleaseStepError(`El ${PROJECT_NPM_CONFIG_FILE} commiteado ${problem}`, `${action}, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`);
 }
 
 /**
@@ -318,146 +317,47 @@ function assertProjectNpmConfigRegularFile(irregularFileMode) {
 }
 
 /**
- * Rejects a GitHub Packages credential written without `=` (`//npm.pkg.github.com/:_authToken`): npm
- * reads it as the literal `true`, so the install would send that text instead of the Actions token.
- * @param {string} key - Effective `.npmrc` key of a GitHub Packages credential.
- * @param {string | true} value - Effective value.
- * @returns {void}
- * @throws {ReleaseStepError} When the key has no value.
- */
-function assertGithubPackagesCredentialHasValue(key, value) {
-  if (value !== NPM_CONFIG_VALUELESS_KEY_VALUE) return;
-  throw new ReleaseStepError(
-    `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${key} sin valor; npm la lee como la credencial "true" y la instalación de dependencias de GitHub Packages fallaría con 401.`,
-    `Usá ${key}=\${${GITHUB_REGISTRY_TOKEN_VARIABLE}} o quitá esa línea, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
-  );
-}
-
-/**
- * Rejects an empty host-level GitHub Packages token (`//npm.pkg.github.com/:_authToken=`) in the
- * committed `.npmrc`: npm merges the project and user configs key by key, so that project value
- * replaces the exact token the worker writes to the user config and the install runs unauthenticated.
- * Other empty credentials do not hide it: npm skips an empty owner-path token and prefers a
- * non-empty host token over `_auth`, `username` or `_password`.
- * @param {string} value - Effective value of {@link CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}.
- * @returns {void}
- * @throws {ReleaseStepError} When the token value is empty.
- */
-function assertGithubPackagesHostTokenNotEmpty(value) {
-  if (value !== "") return;
-  const key = CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY;
-  throw new ReleaseStepError(
-    `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${key} con una credencial vacía; en CI tendría prioridad sobre el token de Actions y la instalación de dependencias de GitHub Packages fallaría.`,
-    `Reemplazá el valor por \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} o quitá esa línea, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
-  );
-}
-
-/**
- * Rejects a host-level GitHub Packages token whose effective value is `true` or `false`
- * ({@link NPM_CONFIG_BOOLEAN_VALUES}, quoted or not): npm turns it into a boolean that replaces the
- * token the worker writes to the user config, so the install would not send the Actions token.
- * @param {string} value - Effective value of {@link CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}.
- * @returns {void}
- * @throws {ReleaseStepError} When the token value is a boolean word.
- */
-function assertGithubPackagesHostTokenNotBoolean(value) {
-  if (!NPM_CONFIG_BOOLEAN_VALUES.includes(value)) return;
-  const key = CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY;
-  throw new ReleaseStepError(
-    `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${key}=${value}; npm lo convierte en el booleano ${value}, que en CI tendría prioridad sobre el token de Actions y la instalación de dependencias de GitHub Packages fallaría.`,
-    `Reemplazá el valor por \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} o quitá esa línea, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
-  );
-}
-
-/**
- * Rejects a committed registry that reaches GitHub Packages without {@link CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}:
- * the generated workflow would hand npm the Actions token, which npm would then send in clear text.
- * @param {string} key - Effective `.npmrc` registry key.
- * @param {string} value - Effective registry URL, whose host is GitHub Packages.
- * @returns {void}
- * @throws {ReleaseStepError} When the registry URL uses another protocol, such as `http:`.
- */
-function assertGithubPackagesRegistrySecure(key, value) {
-  const protocol = new URL(value).protocol;
-  if (protocol === CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL) return;
-  throw new ReleaseStepError(
-    `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${key} con GitHub Packages sobre ${protocol}; el workflow le daría a npm el token de Actions y npm lo enviaría sin cifrar.`,
-    `Usá ${GITHUB_PACKAGES_REGISTRY_URL} como registry, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
-  );
-}
-
-/**
- * Rejects a GitHub Packages token that expands a binding the generated workflow cannot give the
- * Actions token: a runner default variable, which GitHub never lets a job override (npm would send
- * the runner's value), a binding owned by the worker protocol, which it would duplicate or override,
- * a deployment secret, which the deployment steps bind to its own value, so the install inside
- * `vercel build` would send that secret as the GitHub Packages token, or a variable that locates the
- * user npm config, which binding it to the token would break (the step writes `$HOME/.npmrc`).
- * @param {string} key - Effective `.npmrc` key holding the GitHub Packages token.
- * @param {string} tokenVariable - Variable the token expands (`${NAME}`).
+ * Rejects an accepted GitHub Packages token whose variable the generated workflow cannot bind to the
+ * Actions token: a deployment secret, which the deployment steps bind to its own value (the install
+ * inside `vercel build` would send that secret), a runner default variable, which GitHub never lets a
+ * job override, a variable that locates the user npm config, which binding it to the token would break
+ * (the step writes `$HOME/.npmrc`), or a binding owned by the worker protocol.
+ * @param {string} tokenVariable - Variable the accepted token expands (`${NAME}`).
  * @param {readonly string[]} deploymentSecrets - Credentials the deployment steps bind themselves.
  * @returns {void}
- * @throws {ReleaseStepError} When the variable is a runner default (`CI`, `GITHUB_*` other than
- *   `GITHUB_TOKEN`, `RUNNER_*`), one of {@link CI_NPM_USER_CONFIG_LOCATION_VARIABLES}, one of
- *   {@link CI_RESERVED_ENVIRONMENT_NAMES} or a deployment secret.
+ * @throws {ReleaseStepError} When the variable is a deployment secret, a runner default (`CI`, `GITHUB_*`
+ *   other than `GITHUB_TOKEN`, `RUNNER_*`), one of {@link CI_NPM_USER_CONFIG_LOCATION_VARIABLES} or one of
+ *   {@link CI_RESERVED_ENVIRONMENT_NAMES}.
  */
-function assertGithubPackagesTokenVariableNotReserved(key, tokenVariable, deploymentSecrets) {
-  assertGithubPackagesCredentialVariableNotDeploymentSecret(key, tokenVariable, deploymentSecrets);
+function assertGithubPackagesTokenVariableBindable(tokenVariable, deploymentSecrets) {
+  const usesVariable = `define ${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY} con \${${tokenVariable}}`;
+  const useAnotherVariable = `Usá \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} u otra variable`;
+  if (deploymentSecrets.includes(tokenVariable)) {
+    throwProjectNpmConfigError(`${usesVariable}, un secret del despliegue de Vercel; solo los pasos de Vercel lo reciben, con su propio valor, así que la instalación de vercel build enviaría ese secret como token de GitHub Packages.`, `${useAnotherVariable} que no sea ${deploymentSecrets.join(", ")}`);
+  }
   if (isRunnerDefaultEnvironmentVariable(tokenVariable)) {
-    throw new ReleaseStepError(
-      `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${key} con \${${tokenVariable}}, una variable predefinida del runner de GitHub Actions que no se puede sobreescribir; npm enviaría ese valor como token y la instalación de GitHub Packages fallaría con 401.`,
-      `Usá \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} u otra variable que no sea ${CI_RUNNER_DEFAULT_ENVIRONMENT_NAMES.join(", ")} ni empiece con ${CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES.join(" o ")}, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
-    );
+    throwProjectNpmConfigError(`${usesVariable}, una variable predefinida del runner de GitHub Actions que no se puede sobreescribir; npm enviaría ese valor como token y la instalación de GitHub Packages fallaría con 401.`, `${useAnotherVariable} que no sea ${CI_RUNNER_DEFAULT_ENVIRONMENT_NAMES.join(", ")} ni empiece con ${CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES.join(" o ")}`);
   }
   if (CI_NPM_USER_CONFIG_LOCATION_VARIABLES.includes(tokenVariable)) {
-    throw new ReleaseStepError(
-      `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${key} con \${${tokenVariable}}, una variable que ubica la configuración de usuario de npm; el workflow la cargaría con el token de Actions y el paso que escribe ${CI_RUNNER_NPM_USER_CONFIG_PATH} fallaría o quedaría fuera del alcance de la instalación.`,
-      `Usá \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} u otra variable que no sea ${CI_NPM_USER_CONFIG_LOCATION_VARIABLES.join(", ")}, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
-    );
+    throwProjectNpmConfigError(`${usesVariable}, una variable que ubica la configuración de usuario de npm; el workflow la cargaría con el token de Actions y el paso que escribe ${CI_RUNNER_NPM_USER_CONFIG_PATH} fallaría o quedaría fuera del alcance de la instalación.`, `${useAnotherVariable} que no sea ${CI_NPM_USER_CONFIG_LOCATION_VARIABLES.join(", ")}`);
   }
-  if (!CI_RESERVED_ENVIRONMENT_NAMES.includes(tokenVariable)) return;
-  throw new ReleaseStepError(
-    `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${key} con \${${tokenVariable}}, una variable reservada del worker de CI (${CI_RESERVED_ENVIRONMENT_NAMES.join(", ")}).`,
-    `Usá \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} u otra variable no reservada, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
-  );
+  if (CI_RESERVED_ENVIRONMENT_NAMES.includes(tokenVariable)) {
+    throwProjectNpmConfigError(`${usesVariable}, una variable reservada del worker de CI (${CI_RESERVED_ENVIRONMENT_NAMES.join(", ")}).`, `${useAnotherVariable} no reservada`);
+  }
 }
 
 /**
- * Rejects a GitHub Packages credential (a token or an owner-path `_auth`, `username` or `_password`)
- * expanding a deployment secret, even when `ci.secrets` declares it: deployment secrets are bound only
- * on the Vercel steps, so the job install gets the reference unresolved and the install inside
- * `vercel build` would send that secret to GitHub Packages.
- * @param {string} key - Effective `.npmrc` key of the GitHub Packages credential.
- * @param {string} variable - Variable the credential expands (`${NAME}`).
- * @param {readonly string[]} deploymentSecrets - Credentials the deployment steps bind themselves.
- * @returns {void}
- * @throws {ReleaseStepError} When the variable is a deployment secret.
- */
-function assertGithubPackagesCredentialVariableNotDeploymentSecret(key, variable, deploymentSecrets) {
-  if (!deploymentSecrets.includes(variable)) return;
-  throw new ReleaseStepError(
-    `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${key} con \${${variable}}, un secret del despliegue de Vercel; solo los pasos de Vercel lo reciben, con su propio valor, así que la instalación de dependencias no lo resolvería y la de vercel build enviaría ese secret como credencial de GitHub Packages.`,
-    `Usá ${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}=\${${GITHUB_REGISTRY_TOKEN_VARIABLE}} u otra variable que no sea ${deploymentSecrets.join(", ")}, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
-  );
-}
-
-/**
- * Rejects GitHub Packages setups the generated workflow cannot authenticate, before anything is
- * written: each would make the dependency install send a wrong credential or none and fail with 401
- * after the tag was pushed.
- * - A job binding of {@link CI_NPM_USER_CONFIG_LOCATION_VARIABLES} (`HOME` included) moves the user
- *   config away from the runner's `~/.npmrc`, where the generated step stores the Actions token.
- * - A GitHub Packages token expanding `GITHUB_TOKEN` while `ci.variables` declares it gets that
- *   repository variable instead of the Actions token.
- * - A GitHub Packages token expanding the publication token variable gets the publication secret,
- *   not the Actions token, because that name is already bound from its own secret.
- * - A registry read from the environment cannot be proven to use `https:` once the workflow hands npm
- *   the Actions token, and without another signal it may select GitHub Packages, which would need the
- *   token step that nothing else enables.
- * - With the token step, a credential key whose host npm reads from the environment (`//${HOST}/:_authToken`)
- *   may target GitHub Packages without being checked.
- * - An owner-path `_auth`, `username` or `_password` credential expanding an undeclared variable keeps the
- *   literal reference, which npm prefers over the generated host token.
+ * Rejects bindings the generated workflow cannot combine with GitHub Packages, before anything is
+ * written: each would make the dependency install send a wrong credential, none, or send the Actions
+ * token somewhere unchecked.
+ * - With the token step, a job binding of {@link CI_NPM_USER_CONFIG_LOCATION_VARIABLES} (`HOME` included)
+ *   moves the user config away from the runner's `~/.npmrc`, where the step stores the Actions token, and one
+ *   of {@link CI_NPM_REGISTRY_OVERRIDE_VARIABLES} replaces the committed registry with a value that cannot be
+ *   proven to use `https:` before dispatch.
+ * - An accepted token expanding `GITHUB_TOKEN` while `ci.variables` declares it gets that repository
+ *   variable instead of the Actions token.
+ * - An accepted token expanding the publication token variable gets the publication secret, because that
+ *   name is already bound from its own secret.
  * @param {ResolvedCreateVersionConfig} config - Project configuration.
  * @param {{ githubToken: boolean }} environment - Worker bindings from {@link describeCiEnvironment}.
  * @param {ProjectGithubPackagesConfig} projectGithubPackages - Committed `.npmrc` description.
@@ -466,7 +366,6 @@ function assertGithubPackagesCredentialVariableNotDeploymentSecret(key, variable
  */
 function assertGithubPackagesSetupSupported(config, environment, projectGithubPackages) {
   const declaredNames = [...(config.ci?.secrets ?? []), ...(config.ci?.variables ?? [])];
-  const nothingChanged = "commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.";
   const readsGithubPackages = environment.githubToken || projectGithubPackages.usesGithubPackages;
   const redirectVariable = declaredNames.find((name) => CI_NPM_USER_CONFIG_LOCATION_VARIABLES.includes(name));
   if (readsGithubPackages && redirectVariable !== undefined) {
@@ -475,45 +374,23 @@ function assertGithubPackagesSetupSupported(config, environment, projectGithubPa
       `Quitá ${redirectVariable} de ci.secrets y ci.variables (el workflow usa ${CI_RUNNER_NPM_USER_CONFIG_PATH}); no se cambió ningún archivo.`,
     );
   }
-  if (projectGithubPackages.tokenVariables.includes(GITHUB_REGISTRY_TOKEN_VARIABLE) && (config.ci?.variables ?? []).includes(GITHUB_REGISTRY_TOKEN_VARIABLE)) {
+  const registryOverrideVariable = declaredNames.find((name) => CI_NPM_REGISTRY_OVERRIDE_VARIABLES.includes(name));
+  if (readsGithubPackages && registryOverrideVariable !== undefined) {
+    throw new ReleaseStepError(
+      `ci.secrets o ci.variables declara ${registryOverrideVariable}, que reemplaza el registry del ${PROJECT_NPM_CONFIG_FILE} commiteado; el workflow le da a npm el token de Actions y antes del bump no se puede comprobar a qué registry lo enviaría ni que use ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}.`,
+      `Quitá ${registryOverrideVariable} de ci.secrets y ci.variables y definí el registry con una URL literal ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}// en el ${PROJECT_NPM_CONFIG_FILE} commiteado; no se cambió ningún archivo.`,
+    );
+  }
+  const { tokenVariable } = projectGithubPackages;
+  if (tokenVariable === GITHUB_REGISTRY_TOKEN_VARIABLE && (config.ci?.variables ?? []).includes(GITHUB_REGISTRY_TOKEN_VARIABLE)) {
     throw new ReleaseStepError(
       `El ${PROJECT_NPM_CONFIG_FILE} commiteado usa \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} como token de GitHub Packages y ci.variables declara ${GITHUB_REGISTRY_TOKEN_VARIABLE}; el workflow lo cargaría con esa variable del repositorio en vez del token de Actions y la instalación de GitHub Packages fallaría con 401.`,
       `Quitá ${GITHUB_REGISTRY_TOKEN_VARIABLE} de ci.variables (el workflow le da el token de Actions) y volvé a correr el comando; no se cambió ningún archivo.`,
     );
   }
   const publicationTokenVariable = readPublicationTokenVariable(config);
-  if (publicationTokenVariable !== null && publicationTokenVariable !== GITHUB_REGISTRY_TOKEN_VARIABLE && projectGithubPackages.tokenVariables.includes(publicationTokenVariable)) {
-    throw new ReleaseStepError(
-      `El ${PROJECT_NPM_CONFIG_FILE} commiteado usa \${${publicationTokenVariable}} como token de GitHub Packages, el mismo nombre que publication.tokenEnv; el workflow lo carga con el secret de publicación y la instalación de dependencias enviaría ese token a GitHub Packages.`,
-      `Usá \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} en el ${PROJECT_NPM_CONFIG_FILE} o renombrá el secret de publicación (publication.tokenEnv), ${nothingChanged}`,
-    );
-  }
-  const [registryReference] = projectGithubPackages.registryReferences;
-  if (registryReference !== undefined && readsGithubPackages) {
-    throw new ReleaseStepError(
-      `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${registryReference.key} con \${${registryReference.variable}}; el workflow le da a npm el token de Actions y antes del bump no se puede comprobar que ese registry use ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}, así que npm podría enviarlo sin cifrar.`,
-      `Escribí la URL literal ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}// del registry; ${nothingChanged}`,
-    );
-  }
-  const [environmentCredentialKey] = projectGithubPackages.environmentCredentialKeys;
-  if (environmentCredentialKey !== undefined && readsGithubPackages) {
-    throw new ReleaseStepError(
-      `El ${PROJECT_NPM_CONFIG_FILE} commiteado define la credencial ${environmentCredentialKey}, cuyo host npm toma del entorno; antes del bump no se puede saber si apunta a GitHub Packages ni si reemplazaría el token del workflow.`,
-      `Escribí el host literal en la clave (por ejemplo ${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}); ${nothingChanged}`,
-    );
-  }
-  if (registryReference !== undefined) {
-    throw new ReleaseStepError(
-      `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${registryReference.key} con \${${registryReference.variable}}; antes del bump no se puede saber si apunta a GitHub Packages, que necesita el token del workflow para instalar dependencias.`,
-      `Escribí la URL del registry literal o, si ese registry es GitHub Packages, declará ${GITHUB_REGISTRY_TOKEN_VARIABLE} en ci.secrets; ${nothingChanged}`,
-    );
-  }
-  const undeclaredReference = projectGithubPackages.credentialReferences.find((reference) => !declaredNames.includes(reference.variable));
-  if (undeclaredReference === undefined) return;
-  throw new ReleaseStepError(
-    `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${undeclaredReference.key} con \${${undeclaredReference.variable}}, que el workflow no recibe; npm usaría esa credencial sin resolver antes que el token del workflow y la instalación de GitHub Packages fallaría con 401.`,
-    `Declará ${undeclaredReference.variable} en ci.secrets o reemplazá la credencial por ${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}=\${${GITHUB_REGISTRY_TOKEN_VARIABLE}}; ${nothingChanged}`,
-  );
+  if (tokenVariable === null || tokenVariable === GITHUB_REGISTRY_TOKEN_VARIABLE || tokenVariable !== publicationTokenVariable) return;
+  throwProjectNpmConfigError(`usa \${${tokenVariable}} como token de GitHub Packages, el mismo nombre que publication.tokenEnv; el workflow lo carga con el secret de publicación y la instalación de dependencias enviaría ese token a GitHub Packages.`, `Usá \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} en el ${PROJECT_NPM_CONFIG_FILE} o renombrá el secret de publicación (publication.tokenEnv)`);
 }
 
 /**
@@ -606,8 +483,8 @@ export async function renderCiReleaseWorkflow(repositoryRoot, config, { validate
     ...environment.variables.map((name) => `      ${name}: \${{ vars.${name} }}`),
     // The worker reads its own Actions history to skip a custom publisher that an earlier attempt finished.
     ...(bindsGithubToken ? ["      GITHUB_TOKEN: ${{ github.token }}"] : []),
-    // npm prefers a project-level GitHub Packages credential over ~/.npmrc, so the variable it expands gets the Actions token.
-    ...projectGithubPackages.tokenVariables.filter((name) => !boundNames.has(name)).map((name) => `      ${name}: \${{ github.token }}`),
+    // npm prefers the project host token over ~/.npmrc, so the variable it expands gets the Actions token.
+    ...(projectGithubPackages.tokenVariable !== null && !boundNames.has(projectGithubPackages.tokenVariable) ? [`      ${projectGithubPackages.tokenVariable}: \${{ github.token }}`] : []),
   ];
   const permissions = [
     ...(readsPublicationHistory ? ["  actions: read"] : []),

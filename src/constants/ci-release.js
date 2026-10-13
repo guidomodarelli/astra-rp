@@ -161,6 +161,13 @@ export const CI_NPM_USER_CONFIG_REDIRECT_VARIABLES = Object.freeze(["NPM_CONFIG_
  */
 export const CI_NPM_USER_CONFIG_LOCATION_VARIABLES = Object.freeze(["HOME", ...CI_NPM_USER_CONFIG_REDIRECT_VARIABLES]);
 
+/**
+ * Job bindings that replace the committed default registry for npm and pnpm (`npm_config_registry` in any
+ * casing). Their value cannot be proven to use `https:` before dispatch, so the generated workflow rejects them
+ * whenever it hands npm the Actions token. Scoped registries cannot be set through a variable name.
+ */
+export const CI_NPM_REGISTRY_OVERRIDE_VARIABLES = Object.freeze(["NPM_CONFIG_REGISTRY"]);
+
 /** Only URL protocol accepted for a GitHub Packages registry, so the workflow token never travels in clear text. */
 export const CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL = "https:";
 
@@ -170,29 +177,14 @@ export const NPM_CONFIG_JSON_QUOTE = '"';
 /** `.npmrc` key selecting a registry, default (`registry`) or scoped (`@scope:registry`). */
 export const NPM_CONFIG_REGISTRY_KEY_PATTERN = /^(?:@[^\s:]+:)?registry$/u;
 
-/** Project `.npmrc` key holding a GitHub Packages token, bound to the host or to an owner path. */
-export const NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN = /^\/\/npm\.pkg\.github\.com(?:\/[^:]*)?:_authToken$/u;
-
 /**
  * Project `.npmrc` key bound to GitHub Packages, on the host or an owner path; captures the config
  * field, which is a credential when it is one of `NPM_CREDENTIAL_CONFIG_FIELDS`.
  */
 export const NPM_CONFIG_GITHUB_PACKAGES_BOUND_KEY_PATTERN = /^\/\/npm\.pkg\.github\.com(?:\/[^:]*)?:([^:]+)$/u;
 
-/**
- * Project `.npmrc` GitHub Packages key bound to an owner path (`//npm.pkg.github.com/OWNER/:field`), which
- * npm prefers over the host-level token the generated workflow writes.
- */
-export const NPM_CONFIG_GITHUB_PACKAGES_OWNER_PATH_KEY_PATTERN = /^\/\/npm\.pkg\.github\.com\/[^:]+:[^:]+$/u;
-
-/** Config field of any `.npmrc` key (`_auth`, `//host/:_authToken`, `@scope:registry`); captures the text after the last `:`. */
-export const NPM_CONFIG_KEY_FIELD_PATTERN = /(?:^|:)([^:]*)$/u;
-
 /** Value npm's INI parser gives a `.npmrc` key written without `=`. */
 export const NPM_CONFIG_VALUELESS_KEY_VALUE = true;
-
-/** Effective (unquoted) `.npmrc` values npm's INI parser turns into booleans instead of keeping them as text. */
-export const NPM_CONFIG_BOOLEAN_VALUES = Object.freeze(["true", "false"]);
 
 /** Line terminators npm's INI parser splits a `.npmrc` on: CRLF, LF or a lone CR. */
 export const NPM_CONFIG_LINE_BREAK_PATTERN = /\r\n|[\r\n]/u;

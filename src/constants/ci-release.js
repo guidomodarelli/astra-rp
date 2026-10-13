@@ -5,7 +5,6 @@
 
 import { CREATE_VERSION_CONFIG_FILES, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE } from "./create-version.js";
 import { LOCKFILE_PACKAGE_MANAGERS } from "./package-manager.js";
-import { GITHUB_REGISTRY_TOKEN_VARIABLE } from "./registry.js";
 
 /** Release execution locations offered by the CLI. */
 export const RELEASE_EXECUTION = Object.freeze({ local: "local", ci: "ci" });
@@ -148,18 +147,11 @@ export const CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY = "//npm.pkg.github.com/:_authTok
 export const CI_RUNNER_NPM_USER_CONFIG_PATH = "$HOME/.npmrc";
 
 /**
- * Job bindings that move the user config away from the runner's `~/.npmrc` (npm and pnpm read
- * `NPM_CONFIG_USERCONFIG`, Bun reads `$XDG_CONFIG_HOME/.npmrc`), so the token the workflow stores
- * there would never reach the install. `ci.secrets` and `ci.variables` only accept uppercase names.
+ * Variables that locate the runner's user npm config: `HOME` (the generated step writes `$HOME/.npmrc`),
+ * `NPM_CONFIG_USERCONFIG` (npm and pnpm) and `XDG_CONFIG_HOME` (Bun reads `$XDG_CONFIG_HOME/.npmrc`). A job
+ * binding of one of them would hide the token the workflow stores there from the install.
  */
-export const CI_NPM_USER_CONFIG_REDIRECT_VARIABLES = Object.freeze(["NPM_CONFIG_USERCONFIG", "XDG_CONFIG_HOME"]);
-
-/**
- * Variables that locate the runner's user npm config: `HOME` (the generated step writes
- * `$HOME/.npmrc`) and {@link CI_NPM_USER_CONFIG_REDIRECT_VARIABLES}. A GitHub Packages token expanding
- * one of them would bind it to the Actions token at job level and move or break that config.
- */
-export const CI_NPM_USER_CONFIG_LOCATION_VARIABLES = Object.freeze(["HOME", ...CI_NPM_USER_CONFIG_REDIRECT_VARIABLES]);
+export const CI_NPM_USER_CONFIG_LOCATION_VARIABLES = Object.freeze(["HOME", "NPM_CONFIG_USERCONFIG", "XDG_CONFIG_HOME"]);
 
 /**
  * Job bindings that replace the committed default registry: `NPM_CONFIG_REGISTRY` for npm and pnpm
@@ -168,13 +160,6 @@ export const CI_NPM_USER_CONFIG_LOCATION_VARIABLES = Object.freeze(["HOME", ...C
  * Actions token. Scoped registries cannot be set through a variable name.
  */
 export const CI_PACKAGE_REGISTRY_OVERRIDE_VARIABLES = Object.freeze(["NPM_CONFIG_REGISTRY", "BUN_CONFIG_REGISTRY"]);
-
-/**
- * Prefixes of the environment variables npm, pnpm, Yarn and Bun read as their own configuration (compared in
- * uppercase, since npm reads `npm_config_*` in any casing). A GitHub Packages token expanding one of them would
- * bind the Actions token to a package manager setting, such as the registry.
- */
-export const CI_PACKAGE_MANAGER_CONFIG_ENVIRONMENT_PREFIXES = Object.freeze(["NPM_CONFIG_", "BUN_CONFIG_", "YARN_", "PNPM_"]);
 
 /** Only URL protocol accepted for a GitHub Packages registry, so the workflow token never travels in clear text. */
 export const CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL = "https:";
@@ -214,6 +199,9 @@ export const NPM_CONFIG_INLINE_COMMENT_PATTERN = /(?<!\\)[;#]/u;
  */
 export const NPM_CONFIG_SECTION_HEADER_PATTERN = /^\[[^\]]*\]\s*$/u;
 
+/** Suffix npm's INI parser removes from an array key (`key[]=value`), so the entry still configures `key`. */
+export const NPM_CONFIG_ARRAY_KEY_SUFFIX = "[]";
+
 /** Prefixes of `.npmrc` comment lines. */
 export const NPM_CONFIG_COMMENT_PREFIXES = Object.freeze(["#", ";"]);
 
@@ -234,29 +222,6 @@ export const CI_MIGRATION_ENVIRONMENT_PATTERN = /\b[A-Z][A-Z0-9_]*(?:URL|TOKEN|K
 
 /** Bindings owned by the worker protocol and unavailable for user overrides. */
 export const CI_RESERVED_ENVIRONMENT_NAMES = Object.freeze([CI_RELEASE_TAG_ENVIRONMENT, "HUSKY", ...Object.values(CI_RELEASE_ENVIRONMENT)]);
-
-/**
- * Prefixes of the environment variables the GitHub Actions runner sets on every step: the documented defaults
- * (`GITHUB_*`, `RUNNER_*`), which cannot be overwritten, and its internal `ACTIONS_*` variables (such as
- * `ACTIONS_ID_TOKEN_REQUEST_TOKEN`), assigned before each `run:`. A job-level binding to the workflow token
- * would not reach any of them.
- * @see https://docs.github.com/en/actions/reference/workflows-and-actions/variables#default-environment-variables
- */
-export const CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES = Object.freeze(["GITHUB_", "RUNNER_", "ACTIONS_"]);
-
-/**
- * Default runner environment variables without one of {@link CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES}
- * (`CI` is always `true`).
- * @see https://docs.github.com/en/actions/reference/workflows-and-actions/variables#default-environment-variables
- */
-export const CI_RUNNER_DEFAULT_ENVIRONMENT_NAMES = Object.freeze(["CI"]);
-
-/**
- * Prefixed names that are not runner defaults: `GITHUB_TOKEN` comes from `secrets.GITHUB_TOKEN` /
- * `github.token`, so the generated workflow can bind it.
- * @see https://docs.github.com/en/actions/reference/workflows-and-actions/variables#default-environment-variables
- */
-export const CI_RUNNER_BINDABLE_PREFIXED_ENVIRONMENT_NAMES = Object.freeze([GITHUB_REGISTRY_TOKEN_VARIABLE]);
 
 /** Generated Vercel gate; it runs before dependencies are installed. */
 export const CI_VERCEL_GATE_FILE = ".beez-rp/vercel-ignore-build.mjs";

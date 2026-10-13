@@ -19,7 +19,7 @@ on:
 
 permissions:
   contents: read
-
+  id-token: write
 
 concurrency:
   group: "beez-rp-release"
@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HUSKY: '0'
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
     steps:
       - name: Checkout del release
         uses: actions/checkout@v4
@@ -60,6 +60,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '26'
+      - name: Configurar npm para trusted publishing
+        run: npm install --global npm@11.5.1
 
       - name: Configurar pnpm
         uses: pnpm/action-setup@v4

@@ -41,6 +41,16 @@ export function isRegistryProvider(value) {
 }
 
 /**
+ * Tells whether a URL is a plain http(s) URL: without credentials, query nor fragment.
+ *
+ * @param {URL} url - Parsed URL.
+ * @returns {boolean} Whether a registry can be addressed by it.
+ */
+export function isPlainHttpUrl(url) {
+  return NPM_REGISTRY_PROTOCOLS.includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash;
+}
+
+/**
  * Resolves publication options for a single selected provider; arrays are deliberately unsupported.
  *
  * @param {unknown} value - Raw `publication` configuration.
@@ -75,7 +85,7 @@ export function resolvePublicationOptions(value, provider = NPM_REGISTRY_PROVIDE
   }
   if (options.registryUrl !== undefined) {
     const url = new URL(options.registryUrl);
-    if (!NPM_REGISTRY_PROTOCOLS.includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    if (!isPlainHttpUrl(url)) {
       throw new Error("beez-rp create-version: publication.registryUrl must be an http(s) URL without credentials, query or fragment");
     }
   }

@@ -22,7 +22,6 @@ import {
   MAIN_BRANCH,
   MIGRATION_STATUS,
   NPM_AUTH_STATUS,
-  NPM_LOOKUP_STATUS,
   NPM_NOT_FOUND_CODE,
   NO_PULL_REQUEST_MESSAGE_PATTERN,
   PULL_REQUEST_JSON_FIELDS,
@@ -34,7 +33,7 @@ import { readChangelogUpdateState } from "./changelog.js";
 import { describeError } from "./errors.js";
 import { readJsonManifest } from "./json.js";
 import { checkRegistryAccess, lookupRegistryVersions } from "./registry.js";
-import { checkNpmPublishAccess, lookupPublishedVersions, resolvePublishRegistry } from "./npm.js";
+import { checkNpmPublishAccess, failedLookup, lookupPublishedVersions, resolvePublishRegistry } from "./npm.js";
 import { createGitReader, findVersionChangeCommit, listCommits, readPackageVersionAt, runCaptured } from "./process.js";
 
 /**
@@ -205,7 +204,7 @@ export async function lookupNpmOnPublishRegistry(lookupNpm, manifest, repository
   const registry = await resolveRegistrySafely(manifest, repositoryRoot);
 
   return registry.registryUrl === null
-    ? { status: NPM_LOOKUP_STATUS.failed, publishedVersions: [], reason: registry.reason }
+    ? failedLookup(registry.reason)
     : lookupNpm(String(manifest.name), repositoryRoot, registry.registryUrl);
 }
 

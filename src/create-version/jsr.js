@@ -80,15 +80,14 @@ export async function prepareJsrVersionUpdates(context, packageRoot, options, ve
  * @param {string} packageRoot - Release checkout.
  * @param {{ registryUrl: string, options: import("./registry-config.js").ResolvedPublicationOptions }} registry - Selected native registry.
  * @param {string | null} token - Personal token, or `null` for browser/OIDC authentication.
- * @param {boolean} [dryRun] - Whether to validate without uploading.
+ * @param {ReturnType<typeof readJsrManifest>} [native] - Native manifest of the package, when the caller already read it.
  * @returns {Promise<number>} Official client exit code.
  * @throws {Error} When a shell operand or token cannot be passed safely.
  */
-export async function publishToJsr(packageRoot, registry, token, dryRun = false) {
-  const native = readJsrManifest(packageRoot, registry.options.configFile);
+export async function publishToJsr(packageRoot, registry, token, native = readJsrManifest(packageRoot, registry.options.configFile)) {
   const command = registry.options.jsrClient === "deno" ? "deno" : "npx";
   const prefix = registry.options.jsrClient === "deno" ? [] : ["--yes", `--registry=${DEFAULT_NPM_REGISTRY_URL}`, JSR_NPM_CLIENT_SPEC];
-  const args = [...prefix, "publish", "--config", native.filePath, ...(dryRun ? ["--dry-run"] : [])];
+  const args = [...prefix, "publish", "--config", native.filePath];
   if (args.some((argument) => UNSAFE_QUOTED_PATH_PATTERN.test(argument))) throw new Error("JSR: un argumento del cliente no es seguro para el shell");
   if (token && !JSR_SHELL_SAFE_TOKEN_PATTERN.test(token)) throw new Error("JSR: el token no se puede pasar de forma segura al cliente");
   const env = { ...buildNpmPublishEnvironment(), JSR_URL: registry.registryUrl, DEBUG: "", ...(token ? { [JSR_CHILD_TOKEN_VARIABLE]: token } : {}) };

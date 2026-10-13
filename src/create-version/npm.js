@@ -36,7 +36,6 @@ import {
   NPM_PACKAGE_NAME_PATTERN,
   NPM_REGISTRY_BOUND_KEY_PREFIX,
   NPM_REGISTRY_OPTION,
-  NPM_REGISTRY_PROTOCOLS,
   NPM_REJECTED_CREDENTIAL_PATTERN,
   NPM_TOKEN_SOURCE,
   NPM_TOKEN_VARIABLE,
@@ -56,6 +55,7 @@ import {
 import { PACKAGE_MANAGER_USER_AGENT_VARIABLE } from "../constants/guard-publish.js";
 import { describeError } from "./errors.js";
 import { isRecord } from "./json.js";
+import { isPlainHttpUrl } from "./registry-config.js";
 import { USES_SHELL_FOR_PACKAGE_MANAGERS, quoteShellArguments, runCaptured, runInherited } from "./process.js";
 
 /**
@@ -95,7 +95,7 @@ import { USES_SHELL_FOR_PACKAGE_MANAGERS, quoteShellArguments, runCaptured, runI
  * @returns {ReturnType<typeof runCaptured>} Exit status and output.
  * @throws {Error} When an argument could break out of its quotes on the Windows shell.
  */
-function runNpmCaptured(npmArguments, repositoryRoot, environment = process.env) {
+export function runNpmCaptured(npmArguments, repositoryRoot, environment = process.env) {
   const unsafeArgument = npmArguments.find((npmArgument) => UNSAFE_QUOTED_PATH_PATTERN.test(npmArgument));
   if (unsafeArgument !== undefined) {
     throw new Error(`beez-rp create-version: argumento de npm no permitido en la línea de comandos: ${unsafeArgument}`);
@@ -119,7 +119,7 @@ function runNpmCaptured(npmArguments, repositoryRoot, environment = process.env)
  * @throws {Error} When the registry is not a valid http(s) URL or has characters unsafe on the Windows shell.
  */
 export function buildNpmViewArguments(packageName, registryUrl, userConfigPath = null, pinScope = false) {
-  return ["view", packageName, "versions", "dist-tags", "--json", ...buildRegistryOptions(registryUrl, userConfigPath, "npm view"), ...(pinScope ? buildScopedRegistryOptions(packageName, registryUrl) : [])];
+  return ["view", packageName, "versions", "dist-tags", "--json", ...buildRegistryOptions(registryUrl, userConfigPath, "npm view", pinScope ? packageName : null)];
 }
 
 /**
@@ -134,26 +134,39 @@ function buildScopedRegistryOptions(packageName, registryUrl) {
   if (!packageName) return [];
   if (!NPM_PACKAGE_NAME_PATTERN.test(packageName)) throw new Error("beez-rp create-version: nombre de paquete inválido al fijar el registry del scope");
   const scope = readPackageScope(packageName);
-  return scope ? [`--@${scope}${SCOPED_REGISTRY_KEY_SUFFIX}=${parseRegistryUrl(registryUrl).href}`] : [];
+  return scope ? [`--${scopedRegistryKey(scope)}=${parseRegistryUrl(registryUrl).href}`] : [];
+}
+
+/**
+ * Builds the npm config key that routes a scope to a registry.
+ *
+ * @param {string} scope - Package scope without `@`.
+ * @returns {string} `@<scope>:registry`.
+ */
+function scopedRegistryKey(scope) {
+  return `@${scope}${SCOPED_REGISTRY_KEY_SUFFIX}`;
 }
 
 /**
  * Builds the options that point an npm command at a registry and, optionally, at the temporary
- * user config of {@link withNpmAuthConfig}.
+ * user config of {@link withNpmAuthConfig} and at the same registry for the scope of a package.
  *
  * @param {string} registryUrl - Registry resolved by {@link resolvePublishRegistry}.
  * @param {string | null} userConfigPath - Temporary npm config, or `null` for npm's usual config.
  * @param {string} commandName - npm command named in the error, such as `npm view`.
- * @returns {string[]} `--registry <url>` and, with a config, `--userconfig <path>`.
- * @throws {Error} When the registry is not a valid http(s) URL or has characters unsafe on the Windows shell.
+ * @param {string | null} [scopedPackageName] - Package whose scope is pinned to the registry (see
+ *   {@link buildScopedRegistryOptions}); `null` keeps the inherited scope routing.
+ * @returns {string[]} `--registry <url>`, with a config `--userconfig <path>`, and the scope override.
+ * @throws {Error} When the registry is not a valid http(s) URL or has characters unsafe on the Windows shell,
+ *   or the package name is invalid.
  */
-function buildRegistryOptions(registryUrl, userConfigPath, commandName) {
+function buildRegistryOptions(registryUrl, userConfigPath, commandName, scopedPackageName = null) {
   const { href } = parseRegistryUrl(registryUrl);
   if (!SHELL_SAFE_REGISTRY_URL_PATTERN.test(href)) {
     throw new Error(`beez-rp create-version: el registry "${registryUrl}" tiene caracteres no permitidos en la línea de comandos de ${commandName}`);
   }
   const userConfig = userConfigPath ? [NPM_USER_CONFIG_OPTION, userConfigPath] : [];
-  return [NPM_REGISTRY_OPTION, href, ...userConfig];
+  return [NPM_REGISTRY_OPTION, href, ...userConfig, ...buildScopedRegistryOptions(scopedPackageName, registryUrl)];
 }
 
 /**
@@ -166,7 +179,7 @@ function buildRegistryOptions(registryUrl, userConfigPath, commandName) {
  * @throws {Error} When the registry is invalid or unsafe on the Windows shell.
  */
 export function buildNpmWhoamiArguments(registryUrl, userConfigPath, packageName = null) {
-  return [...NPM_WHOAMI_ARGUMENTS, ...buildRegistryOptions(registryUrl, userConfigPath, "npm whoami"), ...buildScopedRegistryOptions(packageName, registryUrl)];
+  return [...NPM_WHOAMI_ARGUMENTS, ...buildRegistryOptions(registryUrl, userConfigPath, "npm whoami", packageName)];
 }
 
 /**
@@ -179,7 +192,7 @@ export function buildNpmWhoamiArguments(registryUrl, userConfigPath, packageName
  * @throws {Error} When the registry is invalid or unsafe on the Windows shell.
  */
 export function buildNpmOwnerListArguments(packageName, registryUrl, userConfigPath, pinScope = false) {
-  return [...NPM_OWNER_LIST_ARGUMENTS, packageName, ...buildRegistryOptions(registryUrl, userConfigPath, "npm owner ls"), ...(pinScope ? buildScopedRegistryOptions(packageName, registryUrl) : [])];
+  return [...NPM_OWNER_LIST_ARGUMENTS, packageName, ...buildRegistryOptions(registryUrl, userConfigPath, "npm owner ls", pinScope ? packageName : null)];
 }
 
 /**
@@ -294,6 +307,37 @@ export function parseNpmOwnerList(output) {
 }
 
 /**
+ * Builds the result of a lookup that could not list the published versions.
+ *
+ * @param {string | null} reason - Why the lookup failed.
+ * @returns {NpmLookup} Failed lookup without versions.
+ */
+export function failedLookup(reason) {
+  return { status: NPM_LOOKUP_STATUS.failed, publishedVersions: [], reason };
+}
+
+/**
+ * Returns the first line npm wrote to stderr, or a fallback when it wrote nothing.
+ *
+ * @param {{ stderr: string }} result - Captured npm result.
+ * @param {string} fallback - Text used when stderr is empty.
+ * @returns {string} First stderr line, or the fallback.
+ */
+function firstStderrLine(result, fallback) {
+  return result.stderr.split("\n")[0] || fallback;
+}
+
+/**
+ * Tells whether a failed npm command reported that the registry does not have the package.
+ *
+ * @param {{ stdout: string, stderr: string }} result - Captured npm result.
+ * @returns {boolean} Whether its output mentions {@link NPM_NOT_FOUND_CODE}.
+ */
+function isNpmNotFound(result) {
+  return `${result.stdout}\n${result.stderr}`.includes(NPM_NOT_FOUND_CODE);
+}
+
+/**
  * Returns the first line of a failed npm command, for messages that never include the token.
  *
  * @param {{ status: number, stdout: string, stderr: string }} result - Captured npm result.
@@ -363,7 +407,7 @@ export async function checkNpmPublishAccess(packageName, repositoryRoot, registr
       const ownerList = await runNpmCaptured(buildNpmOwnerListArguments(packageName, registryUrl, userConfigPath, lookup.pinScope), repositoryRoot, environment);
 
       if (ownerList.status !== 0) {
-        return `${ownerList.stdout}\n${ownerList.stderr}`.includes(NPM_NOT_FOUND_CODE)
+        return isNpmNotFound(ownerList)
           ? { ...check, status: NPM_AUTH_STATUS.ok, user, firstPublication: true }
           : { ...check, user, reason: describeNpmFailure(ownerList, "npm owner ls") };
       }
@@ -398,7 +442,7 @@ export async function checkNpmPublishAccess(packageName, repositoryRoot, registr
  */
 export async function lookupPublishedVersions(packageName, repositoryRoot, registryUrl = DEFAULT_NPM_REGISTRY_URL, { tokenVariable = NPM_TOKEN_VARIABLE, tag = NPM_DIST_TAG, pinScope = false } = {}) {
   if (!NPM_PACKAGE_NAME_PATTERN.test(packageName)) {
-    return { status: NPM_LOOKUP_STATUS.failed, publishedVersions: [], reason: `nombre de paquete inválido: ${packageName}` };
+    return failedLookup(`nombre de paquete inválido: ${packageName}`);
   }
 
   let result;
@@ -409,13 +453,13 @@ export async function lookupPublishedVersions(packageName, repositoryRoot, regis
     const view = (userConfigPath) => runNpmCaptured(buildNpmViewArguments(packageName, registryUrl, userConfigPath, pinScope), repositoryRoot, environment);
     result = token ? await withNpmAuthConfig(buildNpmAuthConfigLine(registryUrl), view) : await view(null);
   } catch (error) {
-    return { status: NPM_LOOKUP_STATUS.failed, publishedVersions: [], reason: describeError(error) };
+    return failedLookup(describeError(error));
   }
 
   if (result.status !== 0) {
-    return `${result.stdout}\n${result.stderr}`.includes(NPM_NOT_FOUND_CODE)
+    return isNpmNotFound(result)
       ? { status: NPM_LOOKUP_STATUS.ok, publishedVersions: [], reason: null }
-      : { status: NPM_LOOKUP_STATUS.failed, publishedVersions: [], reason: result.stderr.split("\n")[0] || `npm view salió con código ${result.status}` };
+      : failedLookup(firstStderrLine(result, `npm view salió con código ${result.status}`));
   }
 
   try {
@@ -424,11 +468,7 @@ export async function lookupPublishedVersions(packageName, repositoryRoot, regis
     const latestVersion = typeof distTags[tag] === "string" ? distTags[tag] : null;
     return { status: NPM_LOOKUP_STATUS.ok, publishedVersions: Array.isArray(versions) ? versions : [versions], latestVersion, reason: null };
   } catch (error) {
-    return {
-      status: NPM_LOOKUP_STATUS.failed,
-      publishedVersions: [],
-      reason: `respuesta inválida de npm view (${describeError(error)})`,
-    };
+    return failedLookup(`respuesta inválida de npm view (${describeError(error)})`);
   }
 }
 
@@ -464,12 +504,10 @@ export function parseNpmPackDryRunOutput(output) {
  * @returns {Promise<NpmPackResult>} npm description, or why npm failed or its output is unusable.
  */
 export async function readNpmPackIntegrity(repositoryRoot) {
-  const result = USES_SHELL_FOR_PACKAGE_MANAGERS
-    ? await runCaptured(`npm ${NPM_PACK_DRY_RUN_ARGUMENTS.join(" ")}`, [], { cwd: repositoryRoot, shell: true })
-    : await runCaptured("npm", [...NPM_PACK_DRY_RUN_ARGUMENTS], { cwd: repositoryRoot });
+  const result = await runNpmCaptured([...NPM_PACK_DRY_RUN_ARGUMENTS], repositoryRoot);
 
   if (result.status !== 0) {
-    return { pack: null, problem: `npm pack --dry-run salió con código ${result.status}: ${result.stderr.split("\n")[0] || "sin detalle"}` };
+    return { pack: null, problem: `npm pack --dry-run salió con código ${result.status}: ${firstStderrLine(result, "sin detalle")}` };
   }
 
   return parseNpmPackDryRunOutput(result.stdout);
@@ -491,7 +529,7 @@ function parseRegistryUrl(registryUrl) {
     throw new Error(`beez-rp create-version: el registry de publicación "${registryUrl}" no es una URL válida`, { cause: error });
   }
 
-  if (!NPM_REGISTRY_PROTOCOLS.includes(registry.protocol) || registry.username || registry.password || registry.search || registry.hash) {
+  if (!isPlainHttpUrl(registry)) {
     throw new Error(`beez-rp create-version: el registry de publicación "${registryUrl}" tiene que ser una URL http(s) sin credenciales, query ni fragmento`);
   }
 
@@ -519,7 +557,7 @@ function readPublishConfigRegistry(manifest) {
   const publishConfig = manifest[PUBLISH_CONFIG_FIELD];
   const registries = isRecord(publishConfig) ? publishConfig : {};
   const scope = readPackageScope(manifest.name);
-  const candidates = [scope ? registries[`@${scope}${SCOPED_REGISTRY_KEY_SUFFIX}`] : undefined, registries[PUBLISH_CONFIG_REGISTRY_KEY]];
+  const candidates = [scope ? registries[scopedRegistryKey(scope)] : undefined, registries[PUBLISH_CONFIG_REGISTRY_KEY]];
   const declared = candidates.find((candidate) => typeof candidate === "string" && candidate !== "");
   return typeof declared === "string" ? declared : null;
 }
@@ -544,7 +582,7 @@ async function readNpmConfigRegistry(manifest, repositoryRoot) {
 
   // The scope comes from a name that matches the npm name pattern, so the key keeps a fixed shape.
   const scope = readPackageScope(packageName);
-  const configKeys = [...(scope ? [`@${scope}${SCOPED_REGISTRY_KEY_SUFFIX}`] : []), PUBLISH_CONFIG_REGISTRY_KEY];
+  const configKeys = [...(scope ? [scopedRegistryKey(scope)] : []), PUBLISH_CONFIG_REGISTRY_KEY];
 
   return withNpmAuthConfig("", async (userConfigPath) => {
     for (const configKey of configKeys) {
@@ -555,7 +593,7 @@ async function readNpmConfigRegistry(manifest, repositoryRoot) {
       );
 
       if (result.status !== 0) {
-        throw new Error(`beez-rp create-version: npm config get ${configKey} salió con código ${result.status}: ${result.stderr.split("\n")[0] || "sin detalle"}`);
+        throw new Error(`beez-rp create-version: npm config get ${configKey} salió con código ${result.status}: ${firstStderrLine(result, "sin detalle")}`);
       }
 
       const value = result.stdout.trim();
@@ -710,8 +748,8 @@ export function buildNpmPublishArguments(artifactPath = null, registryUrl = null
   const publishTarget = artifactPath
     ? [artifactPath.startsWith(LOCAL_PATH_PREFIX) ? artifactPath : `${LOCAL_PATH_PREFIX}${artifactPath}`]
     : [];
-  const registryOptions = registryUrl ? buildRegistryOptions(registryUrl, null, "npm publish") : [];
-  return ["publish", ...publishTarget, ...(access ? ["--access", access] : []), ...(tag ? ["--tag", tag] : []), ...(provenance === undefined ? [] : [`--provenance=${provenance}`]), ...registryOptions, ...(registryUrl ? buildScopedRegistryOptions(packageName, registryUrl) : [])];
+  const registryOptions = registryUrl ? buildRegistryOptions(registryUrl, null, "npm publish", packageName) : [];
+  return ["publish", ...publishTarget, ...(access ? ["--access", access] : []), ...(tag ? ["--tag", tag] : []), ...(provenance === undefined ? [] : [`--provenance=${provenance}`]), ...registryOptions];
 }
 
 /**
@@ -761,7 +799,7 @@ export async function publishToNpm(repositoryRoot, { authConfigLine, artifactPat
 
     // The command line is constant apart from validated paths; the token only travels through the environment.
     const publishArguments = buildNpmPublishArguments(artifactPath, registryUrl, { access, tag, packageName });
-    const env = token ? buildNpmTokenEnvironment(token) : buildNpmTokenEnvironment("");
+    const env = buildNpmTokenEnvironment(token ?? "");
     if (!token) delete env[NPM_TOKEN_VARIABLE];
     // A failed PUT may already have published: reconcile through metadata instead of retrying a mutation.
     env.npm_config_fetch_retries = "0";

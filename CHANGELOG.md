@@ -12,6 +12,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ### Changed
 
+- beez-rp se publica en npm desde GitHub Actions con trusted publishing (OIDC), sin tokens de npm guardados. Las versiones 0.7.1 y 0.7.2 quedaron tageadas pero no se publicaron.
 - La autenticación de GitHub Packages del workflow de release generado solo se soporta con npm y pnpm: si el proyecto usa Yarn (cualquier versión) o Bun y configura GitHub Packages (en el `.npmrc`, con `GITHUB_TOKEN` en `ci.secrets` o en una línea no comentada de `.yarnrc`, `.yarnrc.yml` o `bunfig.toml`), el release se detiene antes del bump y pide usar un workflow propio.
 
 ### Fixed

@@ -143,11 +143,23 @@ export const CI_GITHUB_PACKAGES_TOKEN_VARIABLE = "GITHUB_PACKAGES_TOKEN";
  */
 export const CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY = "//npm.pkg.github.com/:_authToken";
 
-/** Project `.npmrc` line selecting a registry, default (`registry=`) or scoped (`@scope:registry=`); captures the URL. */
-export const NPM_CONFIG_REGISTRY_LINE_PATTERN = /^(?:@[^\s:=]+:)?registry\s*=\s*(\S+)\s*$/u;
+/** `.npmrc` key selecting a registry, default (`registry`) or scoped (`@scope:registry`). */
+export const NPM_CONFIG_REGISTRY_KEY_PATTERN = /^(?:@[^\s:]+:)?registry$/u;
+
+/** Project `.npmrc` key holding a GitHub Packages token, bound to the host or to an owner path. */
+export const NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN = /^\/\/npm\.pkg\.github\.com(?:\/[^:]*)?:_authToken$/u;
+
+/** `.npmrc` value that is exactly one `${NAME}` environment reference; captures the variable name. */
+export const NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/u;
+
+/** Start of an inline comment in an unquoted `.npmrc` value (INI syntax: an unescaped `;` or `#`). */
+export const NPM_CONFIG_INLINE_COMMENT_PATTERN = /(?<!\\)[;#]/u;
 
 /** Prefixes of `.npmrc` comment lines. */
 export const NPM_CONFIG_COMMENT_PREFIXES = Object.freeze(["#", ";"]);
+
+/** Quote characters that may wrap a whole `.npmrc` value. */
+export const NPM_CONFIG_VALUE_QUOTES = Object.freeze(['"', "'"]);
 
 /** Vercel CLI version used by generated workflows. */
 export const CI_VERCEL_CLI_VERSION = "62.2.0";

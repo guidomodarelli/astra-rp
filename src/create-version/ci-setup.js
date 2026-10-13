@@ -12,7 +12,8 @@ import {
   CI_RELEASE_METADATA_FILE, CI_VERCEL_CLI_VERSION, CI_VERCEL_DEPLOYMENT, CI_VERCEL_SECRETS,
   CI_VERCEL_CONFIG_FILE, CI_VERCEL_GATE_FILE, CI_VERCEL_GATE_TEMPLATE, CI_VERCEL_IGNORE_PLACEHOLDER, CI_VERCEL_WORKER_WRITTEN_PATHS,
   CI_DENO_JSR_CLIENT, CI_DENO_VERSION,
-  CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY, CI_GITHUB_PACKAGES_TOKEN_VARIABLE, NPM_CONFIG_COMMENT_PREFIXES, NPM_CONFIG_REGISTRY_LINE_PATTERN,
+  CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY, CI_GITHUB_PACKAGES_TOKEN_VARIABLE,
+  NPM_CONFIG_COMMENT_PREFIXES, NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN, NPM_CONFIG_INLINE_COMMENT_PATTERN, NPM_CONFIG_REGISTRY_KEY_PATTERN, NPM_CONFIG_VALUE_QUOTES,
 } from "../constants/ci-release.js";
 import { CREATE_VERSION_CONFIG_FILES, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
 import { PACKAGE_MANAGER } from "../constants/package-manager.js";
@@ -102,21 +103,40 @@ export function requiresCiNpmOidcClient(config, pinnedVersion = null) {
 }
 
 /**
- * Detects a project `.npmrc` that resolves the default registry or a scope from GitHub Packages,
- * which the worker cannot install from anonymously.
- * @param {string} repositoryRoot - Project checkout.
- * @returns {boolean} Whether an active registry line points at GitHub Packages.
+ * Reads a raw `.npmrc` value the way npm's INI parser does: a fully quoted value keeps its inner
+ * text, and an unquoted one ends at an inline `;` or `#` comment.
+ * @param {string} rawValue - Text after the first `=` of the line.
+ * @returns {string} Effective value.
  */
-function usesGithubPackagesRegistry(repositoryRoot) {
+function parseNpmConfigValue(rawValue) {
+  const value = rawValue.trim();
+  if (value.length > 1 && NPM_CONFIG_VALUE_QUOTES.includes(value[0]) && value.at(-1) === value[0]) return value.slice(1, -1);
+  const commentIndex = value.search(NPM_CONFIG_INLINE_COMMENT_PATTERN);
+  return (commentIndex === -1 ? value : value.slice(0, commentIndex)).trim();
+}
+
+/**
+ * Describes how the project `.npmrc` reaches GitHub Packages, which the worker cannot install from anonymously.
+ * @param {string} repositoryRoot - Project checkout.
+ * @returns {{ usesRegistry: boolean, tokenVariables: string[] }} Whether the default registry or a scope resolves
+ *   to GitHub Packages, and the variables its project-level GitHub Packages credentials expand (`${NAME}`).
+ */
+function describeProjectGithubPackagesConfig(repositoryRoot) {
   const npmConfigPath = path.join(repositoryRoot, PROJECT_NPM_CONFIG_FILE);
-  if (!existsSync(npmConfigPath)) return false;
+  const description = { usesRegistry: false, tokenVariables: /** @type {string[]} */ ([]) };
+  if (!existsSync(npmConfigPath)) return description;
   const githubPackagesHost = new URL(GITHUB_PACKAGES_REGISTRY_URL).host;
-  return readFileSync(npmConfigPath, "utf8").split(/\r?\n/u).some((line) => {
+  for (const line of readFileSync(npmConfigPath, "utf8").split(/\r?\n/u)) {
     const trimmedLine = line.trim();
-    if (NPM_CONFIG_COMMENT_PREFIXES.some((prefix) => trimmedLine.startsWith(prefix))) return false;
-    const registryUrl = NPM_CONFIG_REGISTRY_LINE_PATTERN.exec(trimmedLine)?.[1];
-    return registryUrl !== undefined && URL.canParse(registryUrl) && new URL(registryUrl).host === githubPackagesHost;
-  });
+    const separatorIndex = trimmedLine.indexOf("=");
+    if (separatorIndex === -1 || NPM_CONFIG_COMMENT_PREFIXES.some((prefix) => trimmedLine.startsWith(prefix))) continue;
+    const key = trimmedLine.slice(0, separatorIndex).trim();
+    const value = parseNpmConfigValue(trimmedLine.slice(separatorIndex + 1));
+    if (NPM_CONFIG_REGISTRY_KEY_PATTERN.test(key) && URL.canParse(value) && new URL(value).host === githubPackagesHost) description.usesRegistry = true;
+    const tokenVariable = NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN.test(key) ? NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN.exec(value)?.[1] : undefined;
+    if (tokenVariable && !description.tokenVariables.includes(tokenVariable)) description.tokenVariables.push(tokenVariable);
+  }
+  return description;
 }
 
 /**
@@ -162,14 +182,19 @@ export async function renderCiReleaseWorkflow(repositoryRoot, config) {
     packageSetup = [...(pinnedVersion ? ["      - name: Configurar npm", `        run: npm install --global npm@${pinnedVersion}`] : []), "      - name: Instalar dependencias", "        run: npm ci", ...npmOidcClientSetup].join("\n");
   }
   const environment = describeCiEnvironment(config);
-  const readsGithubPackages = environment.githubToken || usesGithubPackagesRegistry(repositoryRoot);
+  const projectGithubPackages = describeProjectGithubPackagesConfig(repositoryRoot);
+  const readsGithubPackages = environment.githubToken || projectGithubPackages.usesRegistry || projectGithubPackages.tokenVariables.length > 0;
   if (readsGithubPackages) packageSetup = `${renderGithubPackagesAuthenticationStep()}\n${packageSetup}`;
   const readsPublicationHistory = requiresCiPublicationHistory(config);
+  const bindsGithubToken = environment.githubToken || readsPublicationHistory;
+  const boundNames = new Set([...environment.secrets, ...environment.variables, ...(bindsGithubToken ? [GITHUB_REGISTRY_TOKEN_VARIABLE] : [])]);
   const bindings = [
     ...environment.secrets.filter((name) => !environment.deploymentSecrets.includes(name)).map((name) => `      ${name}: \${{ secrets.${name} }}`),
     ...environment.variables.map((name) => `      ${name}: \${{ vars.${name} }}`),
     // The worker reads its own Actions history to skip a custom publisher that an earlier attempt finished.
-    ...(environment.githubToken || readsPublicationHistory ? ["      GITHUB_TOKEN: ${{ github.token }}"] : []),
+    ...(bindsGithubToken ? ["      GITHUB_TOKEN: ${{ github.token }}"] : []),
+    // npm prefers a project-level GitHub Packages credential over ~/.npmrc, so the variable it expands gets the Actions token.
+    ...projectGithubPackages.tokenVariables.filter((name) => !boundNames.has(name)).map((name) => `      ${name}: \${{ github.token }}`),
   ];
   const permissions = [
     ...(readsPublicationHistory ? ["  actions: read"] : []),

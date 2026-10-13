@@ -12,7 +12,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ### Fixed
 
-- El workflow de release generado instala dependencias privadas de GitHub Packages: cuando el `.npmrc` del proyecto resuelve un scope o el registry por defecto desde `npm.pkg.github.com`, o `ci.secrets` declara `GITHUB_TOKEN`, agrega `packages: read` y un paso que guarda el token del workflow en el `~/.npmrc` del runner antes de instalar, también para el build de Vercel. Antes la instalación fallaba con 401 y producción nunca se desplegaba; con pnpm, que ignora las credenciales del `.npmrc` del repo, ni siquiera alcanzaba con declarar `GITHUB_TOKEN`.
+- El workflow de release generado instala dependencias privadas de GitHub Packages: cuando el `.npmrc` del proyecto resuelve un scope o el registry por defecto desde `npm.pkg.github.com` (también entre comillas o con comentarios al final de la línea), define una credencial para ese host, o `ci.secrets` declara `GITHUB_TOKEN`, agrega `packages: read` y un paso que guarda el token del workflow en el `~/.npmrc` del runner antes de instalar, también para el build de Vercel; si la credencial del `.npmrc` del proyecto es `${NOMBRE}`, expone `NOMBRE` con ese mismo token. Antes la instalación fallaba con 401 y producción nunca se desplegaba; con pnpm, que ignora las credenciales del `.npmrc` del repo, ni siquiera alcanzaba con declarar `GITHUB_TOKEN`.
 
 ## [0.6.1] - 2026-10-03
 

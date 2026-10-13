@@ -16,3 +16,6 @@ export default {
   publish: "npm",
   summary: ["Consumidores: pnpm add -D beez-rp@^{version}"],
 };
+
+/** GitHub Actions workflow used by create-version. */
+export const ci = {"workflow":"release.yml","secrets":[],"variables":[],"deployment":null};

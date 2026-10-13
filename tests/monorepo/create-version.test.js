@@ -228,7 +228,8 @@ describe("create-version in monorepo mode", () => {
       const again = await runCliAsync(repositoryRoot, ["--dry-run"], npmEnvironment(registry.registryUrl));
       expect(again.output).toContain("Todo al día");
     },
-    GIT_FIXTURE_TEST_TIMEOUT_MS
+    // Three runs of the command, one of them publishing.
+    GIT_FIXTURE_TEST_TIMEOUT_MS * 2
   );
 
   it(

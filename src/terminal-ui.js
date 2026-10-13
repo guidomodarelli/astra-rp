@@ -308,7 +308,7 @@ export function renderStepHeader(stepNumber, stepCount, title) {
   const text = ` ${paint("bold", title)} `;
   const fill = Math.max(resolveBoxWidth() - visibleWidth(label) - visibleWidth(text) - 2, 2);
 
-  return `\n${paint("magenta", "━━")}${label}${paint("gray", "━")}${text}${paint("gray", "━".repeat(fill))}`;
+  return `\n${paint("magenta", "━━")}${label}${paint("magenta", "━")}${text}${paint("magenta", "━".repeat(fill))}`;
 }
 
 /**

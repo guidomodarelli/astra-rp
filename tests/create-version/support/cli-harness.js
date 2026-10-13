@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CI_RELEASE_ENVIRONMENT, CI_RELEASE_TAG_ENVIRONMENT } from "../../../src/constants/ci-release.js";
 
 /** Real Git fixtures with a bare remote can exceed the default timeout on Windows. */
 export const GIT_FIXTURE_TEST_TIMEOUT_MS = 60_000;
@@ -29,6 +30,13 @@ const GIT_HOOK_ENVIRONMENT_VARIABLES = ["GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_T
  * the command under test only sees the ones each test sets.
  */
 const ISOLATED_NPM_VARIABLE_PATTERN = /^(?:npm_config_(?:@[^:]+:)?registry|npm_token)$/iu;
+
+/**
+ * Release identity the generated workflow exports while it runs `pnpm check` inside a real CI
+ * release: inherited by a fixture worker, it would describe the real release instead of the
+ * fixture's, so the command under test only sees the values each test sets.
+ */
+const ISOLATED_CI_RELEASE_VARIABLES = new Set([...Object.values(CI_RELEASE_ENVIRONMENT), CI_RELEASE_TAG_ENVIRONMENT]);
 
 /** Box borders removed by {@link flattenOutput}. */
 const BOX_BORDER_PATTERN = /[│╭╮╰╯─]/gu;
@@ -104,7 +112,7 @@ export function cleanEnvironment() {
 }
 
 /**
- * Environment of the command under test: no inherited npm token nor registry, and a temporary home
+ * Environment of the command under test: no inherited npm token, registry nor CI release identity, and a temporary home
  * (`HOME`/`USERPROFILE`) so the user's real `~/.config/beez-rp/.env` never leaks in.
  *
  * @param {NodeJS.ProcessEnv} [overrides] - Variables the test sets, such as `NPM_TOKEN`.
@@ -112,7 +120,7 @@ export function cleanEnvironment() {
  */
 export function commandEnvironment(overrides = {}) {
   const temporaryHome = createTemporaryDirectory("beez-rp-cli-home-");
-  const environment = Object.fromEntries(Object.entries(cleanEnvironment()).filter(([variableName]) => !ISOLATED_NPM_VARIABLE_PATTERN.test(variableName)));
+  const environment = Object.fromEntries(Object.entries(cleanEnvironment()).filter(([variableName]) => !ISOLATED_NPM_VARIABLE_PATTERN.test(variableName) && !ISOLATED_CI_RELEASE_VARIABLES.has(variableName)));
   // FORCE_COLOR wins over NO_COLOR, and the ANSI codes it adds split the messages the tests match.
   delete environment.FORCE_COLOR;
   return { ...environment, HOME: temporaryHome, USERPROFILE: temporaryHome, NO_COLOR: "1", ...overrides };

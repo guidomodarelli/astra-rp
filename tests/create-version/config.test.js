@@ -42,12 +42,12 @@ describe("create-version config", () => {
     ]);
   });
 
-  it("should reject versionFiles naming package.json or the preserved CHANGELOG under any separator or letter case", () => {
+  it("should reject versionFiles naming package.json or the CHANGELOG the release closes under any separator or letter case", () => {
     const base = { changelog: { audience: "equipo" } };
 
     for (const builtInFile of ["CHANGELOG.md", "./CHANGELOG.md", "CHANGELOG.MD", "./changelog.md", "package.json", ".\\package.json", "./package.json/"]) {
       expect(() => resolveCreateVersionConfig({ ...base, versionFiles: ["src/cli.ts", builtInFile] })).toThrow(
-        /versionFiles must be a list without package\.json nor CHANGELOG\.md, which the release commit owns and includes without rewriting CHANGELOG\.md/
+        /versionFiles must be a list without package\.json nor CHANGELOG\.md, which the release commit owns \(it bumps package\.json and closes the \[Unreleased\] section of CHANGELOG\.md\)/
       );
     }
     expect(resolveCreateVersionConfig({ ...base, versionFiles: ["docs/CHANGELOG.md", "packages/app/package.json"] }).versionFiles).toEqual([

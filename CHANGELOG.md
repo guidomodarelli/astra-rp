@@ -6,25 +6,49 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
-### Added
+### Changed
 
-- Elección entre releases locales y en GitHub Actions: CI queda seleccionado por defecto cuando está configurado. Sin configuración, el comando ofrece crear el workflow y agregar sus ajustes al repo. El bump, el CHANGELOG manual y el push se preparan en local; los checks y la publicación continúan en CI sobre el mismo tag, con comprobación de credenciales, recuperación sin otro bump y configuración del despliegue de Vercel después de los checks.
+- `create-version` cierra la sección `## [Unreleased]` del CHANGELOG en el commit de versión: la renombra a `## [X.Y.Z] - AAAA-MM-DD` (con el día local de la máquina que crea el commit) y deja arriba un `## [Unreleased]` nuevo y vacío; en un monorepo lo hace en el `CHANGELOG.md` de cada paquete que sale. Un release nuevo se bloquea antes del bump, también con `--dry-run`, si el CHANGELOG no tiene `## [Unreleased]` o si ese bloque no tiene ninguna entrada (`- …`). Si falla la escritura o el commit, el CHANGELOG vuelve a su contenido y staging anteriores sin crear el tag; al retomar un release ya commiteado y en el worker de CI no se modifica.
+- El encabezado de cada paso (`━━ PASO N/M ━ …`) muestra el título del paso en texto normal (solo `PASO N/M` sigue en negrita) y deja una línea en blanco antes de la salida del paso, para que no quede pegada al encabezado.
+- Si el CHANGELOG no es texto UTF-8 válido (por ejemplo, está en ISO-8859-1), `create-version` se detiene antes del bump con un aviso para convertirlo a UTF-8, en lugar de cerrar `## [Unreleased]` reemplazando sus caracteres por `�` en el commit de versión.
+
+### Fixed
+
+- Si un hook de commit borra el CHANGELOG, `package.json` o un archivo de `versionFiles` durante el commit de versión, `create-version` deshace el release y vuelve a crear esos archivos (y su carpeta, si también se borró) con su contenido anterior, en vez de dejarlos borrados y pedir restaurarlos a mano.
+
+## [0.7.5] - 2026-10-13
+
+### Fixed
+
+- El encabezado de cada paso (`━━ PASO N/M ━ …`) pinta todos sus tramos de línea en magenta, el color de la etiqueta del paso; antes los tramos posteriores a la etiqueta salían en gris.
+
+## [0.7.4] - 2026-10-13
 
 ### Changed
 
 - Reorganización interna para reducir código duplicado entre el modo de una versión y el monorepo, el workflow de CI y la publicación, sin cambios de comportamiento: los mensajes, el workflow generado y la API pública siguen iguales. `publishToJsr` deja de aceptar el parámetro `dryRun`, que no tenía uso.
+
+## [0.7.3] - 2026-10-13
+
+### Changed
+
 - beez-rp se publica en npm desde GitHub Actions con trusted publishing (OIDC), sin tokens de npm guardados. Las versiones 0.7.1 y 0.7.2 quedaron tageadas pero no se publicaron.
 - La autenticación de GitHub Packages del workflow de release generado solo se soporta con npm y pnpm: si el proyecto usa Yarn (cualquier versión) o Bun y configura GitHub Packages (en el `.npmrc`, con `GITHUB_TOKEN` en `ci.secrets` o en una línea no comentada de `.yarnrc`, `.yarnrc.yml` o `bunfig.toml`), el release se detiene antes del bump y pide usar un workflow propio.
 
 ### Fixed
 
-- El encabezado de cada paso (`━━ PASO N/M ━ …`) pinta todos sus tramos de línea en magenta, el color de la etiqueta del paso; antes los tramos posteriores a la etiqueta salían en gris.
 - Los checks de beez-rp ya no fallan durante su propio release en CI: los tests del worker dejaron de heredar la versión y el commit del release real, que hacían fallar la publicación de 0.7.1.
 - El workflow de release generado instala dependencias privadas de GitHub Packages: cuando el `.npmrc` commiteado usa un registry de `npm.pkg.github.com`, define una credencial para ese host o `ci.secrets` declara `GITHUB_TOKEN`, agrega `packages: read` y un paso que guarda en `~/.npmrc` del runner, antes de instalar, el mismo token que expande el `.npmrc` (el secret declarado en `ci.secrets` o, si no, el token del workflow), también para el build de Vercel. La única credencial de GitHub Packages aceptada en el `.npmrc` del proyecto es `//npm.pkg.github.com/:_authToken=${NOMBRE}`, donde `NOMBRE` solo puede ser `GITHUB_TOKEN` (expuesto con el token del workflow) o un secret declarado en `ci.secrets` que no sea de Vercel ni `publication.tokenEnv`; antes del bump, en vez de fallar con 401 en CI, se rechaza cualquier otro `NOMBRE` (como `PATH` o `HOME`), cualquier otra clave de ese host (con ruta de owner, `_auth`, `username`, `_password`, `certfile`, `keyfile`, la forma de pnpm `:@org:_authToken` o escrita como array con `[]`) y cualquier valor literal, vacío, `true`, `false`, `undefined` o compuesto, toda clave o registry con `${...}`, un registry de GitHub Packages sin `https:`, un `.npmrc` que no es un archivo regular y, con autenticación, `HOME`, `XDG_CONFIG_HOME` o cualquier variable `NPM_CONFIG_*` en `ci.secrets` o `ci.variables`. Un registry entre comillas simples con un string JSON adentro también activa la autenticación, y una línea `[nombre]` con sangría no se toma como sección, igual que en npm. Estas validaciones aplican solo al workflow generado, y un `.npmrc` sin commitear no activa la autenticación.
 - Un release en CI con un workflow generado antes de la autenticación de GitHub Packages se detiene antes del bump y pide regenerarlo con `--setup-ci`, en vez de tratarlo como personalizado y fallar con 401 después de subir el tag.
 - El workflow de release generado rechaza antes del bump, en vez de fallar o exponer el token en CI, con la autenticación de GitHub Packages: un `pnpm-workspace.yaml` que define registries o ajustes de red (`registry`, `registries`, `strictSsl`, `ca`, `cert`, `key` o proxies), cualquier variable `PNPM_CONFIG_*` en `ci.secrets` o `ci.variables`, un lockfile que resuelve paquetes desde `http://npm.pkg.github.com`, un `.npmrc` con `strict-ssl=false`, `NODE_TLS_REJECT_UNAUTHORIZED` en `ci.secrets` o `ci.variables`, y cualquiera de esos archivos commiteado como algo distinto de un archivo regular.
 - Un lockfile con una URL de otro host que solo empieza con `npm.pkg.github.com` (como `http://npm.pkg.github.com.corp.example/`) ya no bloquea el release, y un comentario en `.yarnrc.yml` ya no bloquea proyectos con npm, pnpm o Bun.
 - Una clave de `.npmrc` de otro host que solo empieza con `npm.pkg.github.com` (como `npm.pkg.github.com.corp.example`) ya no se toma como de GitHub Packages, y un texto entre comillas dobles que no es JSON válido conserva sus comillas, igual que en npm.
+
+## [0.7.0] - 2026-10-04
+
+### Added
+
+- Elección entre releases locales y en GitHub Actions: CI queda seleccionado por defecto cuando está configurado. Sin configuración, el comando ofrece crear el workflow y agregar sus ajustes al repo. El bump, el CHANGELOG manual y el push se preparan en local; los checks y la publicación continúan en CI sobre el mismo tag, con comprobación de credenciales, recuperación sin otro bump y configuración del despliegue de Vercel después de los checks.
 
 ## [0.6.1] - 2026-10-03
 

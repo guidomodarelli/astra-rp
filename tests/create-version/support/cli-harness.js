@@ -230,3 +230,34 @@ export function spawnTrackedCommand(command, commandArguments, options) {
   child.on("close", () => runningCommands.delete(child));
   return child;
 }
+
+/** Locale whose short date is `YYYY-MM-DD`, to compute release dates independently of beez-rp. */
+const ISO_DAY_LOCALE = "sv-SE";
+
+/**
+ * Lists the local days a release created by `run` may carry in its closed changelog: the day before
+ * and the day after it ran (they differ only when the run crosses midnight).
+ *
+ * @template T
+ * @param {() => T | Promise<T>} run - Runs the release.
+ * @returns {Promise<{ result: T, releaseDays: string[] }>} What `run` returned and the possible `YYYY-MM-DD` days.
+ */
+export async function runWithReleaseDays(run) {
+  const dayBefore = new Date().toLocaleDateString(ISO_DAY_LOCALE);
+  const result = await run();
+  return { result, releaseDays: [...new Set([dayBefore, new Date().toLocaleDateString(ISO_DAY_LOCALE)])] };
+}
+
+/**
+ * Builds the changelog a release commit should carry: `[Unreleased]` renamed to the version and an
+ * empty `[Unreleased]` on top.
+ *
+ * @param {string} title - Text before `## [Unreleased]`, such as `"# Changelog\n\n"`.
+ * @param {string} version - Released version.
+ * @param {string} releaseDay - Release day in `YYYY-MM-DD` format.
+ * @param {string} body - Text after the `[Unreleased]` heading.
+ * @returns {string} Closed changelog.
+ */
+export function closedChangelog(title, version, releaseDay, body) {
+  return `${title}## [Unreleased]\n\n## [${version}] - ${releaseDay}${body}`;
+}

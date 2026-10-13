@@ -14,6 +14,22 @@ import { cleanupTemporaryDirectories, createTemporaryDirectory, flattenOutput, G
 /** Registries opened by a scenario. */
 const registries = /** @type {Awaited<ReturnType<typeof startFixtureNpmRegistry>>[]} */ ([]);
 /** Native JSR HTTP fixtures. */
+/** Date the release writes into the closed `[Unreleased]` heading; its exact day is checked by the state tests. */
+const RELEASE_DATE_SOURCE = String.raw`\d{4}-\d{2}-\d{2}`;
+
+/**
+ * Matches the manual notes once the release commit closed `[Unreleased]` for `version`.
+ *
+ * @param {string} manualNotes - Notes with entries under `## [Unreleased]`.
+ * @param {string} version - Released version.
+ * @returns {RegExp} Exact match of the closed notes, with any `YYYY-MM-DD` date.
+ */
+function closedNotesPattern(manualNotes, version) {
+  const [title, body] = manualNotes.split("## [Unreleased]");
+  const escape = (/** @type {string} */ text) => text.replace(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
+  return new RegExp(`^${escape(`${title}## [Unreleased]\n\n## [${version}] - `)}${RELEASE_DATE_SOURCE}${escape(body)}$`, "u");
+}
+
 const jsrServers = /** @type {import("node:http").Server[]} */ ([]);
 
 afterEach(async () => {
@@ -27,7 +43,7 @@ afterEach(async () => {
  *
  * @param {"github" | "gitlab" | "jsr"} provider - Destination.
  * @param {string} registryUrl - Local endpoint.
- * @returns {{ root: string, remote: string, manualNotes: string }} Checkout and bare origin.
+ * @returns {{ root: string, remote: string, manualNotes: string }} Checkout and bare origin; `manualNotes` has one entry in `[Unreleased]`.
  */
 function createProviderProject(provider, registryUrl) {
   const parent = createTemporaryDirectory("beez-rp-provider-flow-");
@@ -50,7 +66,7 @@ function createProviderProject(provider, registryUrl) {
   runGit(["add", "-A"], root);
   runGit(["commit", "--quiet", "-m", "1.0.0"], root);
   runGit(["tag", "-a", "v1.0.0", "-m", "1.0.0"], root);
-  const manualNotes = "# Mis notas\n\n## Próxima entrega\n\n- Valor nuevo, escrito a mano.\n";
+  const manualNotes = "# Mis notas\n\n## [Unreleased]\n\n- Valor nuevo, escrito a mano.\n\n## 1.0.0\n\n- Inicial.\n";
   writeFileSync(path.join(root, "CHANGELOG.md"), manualNotes);
   writeFileSync(path.join(root, "index.js"), "export const value = 2;\n");
   runGit(["add", "-A"], root);
@@ -61,7 +77,7 @@ function createProviderProject(provider, registryUrl) {
 }
 
 describe("single destination provider release", () => {
-  it.each(["github", "gitlab"])("should release once to %s with independent credentials and preserve manual notes", async (providerName) => {
+  it.each(["github", "gitlab"])("should release once to %s with independent credentials and close the [Unreleased] of the manual notes", async (providerName) => {
     // Arrange
     const provider = /** @type {"github" | "gitlab"} */ (providerName);
     const registry = await startFixtureNpmRegistry({
@@ -81,8 +97,8 @@ describe("single destination provider release", () => {
     expect(registry.requests.some((request) => request.path === "-/whoami" || request.command === "owner")).toBe(false);
     expect(flattenOutput(released.output)).toContain("no verificable");
     expect(released.output).not.toContain("fixture-provider-token");
-    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toBe(manualNotes);
-    expect(runGit(["show", "main:CHANGELOG.md"], remote)).toBe(manualNotes.trimEnd());
+    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toMatch(closedNotesPattern(manualNotes, "1.1.0"));
+    expect(`${runGit(["show", "main:CHANGELOG.md"], remote)}\n`).toMatch(closedNotesPattern(manualNotes, "1.1.0"));
     expect(JSON.parse(runGit(["show", "main:package.json"], remote)).version).toBe("1.1.0");
     expect(repeated.status, repeated.output).toBe(0);
     expect(repeated.output).toContain("Todo al día");
@@ -107,7 +123,7 @@ describe("single destination provider release", () => {
     expect(registry.publications).toHaveLength(1);
     expect(repeated.status, repeated.output).toBe(0);
     expect(repeated.output).toContain("Todo al día");
-    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toBe(manualNotes);
+    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toMatch(closedNotesPattern(manualNotes, "1.1.0"));
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it("should pin scope routing for lookup and publication when project npmrc points at a different registry", async () => {
@@ -131,7 +147,7 @@ describe("single destination provider release", () => {
     expect(selected.publications).toEqual([{ packageName: "@acme/pkg", version: "1.1.0", user: "fixture-owner" }]);
     expect(other.publications).toEqual([]);
     expect(other.requests).toEqual([]);
-    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toBe(manualNotes);
+    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toMatch(closedNotesPattern(manualNotes, "1.1.0"));
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it("should pin legacy npm scope routing to publishConfig even without publication.registryUrl", async () => {
@@ -156,7 +172,7 @@ describe("single destination provider release", () => {
     expect(selected.publications).toHaveLength(1);
     expect(other.requests).toEqual([]);
     expect(other.publications).toEqual([]);
-    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toBe(manualNotes);
+    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toMatch(closedNotesPattern(manualNotes, "1.1.0"));
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it.each([true, false])("should confirm JSR publication and resume an unconfirmed client success when it uploads: %j", async (uploadsInitially) => {
@@ -204,10 +220,11 @@ describe("single destination provider release", () => {
     expect(flattenOutput(released.output)).toContain(uploadsInitially ? "Client command: --token [redactado]" : "El cliente de JSR terminó con código 0, pero no se confirmó @acme/native@1.1.0 en la metadata");
     expect(JSON.parse(runGit(["show", "main:jsr.json"], remote)).version).toBe("1.1.0");
     expect(JSON.parse(runGit(["show", "main:package.json"], remote)).version).toBe("1.1.0");
-    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toBe(manualNotes);
+    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toMatch(closedNotesPattern(manualNotes, "1.1.0"));
     const resumed = await runCliAsync(root, ["--bump", "major"], { ...environment, BEEZ_FIXTURE_SKIP_UPLOAD: "0" });
     expect(resumed.status, resumed.output).toBe(0);
     expect(uploads).toEqual(["1.1.0"]);
+    expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toMatch(closedNotesPattern(manualNotes, "1.1.0"));
     const repeated = await runCliAsync(root, ["--dry-run"], environment);
     expect(repeated.status, repeated.output).toBe(0);
     expect(repeated.output).toContain("Todo al día");

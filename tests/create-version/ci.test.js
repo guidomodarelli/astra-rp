@@ -18,7 +18,7 @@ import * as githubWorkflow from "../../src/create-version/github-workflow.js";
 import { parseReleaseArguments } from "../../src/create-version/plan.js";
 import { runCreateVersion } from "../../src/create-version/run.js";
 import { describeCiEnvironment, describeCiNodeVersion, prepareCiSetupFiles, renderCiReleaseWorkflow } from "../../src/create-version/ci-setup.js";
-import { GIT_FIXTURE_TEST_TIMEOUT_MS, cleanupTemporaryDirectories, commandEnvironment, commitFixtureRepository, createTemporaryDirectory, flattenOutput, resolveBashExecutable, runCliAsync, runGit } from "./support/cli-harness.js";
+import { GIT_FIXTURE_TEST_TIMEOUT_MS, cleanupTemporaryDirectories, closedChangelog, commandEnvironment, commitFixtureRepository, createTemporaryDirectory, flattenOutput, resolveBashExecutable, runCliAsync, runGit, runWithReleaseDays } from "./support/cli-harness.js";
 import { FIXTURE_GITHUB_REPOSITORY, FIXTURE_GITHUB_TOKEN, startFixtureGithubActionsApi } from "./support/fixture-github-actions-api.js";
 import { startFixtureNpmRegistry } from "./support/fixture-npm-registry.js";
 import { CI_GITHUB_PACKAGES_AUTHENTICATION_STEP } from "../../src/constants/ci-release.js";
@@ -84,7 +84,7 @@ function createCiProject({ configured = true, failChecks = false, updateChangelo
   // The generated workflow installs with `npm ci`, which needs this lockfile committed.
   writeFileSync(path.join(root, "package-lock.json"), JSON.stringify({ name: "fixture-ci-app", version: "1.2.3", lockfileVersion: 3, requires: true, packages: { "": { name: "fixture-ci-app", version: "1.2.3" } } }));
   writeFileSync(path.join(root, ".gitignore"), "*.log\nnode_modules\n");
-  writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n- Primera versión.\n");
+  writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n\n## [1.2.3] - 2026-01-01\n\n- Primera versión.\n");
   writeFileSync(path.join(root, "checks.mjs"), `import { appendFileSync } from 'node:fs'; appendFileSync('release.log', 'checks\\n'); ${failChecks ? "process.exitCode = 1;" : ""}\n`);
   writeFileSync(path.join(root, "beez-rp.config.mjs"), [
     "import { appendFileSync } from 'node:fs'; import { join } from 'node:path';",
@@ -106,7 +106,7 @@ function createCiProject({ configured = true, failChecks = false, updateChangelo
   }
   runGit(["tag", "-a", "v1.2.3", "-m", "1.2.3"], root);
   writeFileSync(path.join(root, "feature.txt"), "New feature\n");
-  if (updateChangelog) writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n- Primera versión.\n- Nueva funcionalidad documentada manualmente.\n");
+  if (updateChangelog) writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n\n- Nueva funcionalidad documentada manualmente.\n\n## [1.2.3] - 2026-01-01\n\n- Primera versión.\n");
   runGit(["add", "-A"], root);
   runGit(["commit", "--quiet", "-m", "feat: add feature"], root);
   runGit(["push", "--quiet", "origin", "main", "--tags"], root);
@@ -810,7 +810,7 @@ describe("local CI preparation with real Git", () => {
     expect(github.dispatch).not.toHaveBeenCalled();
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
-  it("should push the chosen bump and exact tag without running project hooks when CI is selected", async () => {
+  it("should push the chosen bump, the closed changelog and the exact tag without running project hooks when CI is selected", async () => {
     // Arrange
     const { root, remote } = createCiProject();
     const github = isolateGithub();
@@ -818,10 +818,11 @@ describe("local CI preparation with real Git", () => {
     writeFileSync(hook, "#!/bin/sh\necho local-hook > hook.log\nexit 1\n");
     chmodSync(hook, 0o755);
     // Act
-    const status = await runCreateVersion({ repositoryRoot: root, argv: ["--bump", "minor"] });
+    const { result: status, releaseDays } = await runWithReleaseDays(() => runCreateVersion({ repositoryRoot: root, argv: ["--bump", "minor"] }));
     // Assert
     expect(status).toBe(0);
     expect(JSON.parse(runGit(["show", "main:package.json"], remote)).version).toBe("1.3.0");
+    expect(releaseDays.map((releaseDay) => closedChangelog("# Changelog\n\n", "1.3.0", releaseDay, "\n\n- Nueva funcionalidad documentada manualmente.\n\n## [1.2.3] - 2026-01-01\n\n- Primera versión."))).toContain(runGit(["show", "main:CHANGELOG.md"], remote));
     expect(runGit(["rev-parse", "v1.3.0^{commit}"], remote)).toBe(runGit(["rev-parse", "HEAD"], root));
     expect(existsSync(path.join(root, "release.log"))).toBe(false);
     expect(existsSync(path.join(root, "hook.log"))).toBe(false);
@@ -1338,12 +1339,16 @@ describe("pinned CI worker through the real CLI", () => {
       expect(await runCreateVersion({ repositoryRoot: root, argv: ["--bump", "patch"] })).toBe(0);
       expect(registry.publications).toEqual([]);
       const sha = runGit(["rev-parse", "HEAD"], root);
+      const closedNotes = readFileSync(path.join(root, "CHANGELOG.md"));
       runGit(["switch", "--quiet", "--detach", "v1.2.4"], root);
       const environment = { CI: "true", NPM_TOKEN: "fixture-owner-token", BEEZ_RP_RELEASE_VERSION: "1.2.4", BEEZ_RP_RELEASE_SHA: sha };
       const released = await runCliAsync(root, ["--ci-release", "v1.2.4"], environment);
       const repeated = await runCliAsync(root, ["--ci-release", "v1.2.4"], environment);
       // Assert
       expect(released.status, released.output).toBe(0);
+      expect(closedNotes.toString("utf8")).toContain("## [Unreleased]\n\n## [1.2.4] - ");
+      expect(readFileSync(path.join(root, "CHANGELOG.md"))).toEqual(closedNotes);
+      expect(runGit(["status", "--porcelain"], root)).toBe("");
       expect(repeated.status, repeated.output).toBe(0);
       expect(registry.publications).toEqual([{ packageName: "fixture-ci-app", version: "1.2.4", user: "fixture-owner" }]);
       expect(runGit(["rev-parse", "HEAD"], root)).toBe(sha);

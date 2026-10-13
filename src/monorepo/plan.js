@@ -5,7 +5,7 @@
  * - a new release: the packages with commits under their paths are the
  *   candidates; the run asks the version of each one (or skips it) before
  *   verifying manual changelogs, applying migrations, running the checks and creating one release commit with a tag
- *   per package, prepares, pushes and publishes in dependency order;
+ *   per package (which closes the `[Unreleased]` section of every released changelog), prepares, pushes and publishes in dependency order;
  * - the resume of a local release commit that never reached `origin`, or of
  *   tagged releases on `origin/main` that npm does not have yet;
  * - nothing, when no package changed;
@@ -39,6 +39,7 @@ import {
   missingChecksBlocker,
   syncMainPlanStep,
   uncommittedFilesBlocker,
+  unreleasedEntriesRequiredBlocker,
 } from "../create-version/plan.js";
 import { DEFAULT_PROJECT_COMMANDS } from "../package-manager.js";
 import { findHighestStableVersion, isStableReleaseVersion, isStableVersionAbove } from "../versions.js";
@@ -322,12 +323,13 @@ function planNewRelease(state, capabilities, commands, warnings, selectAllPackag
     return createPlan({ blockers: [missingChecksBlocker(commands)] });
   }
 
-  const unchangedChangelogs = candidates.filter(({ changelog }) => changelog.updated !== true);
-  if (selectAllPackages && unchangedChangelogs.length > 0) {
-    return createPlan({
-      blockers: unchangedChangelogs.map(({ changelog, unit }) => changelogUpdateRequiredBlocker(changelog.reason, unit.changelogPath, commands)),
-      warnings,
-    });
+  // A changelog that cannot be released: not updated since the last release, or without entries in `[Unreleased]`.
+  const changelogBlockers = candidates.flatMap(({ changelog, unit }) => {
+    const blocker = changelog.updated === true ? unreleasedEntriesRequiredBlocker(changelog, unit.changelogPath, commands) : changelogUpdateRequiredBlocker(changelog.reason, unit.changelogPath, commands);
+    return blocker ? [{ unit, blocker }] : [];
+  });
+  if (selectAllPackages && changelogBlockers.length > 0) {
+    return createPlan({ blockers: changelogBlockers.map(({ blocker }) => blocker), warnings });
   }
 
   // The versions are chosen first: skipping every package must not leave migrations applied.
@@ -340,13 +342,13 @@ function planNewRelease(state, capabilities, commands, warnings, selectAllPackag
     },
     {
       id: MONOREPO_RELEASE_STEP.verifyChangelogs,
-      title: "Verificar la actualización manual de los CHANGELOG elegidos",
-      detail: "Cada uno debe haber cambiado desde su último release; su contenido se conserva sin reescribirlo.",
+      title: "Verificar los CHANGELOG elegidos y sus entradas en [Unreleased]",
+      detail: "Cada uno debe haber cambiado desde su último release y tener entradas en [Unreleased]; el commit de release cierra esa sección.",
     },
   ];
 
-  for (const { changelog, unit } of unchangedChangelogs) {
-    warnings.push(`${changelog.reason ?? `${unit.changelogPath} no fue actualizado desde el último release`}; si elegís publicar ${unit.name}, el release se corta. Actualizalo manualmente.`);
+  for (const { unit, blocker } of changelogBlockers) {
+    warnings.push(`${blocker.title}; si elegís publicar ${unit.name}, el release se corta. Actualizalo manualmente.`);
   }
 
   addMigrationsPlanStep(state.migrations, steps, warnings);
@@ -358,7 +360,7 @@ function planNewRelease(state, capabilities, commands, warnings, selectAllPackag
   steps.push({
     id: MONOREPO_RELEASE_STEP.bumpPackages,
     title: "Crear el commit de release y un tag por paquete",
-    detail: "Actualiza los package.json e incluye los CHANGELOG manuales sin modificar su contenido.",
+    detail: "Actualiza los package.json y cierra [Unreleased] de cada CHANGELOG como ## [X.Y.Z] - AAAA-MM-DD, con un [Unreleased] vacío arriba.",
   });
 
   if (capabilities.prepare) {

@@ -11,6 +11,8 @@ import {
   flattenOutput,
   runCliAsync,
   runGit,
+  closedChangelog,
+  runWithReleaseDays,
 } from "../create-version/support/cli-harness.js";
 import { startFixtureNpmRegistry } from "../create-version/support/fixture-npm-registry.js";
 
@@ -146,8 +148,8 @@ describe("create-version in monorepo mode", () => {
 
   it.each([
     { flags: ["--dry-run"], updated: false, expectedMessage: "si elegís publicar @acme/widget, el release se corta" },
-    { flags: ["--dry-run", "--bump", "minor"], updated: true, expectedMessage: "Verificar la actualización manual de los CHANGELOG elegidos" },
-    { flags: ["--dry-run", "--accept-suggested"], updated: true, expectedMessage: "Verificar la actualización manual de los CHANGELOG elegidos" },
+    { flags: ["--dry-run", "--bump", "minor"], updated: true, expectedMessage: "Verificar los CHANGELOG elegidos y sus entradas en [Unreleased]" },
+    { flags: ["--dry-run", "--accept-suggested"], updated: true, expectedMessage: "Verificar los CHANGELOG elegidos y sus entradas en [Unreleased]" },
   ])("should preserve preview success when the changelog update is optional or satisfied ($flags, updated=$updated)", async ({ flags, updated, expectedMessage }) => {
     // Arrange
     const { repositoryRoot, remoteRoot } = createReleasedMonorepo();
@@ -211,14 +213,15 @@ describe("create-version in monorepo mode", () => {
       expect(preview.status, preview.output).toBe(0);
       expect(flattenOutput(preview.output)).toContain("Elegir la versión de cada paquete con cambios (1) @acme/widget");
 
-      const release = await runCliAsync(repositoryRoot, ["--accept-suggested"], npmEnvironment(registry.registryUrl));
+      const { result: release, releaseDays } = await runWithReleaseDays(() => runCliAsync(repositoryRoot, ["--accept-suggested"], npmEnvironment(registry.registryUrl)));
 
       expect(release.status, release.output).toBe(0);
       expect(runGit(["log", "-1", "--format=%s", "main"], remoteRoot)).toBe("release: @acme/widget@1.1.0");
       expect(runGit(["tag", "--list", "--points-at", "main"], remoteRoot)).toBe("widget-v1.1.0");
       expect(JSON.parse(runGit(["show", "main:packages/widget/package.json"], remoteRoot)).version).toBe("1.1.0");
       expect(JSON.parse(runGit(["show", "main:packages/adapter/package.json"], remoteRoot)).version).toBe("0.3.0");
-      expect(runGit(["show", "main:packages/widget/CHANGELOG.md"], remoteRoot)).toBe("# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Respuesta nueva.");
+      expect(releaseDays.map((releaseDay) => closedChangelog("# Changelog\n\n", "1.1.0", releaseDay, "\n\n### Added\n\n- Respuesta nueva."))).toContain(runGit(["show", "main:packages/widget/CHANGELOG.md"], remoteRoot));
+      expect(runGit(["show", "main:packages/adapter/CHANGELOG.md"], remoteRoot)).toBe(runGit(["show", "main^:packages/adapter/CHANGELOG.md"], remoteRoot));
       expect(registry.publications).toEqual([{ packageName: "@acme/widget", version: "1.1.0", user: OWNER_USER }]);
       const releaseOutput = flattenOutput(release.output);
       expect(releaseOutput).toContain("Deploy de @acme/widget 1.1.0.");
@@ -345,7 +348,7 @@ describe("create-version in monorepo mode", () => {
   );
 
   it(
-    "should preserve custom changelog sections when a package is released",
+    "should keep custom changelog sections while closing [Unreleased] when a package is released",
     async () => {
       const { repositoryRoot, remoteRoot } = createReleasedMonorepo();
       pushCoreFeature(repositoryRoot);
@@ -359,13 +362,13 @@ describe("create-version in monorepo mode", () => {
       expect(preview.status, preview.output).toBe(0);
       const previewOutput = flattenOutput(preview.output);
       expect(previewOutput).toContain("Elegir la versión de cada paquete con cambios (1) @acme/widget");
-      expect(previewOutput).toContain("Verificar la actualización manual de los CHANGELOG elegidos");
+      expect(previewOutput).toContain("Verificar los CHANGELOG elegidos y sus entradas en [Unreleased]");
 
-      const release = await runCliAsync(repositoryRoot, ["--bump", "minor"], npmEnvironment(registry.registryUrl));
+      const { result: release, releaseDays } = await runWithReleaseDays(() => runCliAsync(repositoryRoot, ["--bump", "minor"], npmEnvironment(registry.registryUrl)));
 
       expect(release.status, release.output).toBe(0);
       const changelog = runGit(["show", "HEAD:packages/widget/CHANGELOG.md"], repositoryRoot);
-      expect(changelog).toBe("# Changelog\n\n## [Unreleased]\n\n### Nope\n\n- Respuesta nueva.");
+      expect(releaseDays.map((releaseDay) => closedChangelog("# Changelog\n\n", "1.1.0", releaseDay, "\n\n### Nope\n\n- Respuesta nueva."))).toContain(changelog);
       expect(runGit(["status", "--porcelain"], repositoryRoot)).toBe("");
       expect(runGit(["tag", "--list", "widget-v1.1.0"], repositoryRoot)).toBe("widget-v1.1.0");
       expect(runGit(["rev-parse", "main"], remoteRoot)).toBe(runGit(["rev-parse", "HEAD"], repositoryRoot));
@@ -786,7 +789,7 @@ describe("create-version in monorepo mode", () => {
       const release = await runCliAsync(repositoryRoot, ["--accept-suggested"], npmEnvironment(registry.registryUrl));
 
       expect(release.status, release.output).toBe(1);
-      expect(flattenOutput(release.output)).toContain("packages/widget/CHANGELOG.md (versionFiles) es el package.json o el CHANGELOG.md de @acme/widget: el commit de release los incluye y no reescribe el CHANGELOG.");
+      expect(flattenOutput(release.output)).toContain("packages/widget/CHANGELOG.md (versionFiles) es el package.json o el CHANGELOG.md de @acme/widget: el commit de release los incluye y cierra la sección [Unreleased] del CHANGELOG.");
       expect(runGit(["rev-parse", "HEAD"], repositoryRoot)).toBe(featureSha);
       expect(runGit(["status", "--porcelain"], repositoryRoot)).toBe("");
       expect(runGit(["tag", "--list", "widget-v1.1.0"], repositoryRoot)).toBe("");

@@ -12,9 +12,7 @@ import { ReleaseStepError } from "./errors.js";
 import { normalizeJsonc, parseJsoncManifest } from "./jsonc.js";
 import { quoteShellArguments, runRedactedInherited, USES_SHELL_FOR_PACKAGE_MANAGERS } from "./process.js";
 import { buildNpmPublishEnvironment } from "./npm.js";
-
-/** Strict decoder used for version-only JSONC changes. */
-const MANIFEST_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+import { STRICT_UTF8_DECODER } from "./strict-utf8.js";
 
 /**
  * Finds the native JSR manifest inside a package and reads only its publication metadata.
@@ -33,7 +31,7 @@ export function readJsrManifest(packageRoot, configFile = null) {
     throw new Error(`${filePath} debe ser un archivo regular dentro del paquete`);
   }
   const originalBytes = readFileSync(absolutePath);
-  const text = MANIFEST_UTF8_DECODER.decode(originalBytes);
+  const text = STRICT_UTF8_DECODER.decode(originalBytes);
   const manifest = parseJsoncManifest(text);
   const packageName = manifest.name;
   if (typeof packageName !== "string" || !JSR_PACKAGE_NAME_PATTERN.test(packageName)) {

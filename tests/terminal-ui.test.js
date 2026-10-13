@@ -105,4 +105,18 @@ describe("step header", () => {
     const textOutsideMagenta = [unpaintedPrefix, ...magentaChunks.map((chunk) => chunk.slice(chunk.indexOf(colorReset) + colorReset.length))].join("");
     expect(textOutsideMagenta).not.toContain("━");
   });
+
+  it("should keep only the step label in bold and leave a blank line before the step output", () => {
+    // Arrange
+    vi.stubEnv("NO_COLOR", "");
+    vi.stubEnv("FORCE_COLOR", "1");
+    const boldOpen = "\u001b[1m";
+    const boldReset = "\u001b[22m";
+    // Act
+    const header = renderStepHeader(2, 5, "Validar el proyecto");
+    // Assert
+    const boldText = header.split(boldOpen).slice(1).map((chunk) => chunk.slice(0, chunk.indexOf(boldReset)));
+    expect(boldText.map((text) => stripVTControlCharacters(text))).toEqual([" PASO 2/5 "]);
+    expect(stripVTControlCharacters(header).split("\n").map((line) => line.trim().length > 0)).toEqual([false, true, false]);
+  });
 });

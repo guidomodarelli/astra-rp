@@ -7,7 +7,7 @@
 /** Changelog file released together with `package.json`. */
 export const CHANGELOG_FILE = "CHANGELOG.md";
 
-/** Blocking release condition that exits with failure until the manual changelog is updated. */
+/** Blocking release condition that exits with failure until the manual changelog is updated and its `[Unreleased]` block has entries. */
 export const CHANGELOG_UPDATE_REQUIRED_CODE = "changelog-update-required";
 
 /** Default title when creating a changelog document. */
@@ -39,3 +39,18 @@ export const LEADING_WHITESPACE_PATTERN = /^\s+/u;
 
 /** Line break in a changelog written on any platform. */
 export const LINE_BREAK_PATTERN = /\r?\n/u;
+
+/** Line break of a changelog written on Windows, kept when closing `[Unreleased]`. */
+export const CRLF_LINE_BREAK = "\r\n";
+
+/** Line break of a changelog written on any other platform. */
+export const LF_LINE_BREAK = "\n";
+
+/** Separator between the year, month and day of a release date (`YYYY-MM-DD`). */
+export const RELEASE_DATE_SEPARATOR = "-";
+
+/** Digits of the month and the day of a release date. */
+export const RELEASE_DATE_PART_LENGTH = 2;
+
+/** Padding of a one-digit month or day in a release date. */
+export const RELEASE_DATE_PAD = "0";

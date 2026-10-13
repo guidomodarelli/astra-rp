@@ -13,9 +13,9 @@ import {
   CI_VERCEL_CONFIG_FILE, CI_VERCEL_GATE_FILE, CI_VERCEL_GATE_TEMPLATE, CI_VERCEL_IGNORE_PLACEHOLDER, CI_VERCEL_WORKER_WRITTEN_PATHS,
   CI_DENO_JSR_CLIENT, CI_DENO_VERSION,
   CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY, CI_GITHUB_PACKAGES_TOKEN_VARIABLE,
-  NPM_CONFIG_COMMENT_PREFIXES, NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN, NPM_CONFIG_INLINE_COMMENT_PATTERN, NPM_CONFIG_REGISTRY_KEY_PATTERN, NPM_CONFIG_VALUE_QUOTES,
+  NPM_CONFIG_COMMENT_PREFIXES, NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_BOUND_KEY_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN, NPM_CONFIG_INLINE_COMMENT_PATTERN, NPM_CONFIG_QUOTES, NPM_CONFIG_REGISTRY_KEY_PATTERN,
 } from "../constants/ci-release.js";
-import { CREATE_VERSION_CONFIG_FILES, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
+import { CREATE_VERSION_CONFIG_FILES, NPM_CREDENTIAL_CONFIG_FIELDS, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
 import { PACKAGE_MANAGER } from "../constants/package-manager.js";
 import { requiresCiPublicationHistory } from "./ci-publication-history.js";
 import { readCommittedRegularFile } from "./committed-tree.js";
@@ -103,36 +103,51 @@ export function requiresCiNpmOidcClient(config, pinnedVersion = null) {
 }
 
 /**
- * Reads a raw `.npmrc` value the way npm's INI parser does: a fully quoted value keeps its inner
- * text, and an unquoted one ends at an inline `;` or `#` comment.
- * @param {string} rawValue - Text after the first `=` of the line.
- * @returns {string} Effective value.
+ * Reads a raw `.npmrc` key or value the way npm's INI parser does for both: fully quoted text keeps
+ * its inner text, and unquoted text ends at an inline `;` or `#` comment.
+ * @param {string} rawText - Text before or after the first `=` of the line.
+ * @returns {string} Effective key or value.
  */
-function parseNpmConfigValue(rawValue) {
-  const value = rawValue.trim();
-  if (value.length > 1 && NPM_CONFIG_VALUE_QUOTES.includes(value[0]) && value.at(-1) === value[0]) return value.slice(1, -1);
-  const commentIndex = value.search(NPM_CONFIG_INLINE_COMMENT_PATTERN);
-  return (commentIndex === -1 ? value : value.slice(0, commentIndex)).trim();
+function parseNpmConfigText(rawText) {
+  const text = rawText.trim();
+  if (text.length > 1 && NPM_CONFIG_QUOTES.includes(text[0]) && text.at(-1) === text[0]) return text.slice(1, -1);
+  const commentIndex = text.search(NPM_CONFIG_INLINE_COMMENT_PATTERN);
+  return (commentIndex === -1 ? text : text.slice(0, commentIndex)).trim();
 }
 
 /**
- * Describes how the project `.npmrc` reaches GitHub Packages, which the worker cannot install from anonymously.
- * @param {string} repositoryRoot - Project checkout.
- * @returns {{ usesRegistry: boolean, tokenVariables: string[] }} Whether the default registry or a scope resolves
- *   to GitHub Packages, and the variables its project-level GitHub Packages credentials expand (`${NAME}`).
+ * Tells whether a project `.npmrc` key sets a credential for GitHub Packages, whatever its value:
+ * pnpm ignores repository credentials, so the worker still needs the user-level token.
+ * @param {string} key - Effective `.npmrc` key.
+ * @returns {boolean} True for a GitHub Packages-bound field listed in {@link NPM_CREDENTIAL_CONFIG_FIELDS}.
  */
-function describeProjectGithubPackagesConfig(repositoryRoot) {
-  const npmConfigPath = path.join(repositoryRoot, PROJECT_NPM_CONFIG_FILE);
-  const description = { usesRegistry: false, tokenVariables: /** @type {string[]} */ ([]) };
-  if (!existsSync(npmConfigPath)) return description;
+function isGithubPackagesCredentialKey(key) {
+  const configField = NPM_CONFIG_GITHUB_PACKAGES_BOUND_KEY_PATTERN.exec(key)?.[1];
+  return configField !== undefined && NPM_CREDENTIAL_CONFIG_FIELDS.includes(configField);
+}
+
+/**
+ * Describes how the `.npmrc` committed at HEAD reaches GitHub Packages, which the worker cannot
+ * install from anonymously. Only HEAD counts because the worker checks out the release commit: an
+ * untracked or ignored `.npmrc` never reaches it.
+ * @param {string} repositoryRoot - Project checkout.
+ * @returns {Promise<{ usesGithubPackages: boolean, tokenVariables: string[] }>} Whether a scope, the default registry
+ *   or a project credential selects GitHub Packages, and the variables its GitHub Packages tokens expand (`${NAME}`).
+ * @throws {ReleaseStepError} When Git cannot list or read HEAD.
+ */
+async function describeProjectGithubPackagesConfig(repositoryRoot) {
+  const description = { usesGithubPackages: false, tokenVariables: /** @type {string[]} */ ([]) };
+  const committedNpmConfig = await readCommittedRegularFile(repositoryRoot, PROJECT_NPM_CONFIG_FILE);
+  if (committedNpmConfig === null) return description;
   const githubPackagesHost = new URL(GITHUB_PACKAGES_REGISTRY_URL).host;
-  for (const line of readFileSync(npmConfigPath, "utf8").split(/\r?\n/u)) {
+  for (const line of committedNpmConfig.split(/\r?\n/u)) {
     const trimmedLine = line.trim();
     const separatorIndex = trimmedLine.indexOf("=");
     if (separatorIndex === -1 || NPM_CONFIG_COMMENT_PREFIXES.some((prefix) => trimmedLine.startsWith(prefix))) continue;
-    const key = trimmedLine.slice(0, separatorIndex).trim();
-    const value = parseNpmConfigValue(trimmedLine.slice(separatorIndex + 1));
-    if (NPM_CONFIG_REGISTRY_KEY_PATTERN.test(key) && URL.canParse(value) && new URL(value).host === githubPackagesHost) description.usesRegistry = true;
+    const key = parseNpmConfigText(trimmedLine.slice(0, separatorIndex));
+    const value = parseNpmConfigText(trimmedLine.slice(separatorIndex + 1));
+    const selectsGithubPackagesRegistry = NPM_CONFIG_REGISTRY_KEY_PATTERN.test(key) && URL.canParse(value) && new URL(value).host === githubPackagesHost;
+    if (selectsGithubPackagesRegistry || isGithubPackagesCredentialKey(key)) description.usesGithubPackages = true;
     const tokenVariable = NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN.test(key) ? NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN.exec(value)?.[1] : undefined;
     if (tokenVariable && !description.tokenVariables.includes(tokenVariable)) description.tokenVariables.push(tokenVariable);
   }
@@ -182,14 +197,16 @@ export async function renderCiReleaseWorkflow(repositoryRoot, config) {
     packageSetup = [...(pinnedVersion ? ["      - name: Configurar npm", `        run: npm install --global npm@${pinnedVersion}`] : []), "      - name: Instalar dependencias", "        run: npm ci", ...npmOidcClientSetup].join("\n");
   }
   const environment = describeCiEnvironment(config);
-  const projectGithubPackages = describeProjectGithubPackagesConfig(repositoryRoot);
-  const readsGithubPackages = environment.githubToken || projectGithubPackages.usesRegistry || projectGithubPackages.tokenVariables.length > 0;
+  const projectGithubPackages = await describeProjectGithubPackagesConfig(repositoryRoot);
+  const readsGithubPackages = environment.githubToken || projectGithubPackages.usesGithubPackages;
   if (readsGithubPackages) packageSetup = `${renderGithubPackagesAuthenticationStep()}\n${packageSetup}`;
   const readsPublicationHistory = requiresCiPublicationHistory(config);
   const bindsGithubToken = environment.githubToken || readsPublicationHistory;
-  const boundNames = new Set([...environment.secrets, ...environment.variables, ...(bindsGithubToken ? [GITHUB_REGISTRY_TOKEN_VARIABLE] : [])]);
+  // Deployment secrets are bound only on their own steps, so a project credential expanding one still needs the job-level token.
+  const jobSecrets = environment.secrets.filter((name) => !environment.deploymentSecrets.includes(name));
+  const boundNames = new Set([...jobSecrets, ...environment.variables, ...(bindsGithubToken ? [GITHUB_REGISTRY_TOKEN_VARIABLE] : [])]);
   const bindings = [
-    ...environment.secrets.filter((name) => !environment.deploymentSecrets.includes(name)).map((name) => `      ${name}: \${{ secrets.${name} }}`),
+    ...jobSecrets.map((name) => `      ${name}: \${{ secrets.${name} }}`),
     ...environment.variables.map((name) => `      ${name}: \${{ vars.${name} }}`),
     // The worker reads its own Actions history to skip a custom publisher that an earlier attempt finished.
     ...(bindsGithubToken ? ["      GITHUB_TOKEN: ${{ github.token }}"] : []),

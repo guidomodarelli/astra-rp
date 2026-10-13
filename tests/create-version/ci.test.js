@@ -273,39 +273,49 @@ describe("release location and configuration", () => {
   });
 
   it.each([
-    { source: "a scoped GitHub Packages registry in .npmrc", npmrc: "# private UI kit\n@fixture-scope:registry=https://npm.pkg.github.com\n", secrets: [], authenticates: true },
-    { source: "a default GitHub Packages registry in .npmrc", npmrc: "registry = https://npm.pkg.github.com/\n", secrets: [], authenticates: true },
-    { source: "a declared GITHUB_TOKEN secret", npmrc: null, secrets: ["GITHUB_TOKEN"], authenticates: true },
-    { source: "a quoted GitHub Packages registry in .npmrc", npmrc: "@fixture-scope:registry=\"https://npm.pkg.github.com/\"\n", secrets: [], authenticates: true },
-    { source: "a GitHub Packages registry followed by an inline comment in .npmrc", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/ ; private UI kit\n", secrets: [], authenticates: true },
-    { source: "a project GitHub Packages credential that expands an environment variable", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n", secrets: [], authenticates: true, projectTokenVariable: "NODE_AUTH_TOKEN" },
-    { source: "only public or commented registries in .npmrc", npmrc: "@fixture-scope:registry=https://registry.npmjs.org/\n; registry=https://npm.pkg.github.com\n", secrets: [], authenticates: false },
-  ])("should authenticate dependency installs against GitHub Packages when the project uses $source: $authenticates", async ({ npmrc, secrets, authenticates, projectTokenVariable }) => {
+    { source: "a scoped GitHub Packages registry in .npmrc", npmrc: "# private UI kit\n@fixture-scope:registry=https://npm.pkg.github.com\n", secrets: [], authenticates: true, tokenBindings: [] },
+    { source: "a default GitHub Packages registry in .npmrc", npmrc: "registry = https://npm.pkg.github.com/\n", secrets: [], authenticates: true, tokenBindings: [] },
+    { source: "a declared GITHUB_TOKEN secret", npmrc: null, secrets: ["GITHUB_TOKEN"], authenticates: true, tokenBindings: ["GITHUB_TOKEN"] },
+    { source: "a quoted GitHub Packages registry in .npmrc", npmrc: "@fixture-scope:registry=\"https://npm.pkg.github.com/\"\n", secrets: [], authenticates: true, tokenBindings: [] },
+    { source: "a quoted GitHub Packages registry key in .npmrc", npmrc: "\"@fixture-scope:registry\"=https://npm.pkg.github.com/\n", secrets: [], authenticates: true, tokenBindings: [] },
+    { source: "a GitHub Packages registry followed by an inline comment in .npmrc", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/ ; private UI kit\n", secrets: [], authenticates: true, tokenBindings: [] },
+    { source: "a project GitHub Packages credential that expands an environment variable", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["NODE_AUTH_TOKEN"] },
+    { source: "a project GitHub Packages credential that expands a Vercel deployment secret", npmrc: "//npm.pkg.github.com/:_authToken=${VERCEL_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["VERCEL_TOKEN"] },
+    { source: "a literal project GitHub Packages token", npmrc: "//npm.pkg.github.com/:_authToken=fixture-literal-token\n", secrets: [], authenticates: true, tokenBindings: [] },
+    { source: "a quoted project GitHub Packages basic credential key", npmrc: "\"//npm.pkg.github.com/fixture-owner/:_auth\"=Zml4dHVyZTpmaXh0dXJl\n", secrets: [], authenticates: true, tokenBindings: [] },
+    { source: "a project GitHub Packages username", npmrc: "//npm.pkg.github.com/:username=fixture-user\n", secrets: [], authenticates: true, tokenBindings: [] },
+    { source: "a GitHub Packages registry only in an uncommitted .npmrc", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n", committed: false, secrets: [], authenticates: false, tokenBindings: [] },
+    { source: "only public or commented registries in .npmrc", npmrc: "@fixture-scope:registry=https://registry.npmjs.org/\n; registry=https://npm.pkg.github.com\n//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n", secrets: [], authenticates: false, tokenBindings: [] },
+  ])("should authenticate dependency installs against GitHub Packages when the project uses $source: $authenticates", async ({ npmrc, committed = true, secrets, authenticates, tokenBindings }) => {
     // Arrange
     const root = createTemporaryDirectory("beez-rp-ci-github-packages-");
     const runnerHome = createTemporaryDirectory("beez-rp-ci-runner-home-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
-    if (npmrc !== null) writeFileSync(path.join(root, ".npmrc"), npmrc);
+    if (npmrc !== null && committed) writeFileSync(path.join(root, ".npmrc"), npmrc);
     const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", deployment: "vercel", secrets } });
     commitFixtureRepository(root);
+    // The worker checks out the release commit, so a .npmrc present only in the working tree never reaches it.
+    if (npmrc !== null && !committed) writeFileSync(path.join(root, ".npmrc"), npmrc);
     // Act
     const workflow = await renderCiReleaseWorkflow(root, config);
-    const { jobEnvironment, stepEnvironments } = readWorkflowEnvironmentScopes(workflow);
+    const { stepEnvironments } = readWorkflowEnvironmentScopes(workflow);
     const stepNames = [...stepEnvironments.keys()];
     const authenticationStep = workflow.split("\n      - name: ").find((step) => step.startsWith(CI_GITHUB_PACKAGES_AUTHENTICATION_STEP));
     const authenticationCommand = /\n {8}run: (.+)/u.exec(authenticationStep ?? "")?.[1];
+    const jobTokenBindings = workflow.split("\n").map((line) => /^ {6}([A-Z][A-Z0-9_]*): \$\{\{ github\.token \}\}$/u.exec(line)?.[1]).filter(Boolean);
     // Assert
     expect(workflow.split("\n").includes("  packages: read")).toBe(authenticates);
     expect(stepNames.includes(CI_GITHUB_PACKAGES_AUTHENTICATION_STEP)).toBe(authenticates);
+    // npm prefers the project credential over ~/.npmrc, so every variable it expands gets the Actions token at job level.
+    expect(jobTokenBindings).toEqual(tokenBindings);
+    // Deployment steps keep receiving the Vercel secrets, which override any job-level binding there.
+    expect(stepEnvironments.get("Desplegar producción después de los checks")).toEqual(["VERCEL_TOKEN", "VERCEL_ORG_ID", "VERCEL_PROJECT_ID"]);
     if (!authenticates) return;
     expect(stepNames.indexOf(CI_GITHUB_PACKAGES_AUTHENTICATION_STEP)).toBeLessThan(stepNames.indexOf("Instalar dependencias"));
     expect(stepEnvironments.get(CI_GITHUB_PACKAGES_AUTHENTICATION_STEP)).toEqual(["GITHUB_PACKAGES_TOKEN"]);
     const executed = spawnSync(resolveBashExecutable(), ["-c", authenticationCommand ?? "exit 1"], { encoding: "utf8", env: commandEnvironment({ HOME: runnerHome, GITHUB_PACKAGES_TOKEN: "fixture-actions-token" }) });
     expect(executed.status).toBe(0);
     expect(readFileSync(path.join(runnerHome, ".npmrc"), "utf8")).toBe("//npm.pkg.github.com/:_authToken=fixture-actions-token\n");
-    // npm prefers the project credential over ~/.npmrc, so the variable it expands must resolve to the Actions token.
-    expect(workflow.split("\n").includes("      NODE_AUTH_TOKEN: ${{ github.token }}")).toBe(projectTokenVariable === "NODE_AUTH_TOKEN");
-    expect(jobEnvironment.includes("NODE_AUTH_TOKEN")).toBe(projectTokenVariable === "NODE_AUTH_TOKEN");
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it.each(["--ci-release", "--retry-ci"])("should reject invalid tags at the CLI boundary when using %s", (flag) => {

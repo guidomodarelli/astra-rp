@@ -5,6 +5,7 @@
 
 import { CREATE_VERSION_CONFIG_FILES, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE } from "./create-version.js";
 import { LOCKFILE_PACKAGE_MANAGERS } from "./package-manager.js";
+import { GITHUB_REGISTRY_TOKEN_VARIABLE } from "./registry.js";
 
 /** Release execution locations offered by the CLI. */
 export const RELEASE_EXECUTION = Object.freeze({ local: "local", ci: "ci" });
@@ -161,6 +162,12 @@ export const NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN = /^\$\{([A-Za-z_][A-Za-z0
 /** Start of an inline comment in an unquoted `.npmrc` value (INI syntax: an unescaped `;` or `#`). */
 export const NPM_CONFIG_INLINE_COMMENT_PATTERN = /(?<!\\)[;#]/u;
 
+/**
+ * `.npmrc` INI section header (`[name]`). npm's INI parser nests every later key under that section,
+ * so those keys never configure the top-level registries or credentials.
+ */
+export const NPM_CONFIG_SECTION_HEADER_PATTERN = /^\[.*\]$/u;
+
 /** Prefixes of `.npmrc` comment lines. */
 export const NPM_CONFIG_COMMENT_PREFIXES = Object.freeze(["#", ";"]);
 
@@ -181,6 +188,28 @@ export const CI_MIGRATION_ENVIRONMENT_PATTERN = /\b[A-Z][A-Z0-9_]*(?:URL|TOKEN|K
 
 /** Bindings owned by the worker protocol and unavailable for user overrides. */
 export const CI_RESERVED_ENVIRONMENT_NAMES = Object.freeze([CI_RELEASE_TAG_ENVIRONMENT, "HUSKY", ...Object.values(CI_RELEASE_ENVIRONMENT)]);
+
+/**
+ * Prefixes of the default environment variables the GitHub Actions runner sets on every step. GitHub
+ * documents that they cannot be overwritten, so a job-level binding to the workflow token would not
+ * reach them.
+ * @see https://docs.github.com/en/actions/reference/workflows-and-actions/variables#default-environment-variables
+ */
+export const CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES = Object.freeze(["GITHUB_", "RUNNER_"]);
+
+/**
+ * Default runner environment variables without one of {@link CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES}
+ * (`CI` is always `true`).
+ * @see https://docs.github.com/en/actions/reference/workflows-and-actions/variables#default-environment-variables
+ */
+export const CI_RUNNER_DEFAULT_ENVIRONMENT_NAMES = Object.freeze(["CI"]);
+
+/**
+ * Prefixed names that are not runner defaults: `GITHUB_TOKEN` comes from `secrets.GITHUB_TOKEN` /
+ * `github.token`, so the generated workflow can bind it.
+ * @see https://docs.github.com/en/actions/reference/workflows-and-actions/variables#default-environment-variables
+ */
+export const CI_RUNNER_BINDABLE_PREFIXED_ENVIRONMENT_NAMES = Object.freeze([GITHUB_REGISTRY_TOKEN_VARIABLE]);
 
 /** Generated Vercel gate; it runs before dependencies are installed. */
 export const CI_VERCEL_GATE_FILE = ".beez-rp/vercel-ignore-build.mjs";

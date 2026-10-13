@@ -286,6 +286,15 @@ describe("release location and configuration", () => {
     { source: "a project GitHub Packages username", npmrc: "//npm.pkg.github.com/:username=fixture-user\n", secrets: [], authenticates: true, tokenBindings: [] },
     { source: "a GitHub Packages registry only in an uncommitted .npmrc", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n", committed: false, secrets: [], authenticates: false, tokenBindings: [] },
     { source: "only public or commented registries in .npmrc", npmrc: "@fixture-scope:registry=https://registry.npmjs.org/\n; registry=https://npm.pkg.github.com\n//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n", secrets: [], authenticates: false, tokenBindings: [] },
+    // GITHUB_TOKEN comes from the workflow token, not from the runner's immutable defaults, so the job binds it.
+    { source: "a project GitHub Packages token expanding GITHUB_TOKEN", npmrc: "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["GITHUB_TOKEN"] },
+    // npm keeps the last assignment of a repeated key, so only effective values are validated and bound.
+    { source: "an empty GitHub Packages token replaced by a later assignment", npmrc: "//npm.pkg.github.com/:_authToken=\n//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["GITHUB_TOKEN"] },
+    { source: "a reserved token variable replaced by a later quoted-key assignment", npmrc: "//npm.pkg.github.com/:_authToken=${HUSKY}\n\"//npm.pkg.github.com/:_authToken\"=${NODE_AUTH_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["NODE_AUTH_TOKEN"] },
+    { source: "a runner default variable replaced by a later assignment", npmrc: "//npm.pkg.github.com/:_authToken=${GITHUB_REPOSITORY}\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["NODE_AUTH_TOKEN"] },
+    { source: "a GitHub Packages registry replaced by a later public registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n@fixture-scope:registry=https://registry.npmjs.org/\n", secrets: [], authenticates: false, tokenBindings: [] },
+    // npm nests keys under an INI [section], so they never configure the top-level registry or its credentials.
+    { source: "GitHub Packages settings only inside an INI section", npmrc: "[fixture-section]\n@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=\n", secrets: [], authenticates: false, tokenBindings: [] },
   ])("should authenticate dependency installs against GitHub Packages when the project uses $source: $authenticates", async ({ npmrc, committed = true, secrets, authenticates, tokenBindings }) => {
     // Arrange
     const root = createTemporaryDirectory("beez-rp-ci-github-packages-");
@@ -325,6 +334,11 @@ describe("release location and configuration", () => {
     { source: "a GitHub Packages token expanding the reserved HUSKY binding", npmrc: "//npm.pkg.github.com/:_authToken=${HUSKY}\n", message: /HUSKY.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding the reserved release tag binding", npmrc: "//npm.pkg.github.com/:_authToken=${RELEASE_TAG}\n", message: /RELEASE_TAG.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding a reserved release input binding", npmrc: "//npm.pkg.github.com/fixture-owner/:_authToken=${BEEZ_RP_RELEASE_VERSION}\n", message: /BEEZ_RP_RELEASE_VERSION.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a later assignment that empties a valid GitHub Packages token", npmrc: "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n//npm.pkg.github.com/:_authToken=\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*vacía/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a GitHub Packages token expanding the runner's GITHUB_REPOSITORY default", npmrc: "//npm.pkg.github.com/:_authToken=${GITHUB_REPOSITORY}\n", message: /GITHUB_REPOSITORY.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a GitHub Packages token expanding the runner's GITHUB_ENV default", npmrc: "//npm.pkg.github.com/fixture-owner/:_authToken=${GITHUB_ENV}\n", message: /GITHUB_ENV.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a GitHub Packages token expanding the runner's RUNNER_TEMP default", npmrc: "//npm.pkg.github.com/:_authToken=${RUNNER_TEMP}\n", message: /RUNNER_TEMP.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a GitHub Packages token expanding the runner's CI default", npmrc: "//npm.pkg.github.com/:_authToken=${CI}\n", message: /\$\{CI\}.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
   ])("should reject the CI workflow before the bump when the committed .npmrc uses $source", async ({ npmrc, message, hint }) => {
     // Arrange
     const root = createTemporaryDirectory("beez-rp-ci-github-packages-rejected-");

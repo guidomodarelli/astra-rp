@@ -13,8 +13,8 @@ import {
   CI_VERCEL_CONFIG_FILE, CI_VERCEL_GATE_FILE, CI_VERCEL_GATE_TEMPLATE, CI_VERCEL_IGNORE_PLACEHOLDER, CI_VERCEL_WORKER_WRITTEN_PATHS,
   CI_DENO_JSR_CLIENT, CI_DENO_VERSION, CI_RESERVED_ENVIRONMENT_NAMES,
   CI_RUNNER_BINDABLE_PREFIXED_ENVIRONMENT_NAMES, CI_RUNNER_DEFAULT_ENVIRONMENT_NAMES, CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES,
-  CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY, CI_GITHUB_PACKAGES_TOKEN_VARIABLE, CI_NPM_USER_CONFIG_REDIRECT_VARIABLES, CI_RUNNER_NPM_USER_CONFIG_PATH,
-  NPM_CONFIG_COMMENT_PREFIXES, NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN, NPM_CONFIG_ENVIRONMENT_REFERENCES_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_BOUND_KEY_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN, NPM_CONFIG_INLINE_COMMENT_PATTERN, NPM_CONFIG_QUOTES, NPM_CONFIG_REGISTRY_KEY_PATTERN, NPM_CONFIG_SECTION_HEADER_PATTERN,
+  CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY, CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL, CI_GITHUB_PACKAGES_TOKEN_VARIABLE, CI_NPM_USER_CONFIG_LOCATION_VARIABLES, CI_NPM_USER_CONFIG_REDIRECT_VARIABLES, CI_RUNNER_NPM_USER_CONFIG_PATH,
+  NPM_CONFIG_COMMENT_PREFIXES, NPM_CONFIG_JSON_QUOTE, NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN, NPM_CONFIG_ENVIRONMENT_REFERENCES_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_BOUND_KEY_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN, NPM_CONFIG_INLINE_COMMENT_PATTERN, NPM_CONFIG_QUOTES, NPM_CONFIG_REGISTRY_KEY_PATTERN, NPM_CONFIG_SECTION_HEADER_PATTERN,
 } from "../constants/ci-release.js";
 import { CREATE_VERSION_CONFIG_FILES, NPM_CREDENTIAL_CONFIG_FIELDS, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
 import { PACKAGE_MANAGER } from "../constants/package-manager.js";
@@ -116,16 +116,33 @@ export function requiresCiNpmOidcClient(config, pinnedVersion = null) {
 }
 
 /**
- * Reads a raw `.npmrc` key or value the way npm's INI parser does for both: fully quoted text keeps
- * its inner text, and unquoted text ends at an inline `;` or `#` comment.
+ * Reads a raw `.npmrc` key or value the way npm's INI parser does for both: double-quoted text is
+ * decoded as a JSON string (Unicode escapes included), other fully quoted text, or double-quoted
+ * text that is not valid JSON, keeps its inner text, and unquoted text ends at an inline `;` or `#` comment.
  * @param {string} rawText - Text before or after the first `=` of the line.
  * @returns {string} Effective key or value.
  */
 function parseNpmConfigText(rawText) {
   const text = rawText.trim();
-  if (text.length > 1 && NPM_CONFIG_QUOTES.includes(text[0]) && text.at(-1) === text[0]) return text.slice(1, -1);
+  if (text.length > 1 && NPM_CONFIG_QUOTES.includes(text[0]) && text.at(-1) === text[0]) {
+    return text[0] === NPM_CONFIG_JSON_QUOTE ? decodeNpmConfigJsonString(text) : text.slice(1, -1);
+  }
   const commentIndex = text.search(NPM_CONFIG_INLINE_COMMENT_PATTERN);
   return (commentIndex === -1 ? text : text.slice(0, commentIndex)).trim();
+}
+
+/**
+ * Decodes a double-quoted `.npmrc` key or value as a JSON string, as npm's INI parser does.
+ * @param {string} quotedText - Trimmed text wrapped in {@link NPM_CONFIG_JSON_QUOTE}.
+ * @returns {string} Decoded text, or the text without its quotes when it is not a valid JSON string.
+ */
+function decodeNpmConfigJsonString(quotedText) {
+  try {
+    return JSON.parse(quotedText);
+  } catch {
+    // Not a valid JSON string (for example an unknown escape): keep the plain unquoting.
+    return quotedText.slice(1, -1);
+  }
 }
 
 /**
@@ -198,6 +215,7 @@ async function describeProjectGithubPackagesConfig(repositoryRoot, deploymentSec
   for (const [key, value] of readTopLevelNpmConfigEntries(committedNpmConfig)) {
     const selectsRegistry = NPM_CONFIG_REGISTRY_KEY_PATTERN.test(key);
     const selectsGithubPackagesRegistry = selectsRegistry && URL.canParse(value) && new URL(value).host === githubPackagesHost;
+    if (selectsGithubPackagesRegistry) assertGithubPackagesRegistrySecure(key, value);
     const setsGithubPackagesCredential = isGithubPackagesCredentialKey(key);
     const setsGithubPackagesToken = NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN.test(key);
     const referencedVariables = [...value.matchAll(NPM_CONFIG_ENVIRONMENT_REFERENCES_PATTERN)].map((match) => match[1]);
@@ -232,17 +250,36 @@ function assertGithubPackagesHostTokenNotEmpty(value) {
 }
 
 /**
+ * Rejects a committed registry that reaches GitHub Packages without {@link CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}:
+ * the generated workflow would hand npm the Actions token, which npm would then send in clear text.
+ * @param {string} key - Effective `.npmrc` registry key.
+ * @param {string} value - Effective registry URL, whose host is GitHub Packages.
+ * @returns {void}
+ * @throws {ReleaseStepError} When the registry URL uses another protocol, such as `http:`.
+ */
+function assertGithubPackagesRegistrySecure(key, value) {
+  const protocol = new URL(value).protocol;
+  if (protocol === CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL) return;
+  throw new ReleaseStepError(
+    `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${key} con GitHub Packages sobre ${protocol}; el workflow le daría a npm el token de Actions y npm lo enviaría sin cifrar.`,
+    `Usá ${GITHUB_PACKAGES_REGISTRY_URL} como registry, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
+  );
+}
+
+/**
  * Rejects a GitHub Packages token that expands a binding the generated workflow cannot give the
  * Actions token: a runner default variable, which GitHub never lets a job override (npm would send
  * the runner's value), a binding owned by the worker protocol, which it would duplicate or override,
- * or a deployment secret, which the deployment steps bind to its own value, so the install inside
- * `vercel build` would send that secret as the GitHub Packages token.
+ * a deployment secret, which the deployment steps bind to its own value, so the install inside
+ * `vercel build` would send that secret as the GitHub Packages token, or a variable that locates the
+ * user npm config, which binding it to the token would break (the step writes `$HOME/.npmrc`).
  * @param {string} key - Effective `.npmrc` key holding the GitHub Packages token.
  * @param {string} tokenVariable - Variable the token expands (`${NAME}`).
  * @param {readonly string[]} deploymentSecrets - Credentials the deployment steps bind themselves.
  * @returns {void}
  * @throws {ReleaseStepError} When the variable is a runner default (`CI`, `GITHUB_*` other than
- *   `GITHUB_TOKEN`, `RUNNER_*`), one of {@link CI_RESERVED_ENVIRONMENT_NAMES} or a deployment secret.
+ *   `GITHUB_TOKEN`, `RUNNER_*`), one of {@link CI_NPM_USER_CONFIG_LOCATION_VARIABLES}, one of
+ *   {@link CI_RESERVED_ENVIRONMENT_NAMES} or a deployment secret.
  */
 function assertGithubPackagesTokenVariableNotReserved(key, tokenVariable, deploymentSecrets) {
   if (deploymentSecrets.includes(tokenVariable)) {
@@ -255,6 +292,12 @@ function assertGithubPackagesTokenVariableNotReserved(key, tokenVariable, deploy
     throw new ReleaseStepError(
       `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${key} con \${${tokenVariable}}, una variable predefinida del runner de GitHub Actions que no se puede sobreescribir; npm enviaría ese valor como token y la instalación de GitHub Packages fallaría con 401.`,
       `Usá \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} u otra variable que no sea ${CI_RUNNER_DEFAULT_ENVIRONMENT_NAMES.join(", ")} ni empiece con ${CI_RUNNER_DEFAULT_ENVIRONMENT_PREFIXES.join(" o ")}, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
+    );
+  }
+  if (CI_NPM_USER_CONFIG_LOCATION_VARIABLES.includes(tokenVariable)) {
+    throw new ReleaseStepError(
+      `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${key} con \${${tokenVariable}}, una variable que ubica la configuración de usuario de npm; el workflow la cargaría con el token de Actions y el paso que escribe ${CI_RUNNER_NPM_USER_CONFIG_PATH} fallaría o quedaría fuera del alcance de la instalación.`,
+      `Usá \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} u otra variable que no sea ${CI_NPM_USER_CONFIG_LOCATION_VARIABLES.join(", ")}, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
     );
   }
   if (!CI_RESERVED_ENVIRONMENT_NAMES.includes(tokenVariable)) return;
@@ -270,6 +313,8 @@ function assertGithubPackagesTokenVariableNotReserved(key, tokenVariable, deploy
  * after the tag was pushed.
  * - A job binding of {@link CI_NPM_USER_CONFIG_REDIRECT_VARIABLES} moves the user config away from
  *   the runner's `~/.npmrc`, where the generated step stores the Actions token.
+ * - A GitHub Packages token expanding `GITHUB_TOKEN` while `ci.variables` declares it gets that
+ *   repository variable instead of the Actions token.
  * - A GitHub Packages token expanding the publication token variable gets the publication secret,
  *   not the Actions token, because that name is already bound from its own secret.
  * - A registry read from the environment may select GitHub Packages, which would need the token step
@@ -290,6 +335,12 @@ function assertGithubPackagesSetupSupported(config, environment, projectGithubPa
     throw new ReleaseStepError(
       `ci.secrets o ci.variables declara ${redirectVariable}, que cambia la configuración de usuario de npm; el workflow guarda el token de GitHub Packages en ~/.npmrc del runner y la instalación de dependencias no lo leería.`,
       `Quitá ${redirectVariable} de ci.secrets y ci.variables (el workflow usa ${CI_RUNNER_NPM_USER_CONFIG_PATH}); no se cambió ningún archivo.`,
+    );
+  }
+  if (projectGithubPackages.tokenVariables.includes(GITHUB_REGISTRY_TOKEN_VARIABLE) && (config.ci?.variables ?? []).includes(GITHUB_REGISTRY_TOKEN_VARIABLE)) {
+    throw new ReleaseStepError(
+      `El ${PROJECT_NPM_CONFIG_FILE} commiteado usa \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} como token de GitHub Packages y ci.variables declara ${GITHUB_REGISTRY_TOKEN_VARIABLE}; el workflow lo cargaría con esa variable del repositorio en vez del token de Actions y la instalación de GitHub Packages fallaría con 401.`,
+      `Quitá ${GITHUB_REGISTRY_TOKEN_VARIABLE} de ci.variables (el workflow le da el token de Actions) y volvé a correr el comando; no se cambió ningún archivo.`,
     );
   }
   const publicationTokenVariable = readPublicationTokenVariable(config);

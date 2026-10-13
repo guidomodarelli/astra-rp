@@ -154,6 +154,19 @@ export const CI_RUNNER_NPM_USER_CONFIG_PATH = "$HOME/.npmrc";
  */
 export const CI_NPM_USER_CONFIG_REDIRECT_VARIABLES = Object.freeze(["NPM_CONFIG_USERCONFIG", "XDG_CONFIG_HOME"]);
 
+/**
+ * Variables that locate the runner's user npm config: `HOME` (the generated step writes
+ * `$HOME/.npmrc`) and {@link CI_NPM_USER_CONFIG_REDIRECT_VARIABLES}. A GitHub Packages token expanding
+ * one of them would bind it to the Actions token at job level and move or break that config.
+ */
+export const CI_NPM_USER_CONFIG_LOCATION_VARIABLES = Object.freeze(["HOME", ...CI_NPM_USER_CONFIG_REDIRECT_VARIABLES]);
+
+/** Only URL protocol accepted for a GitHub Packages registry, so the workflow token never travels in clear text. */
+export const CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL = "https:";
+
+/** Quote character whose wrapped `.npmrc` key or value npm's INI parser decodes as a JSON string. */
+export const NPM_CONFIG_JSON_QUOTE = '"';
+
 /** `.npmrc` key selecting a registry, default (`registry`) or scoped (`@scope:registry`). */
 export const NPM_CONFIG_REGISTRY_KEY_PATTERN = /^(?:@[^\s:]+:)?registry$/u;
 

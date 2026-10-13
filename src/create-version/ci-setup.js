@@ -11,7 +11,7 @@ import {
   CI_TEMPLATE_PLACEHOLDER, CI_WORKFLOW_DIRECTORY, DEFAULT_CI_WORKFLOW,
   CI_RELEASE_METADATA_FILE, CI_VERCEL_CLI_VERSION, CI_VERCEL_DEPLOYMENT, CI_VERCEL_SECRETS,
   CI_VERCEL_CONFIG_FILE, CI_VERCEL_GATE_FILE, CI_VERCEL_GATE_TEMPLATE, CI_VERCEL_IGNORE_PLACEHOLDER, CI_VERCEL_WORKER_WRITTEN_PATHS,
-  CI_DENO_JSR_CLIENT, CI_DENO_VERSION,
+  CI_DENO_JSR_CLIENT, CI_DENO_VERSION, CI_RESERVED_ENVIRONMENT_NAMES,
   CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY, CI_GITHUB_PACKAGES_TOKEN_VARIABLE,
   NPM_CONFIG_COMMENT_PREFIXES, NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_BOUND_KEY_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN, NPM_CONFIG_INLINE_COMMENT_PATTERN, NPM_CONFIG_QUOTES, NPM_CONFIG_REGISTRY_KEY_PATTERN,
 } from "../constants/ci-release.js";
@@ -133,7 +133,8 @@ function isGithubPackagesCredentialKey(key) {
  * @param {string} repositoryRoot - Project checkout.
  * @returns {Promise<{ usesGithubPackages: boolean, tokenVariables: string[] }>} Whether a scope, the default registry
  *   or a project credential selects GitHub Packages, and the variables its GitHub Packages tokens expand (`${NAME}`).
- * @throws {ReleaseStepError} When Git cannot list or read HEAD.
+ * @throws {ReleaseStepError} When Git cannot list or read HEAD, a GitHub Packages credential is empty
+ *   or its token expands a reserved worker binding.
  */
 async function describeProjectGithubPackagesConfig(repositoryRoot) {
   const description = { usesGithubPackages: false, tokenVariables: /** @type {string[]} */ ([]) };
@@ -147,11 +148,46 @@ async function describeProjectGithubPackagesConfig(repositoryRoot) {
     const key = parseNpmConfigText(trimmedLine.slice(0, separatorIndex));
     const value = parseNpmConfigText(trimmedLine.slice(separatorIndex + 1));
     const selectsGithubPackagesRegistry = NPM_CONFIG_REGISTRY_KEY_PATTERN.test(key) && URL.canParse(value) && new URL(value).host === githubPackagesHost;
-    if (selectsGithubPackagesRegistry || isGithubPackagesCredentialKey(key)) description.usesGithubPackages = true;
+    const setsGithubPackagesCredential = isGithubPackagesCredentialKey(key);
+    if (setsGithubPackagesCredential) assertGithubPackagesCredentialNotEmpty(key, value);
+    if (selectsGithubPackagesRegistry || setsGithubPackagesCredential) description.usesGithubPackages = true;
     const tokenVariable = NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN.test(key) ? NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN.exec(value)?.[1] : undefined;
+    if (tokenVariable) assertGithubPackagesTokenVariableNotReserved(key, tokenVariable);
     if (tokenVariable && !description.tokenVariables.includes(tokenVariable)) description.tokenVariables.push(tokenVariable);
   }
   return description;
+}
+
+/**
+ * Rejects an empty GitHub Packages credential in the committed `.npmrc`: npm prefers that project
+ * value over the token the worker writes to `~/.npmrc`, so the dependency install would run unauthenticated.
+ * @param {string} key - Effective `.npmrc` key bound to GitHub Packages.
+ * @param {string} value - Effective `.npmrc` value.
+ * @returns {void}
+ * @throws {ReleaseStepError} When the credential value is empty.
+ */
+function assertGithubPackagesCredentialNotEmpty(key, value) {
+  if (value !== "") return;
+  throw new ReleaseStepError(
+    `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${key} con una credencial vacía; en CI tendría prioridad sobre el token de Actions y la instalación de dependencias de GitHub Packages fallaría.`,
+    `Reemplazá el valor por \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} o quitá esa línea, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
+  );
+}
+
+/**
+ * Rejects a GitHub Packages token that expands a binding owned by the worker protocol: binding it
+ * to the Actions token would duplicate or override that job-level variable in the generated workflow.
+ * @param {string} key - Effective `.npmrc` key holding the GitHub Packages token.
+ * @param {string} tokenVariable - Variable the token expands (`${NAME}`).
+ * @returns {void}
+ * @throws {ReleaseStepError} When the variable is one of {@link CI_RESERVED_ENVIRONMENT_NAMES}.
+ */
+function assertGithubPackagesTokenVariableNotReserved(key, tokenVariable) {
+  if (!CI_RESERVED_ENVIRONMENT_NAMES.includes(tokenVariable)) return;
+  throw new ReleaseStepError(
+    `El ${PROJECT_NPM_CONFIG_FILE} commiteado define ${key} con \${${tokenVariable}}, una variable reservada del worker de CI (${CI_RESERVED_ENVIRONMENT_NAMES.join(", ")}).`,
+    `Usá \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} u otra variable no reservada, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
+  );
 }
 
 /**
@@ -172,7 +208,8 @@ function renderGithubPackagesAuthenticationStep() {
  * @param {string} repositoryRoot - Project checkout.
  * @param {ResolvedCreateVersionConfig} config - Release hooks and package manager.
  * @returns {Promise<string>} GitHub Actions YAML.
- * @throws {ReleaseStepError} When Git cannot list or read HEAD to resolve the Node.js pin.
+ * @throws {ReleaseStepError} When Git cannot list or read HEAD, or the committed `.npmrc` has an
+ *   empty GitHub Packages credential or a token expanding a reserved worker binding.
  */
 export async function renderCiReleaseWorkflow(repositoryRoot, config) {
   const manifest = JSON.parse(readFileSync(path.join(repositoryRoot, PACKAGE_MANIFEST_FILE), "utf8"));

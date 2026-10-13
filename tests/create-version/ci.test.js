@@ -318,6 +318,28 @@ describe("release location and configuration", () => {
     expect(readFileSync(path.join(runnerHome, ".npmrc"), "utf8")).toBe("//npm.pkg.github.com/:_authToken=fixture-actions-token\n");
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
+  it.each([
+    { source: "an empty GitHub Packages token", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*vacía/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a quoted empty GitHub Packages token", npmrc: "//npm.pkg.github.com/:_authToken=\"\"\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*vacía/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "an empty owner-scoped GitHub Packages basic credential followed by a comment", npmrc: "//npm.pkg.github.com/fixture-owner/:_auth= ; filled locally\n", message: /\/\/npm\.pkg\.github\.com\/fixture-owner\/:_auth.*vacía/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a GitHub Packages token expanding the reserved HUSKY binding", npmrc: "//npm.pkg.github.com/:_authToken=${HUSKY}\n", message: /HUSKY.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a GitHub Packages token expanding the reserved release tag binding", npmrc: "//npm.pkg.github.com/:_authToken=${RELEASE_TAG}\n", message: /RELEASE_TAG.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a GitHub Packages token expanding a reserved release input binding", npmrc: "//npm.pkg.github.com/fixture-owner/:_authToken=${BEEZ_RP_RELEASE_VERSION}\n", message: /BEEZ_RP_RELEASE_VERSION.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
+  ])("should reject the CI workflow before the bump when the committed .npmrc uses $source", async ({ npmrc, message, hint }) => {
+    // Arrange
+    const root = createTemporaryDirectory("beez-rp-ci-github-packages-rejected-");
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "npm@11.11.1" }));
+    writeFileSync(path.join(root, ".npmrc"), npmrc);
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml" } });
+    commitFixtureRepository(root);
+    // Act
+    const rendering = renderCiReleaseWorkflow(root, config);
+    // Assert
+    await expect(rendering).rejects.toBeInstanceOf(ReleaseStepError);
+    await expect(rendering).rejects.toThrow(message);
+    await expect(rendering).rejects.toMatchObject({ hint: expect.stringMatching(hint) });
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
   it.each(["--ci-release", "--retry-ci"])("should reject invalid tags at the CLI boundary when using %s", (flag) => {
     // Arrange and Act and Assert
     for (const value of ["", " ", "1.2.4", "v1.2.4-beta.1", "v1.2.4\n"]) expect(() => parseReleaseArguments([flag, value])).toThrow(/tag estable vX\.Y\.Z/);

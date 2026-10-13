@@ -38,6 +38,29 @@ export async function listCommittedTreeEntries(repositoryRoot, filePaths) {
 }
 
 /**
+ * Tells whether a HEAD tree entry is a regular file, which the worker checks out as is; a symlink,
+ * submodule or directory is not.
+ * @param {CommittedTreeEntry} entry - Entry listed by {@link listCommittedTreeEntries}.
+ * @returns {boolean} True for a blob with one of {@link GIT_REGULAR_FILE_MODES}.
+ */
+export function isCommittedRegularFile(entry) {
+  return entry.type === "blob" && GIT_REGULAR_FILE_MODES.includes(entry.mode);
+}
+
+/**
+ * Reads the content of a regular file entry of HEAD.
+ * @param {string} repositoryRoot - Project root.
+ * @param {CommittedTreeEntry} entry - Regular file entry (see {@link isCommittedRegularFile}).
+ * @returns {Promise<string>} Committed content.
+ * @throws {ReleaseStepError} When Git cannot read the committed object.
+ */
+export async function readCommittedFileEntry(repositoryRoot, entry) {
+  const shown = await runCaptured("git", ["cat-file", "blob", entry.objectId], { cwd: repositoryRoot });
+  if (shown.status !== 0) throw new ReleaseStepError(`No se pudo leer ${entry.filePath} desde HEAD para el workflow de CI (git cat-file terminó con status ${shown.status}).`, UNREADABLE_HEAD_HINT);
+  return shown.stdout;
+}
+
+/**
  * Reads a file committed at HEAD only when it is a regular file, which the worker checks out as is;
  * a symlink, submodule or directory at that path counts as absent.
  * @param {string} repositoryRoot - Project root.
@@ -47,8 +70,6 @@ export async function listCommittedTreeEntries(repositoryRoot, filePaths) {
  */
 export async function readCommittedRegularFile(repositoryRoot, filePath) {
   const [entry] = await listCommittedTreeEntries(repositoryRoot, [filePath]);
-  if (!entry || entry.type !== "blob" || !GIT_REGULAR_FILE_MODES.includes(entry.mode)) return null;
-  const shown = await runCaptured("git", ["cat-file", "blob", entry.objectId], { cwd: repositoryRoot });
-  if (shown.status !== 0) throw new ReleaseStepError(`No se pudo leer ${filePath} desde HEAD para el workflow de CI (git cat-file terminó con status ${shown.status}).`, UNREADABLE_HEAD_HINT);
-  return shown.stdout;
+  if (!entry || !isCommittedRegularFile(entry)) return null;
+  return readCommittedFileEntry(repositoryRoot, entry);
 }

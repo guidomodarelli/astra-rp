@@ -5,7 +5,7 @@
  * and decides without touching Git, npm or databases what is still missing
  * to ship a release from `main`:
  *
- * - a new release: sync `main`, verify the manual changelog, apply migrations, run the
+ * - a new release: sync `main`, verify the manual changelog and its `[Unreleased]` entries, apply migrations, run the
  *   checks, bump (commit `X.Y.Z` + tag `vX.Y.Z`), prepare, push and publish;
  * - the resume of a release commit that never reached `origin` or the registry,
  *   including the publication of a tagged release from a detached `HEAD`;
@@ -43,6 +43,7 @@ import {
 import { RELEASE_TYPE } from "../constants/versions.js";
 import { compareReleaseVersions, findHighestStableVersion, isReleaseCommitSubject, isStableReleaseVersion, isStableVersionAbove, toReleaseTag } from "../versions.js";
 import { DEFAULT_PROJECT_COMMANDS } from "../package-manager.js";
+import { describeMissingUnreleasedEntries, describeUnreleasedEntriesHint } from "./changelog.js";
 import { describeError } from "./errors.js";
 import { describeNpmAuthProblem, describeNpmFirstPublicationWarning } from "./npm-auth.js";
 
@@ -343,8 +344,22 @@ export function changelogUpdateRequiredBlocker(reason, changelogPath, commands) 
   return {
     code: CHANGELOG_UPDATE_REQUIRED_CODE,
     title: reason ?? `${changelogPath} no fue actualizado desde el último release`,
-    details: [`Actualizá ${changelogPath} manualmente y volvé a correr ${commands.createVersion}; beez-rp no lo modifica.`],
+    details: [`Actualizá ${changelogPath} manualmente y volvé a correr ${commands.createVersion}; no se tocó la versión.`],
   };
+}
+
+/**
+ * Stops a new release whose changelog has no `## [Unreleased]` block or no entry in it: the release
+ * commit closes that block as the new version. Shared with the monorepo mode.
+ *
+ * @param {{ exists: boolean, entryCount: number }} changelog - `[Unreleased]` block of the changelog.
+ * @param {string} changelogPath - Changelog path relative to the root.
+ * @param {ProjectCommands} commands - Project commands quoted by the hints.
+ * @returns {ReleaseBlocker | null} Blocker with {@link CHANGELOG_UPDATE_REQUIRED_CODE}, or `null` when `[Unreleased]` has entries.
+ */
+export function unreleasedEntriesRequiredBlocker(changelog, changelogPath, commands) {
+  const reason = describeMissingUnreleasedEntries(changelog, changelogPath);
+  return reason ? { code: CHANGELOG_UPDATE_REQUIRED_CODE, title: reason, details: [describeUnreleasedEntriesHint(changelogPath, commands.createVersion)] } : null;
 }
 
 /**
@@ -1026,10 +1041,15 @@ function planRelease(state, capabilities, { skipUnpublished = false, ignoreLocal
     return blockedPlan([changelogUpdateRequiredBlocker(state.changelog.reason, CHANGELOG_FILE, commands)], warnings);
   }
 
+  const missingEntries = unreleasedEntriesRequiredBlocker(state.changelog, CHANGELOG_FILE, commands);
+  if (missingEntries) {
+    return blockedPlan([missingEntries], warnings);
+  }
+
   steps.push({
     id: RELEASE_STEP.verifyChangelog,
-    title: "Verificar la actualización manual del CHANGELOG",
-    detail: "Debe haber cambiado desde el último release; su contenido se conserva sin reescribirlo.",
+    title: "Verificar el CHANGELOG y sus entradas en [Unreleased]",
+    detail: "Debe haber cambiado desde el último release y tener entradas en [Unreleased]; el commit de versión cierra esa sección.",
   });
 
   addMigrationsPlanStep(state.migrations, steps, warnings);
@@ -1041,7 +1061,7 @@ function planRelease(state, capabilities, { skipUnpublished = false, ignoreLocal
   steps.push({
     id: RELEASE_STEP.bumpVersion,
     title: "Elegir la nueva versión y crear commit + tag",
-    detail: "Actualiza package.json e incluye el CHANGELOG manual sin modificar su contenido.",
+    detail: "Actualiza package.json y cierra [Unreleased] del CHANGELOG como ## [X.Y.Z] - AAAA-MM-DD, con un [Unreleased] vacío arriba.",
   });
 
   if (capabilities.prepare) {

@@ -5,6 +5,10 @@
  * previous version, then moves the block under `## [X.Y.Z] - YYYY-MM-DD`.
  * Published history, including legacy unbracketed headings, is preserved.
  *
+ * `beez-rp create-version` does not generate entries from commits: it requires hand-written entries
+ * under `[Unreleased]` and, in the release commit, only renames that heading to
+ * `## [X.Y.Z] - YYYY-MM-DD` and adds an empty `[Unreleased]` on top, keeping any section names.
+ *
  * @module changelog
  */
 

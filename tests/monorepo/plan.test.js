@@ -34,7 +34,7 @@ function packageSnapshot(component, overrides = {}) {
     releasedVersion: "1.0.0",
     lastRelease: { sha: `sha-${component}`, version: "1.0.0", subject: `release: ${name}@1.0.0`, tag: `${component}-v1.0.0`, tagged: true, tagOnOrigin: true },
     unreleasedCommits: [],
-    changelog: { exists: true, entryCount: 0, unknownSections: [], updated: true, reason: null },
+    changelog: { exists: true, entryCount: 1, unknownSections: [], updated: true, reason: null },
     npm: { status: NPM_LOOKUP_STATUS.ok, publishedVersions: ["1.0.0"], latestVersion: "1.0.0", reason: null },
     npmAuth: null,
     ...overrides,
@@ -136,6 +136,30 @@ describe("buildMonorepoPlan", () => {
       title: "packages/cli/CHANGELOG.md no fue actualizado desde el último release",
       details: [expect.stringContaining("Actualizá packages/cli/CHANGELOG.md manualmente")],
     }]);
+  });
+
+  it("should block or warn about candidates whose [Unreleased] block is missing or has no entries, since the release commit closes it", () => {
+    // Arrange
+    const packages = [
+      packageSnapshot("widget", { unreleasedCommits: [{ sha: "c1", subject: "feat(widget): new option", body: "" }], changelog: { exists: true, entryCount: 0, unknownSections: [], updated: true, reason: null } }),
+      packageSnapshot("cli", { unreleasedCommits: [{ sha: "c2", subject: "fix(cli): typo", body: "" }], changelog: { exists: false, entryCount: 0, unknownSections: [], updated: true, reason: null } }),
+    ];
+
+    // Act
+    const automatic = buildMonorepoPlan(monorepoState({ packages }), NPM_PACKAGE, { tagFormat: TAG_FORMAT, selectAllPackages: true });
+    const interactive = buildMonorepoPlan(monorepoState({ packages }), NPM_PACKAGE, { tagFormat: TAG_FORMAT });
+
+    // Assert
+    expect(automatic.mode).toBe(RELEASE_MODE.blocked);
+    expect(automatic.blockers).toEqual([
+      { code: "changelog-update-required", title: "La sección ## [Unreleased] de packages/widget/CHANGELOG.md no tiene entradas", details: [expect.stringContaining("bajo ## [Unreleased] en packages/widget/CHANGELOG.md")] },
+      { code: "changelog-update-required", title: "packages/cli/CHANGELOG.md no tiene una sección ## [Unreleased]", details: [expect.stringContaining("bajo ## [Unreleased] en packages/cli/CHANGELOG.md")] },
+    ]);
+    expect(interactive.mode).toBe(RELEASE_MODE.newRelease);
+    expect(interactive.warnings).toEqual([
+      "La sección ## [Unreleased] de packages/widget/CHANGELOG.md no tiene entradas; si elegís publicar @acme/widget, el release se corta. Actualizalo manualmente.",
+      "packages/cli/CHANGELOG.md no tiene una sección ## [Unreleased]; si elegís publicar @acme/cli, el release se corta. Actualizalo manualmente.",
+    ]);
   });
 
   it("should ignore unchanged changelogs of non-candidates when selecting packages automatically", () => {

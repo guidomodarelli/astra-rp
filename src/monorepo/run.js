@@ -40,7 +40,7 @@ import { isRegistryProvider } from "../create-version/registry-config.js";
 import { checkRegistryAccess, publishRegistryRelease, resolveRegistry, selectProjectRegistry } from "../create-version/registry.js";
 import { prepareJsrVersionUpdates } from "../create-version/jsr.js";
 import { JSR_REGISTRY_PROVIDER } from "../constants/registry.js";
-import { verifyChangelogUpdate } from "../create-version/changelog.js";
+import { assertUnreleasedEntries, describeMissingUnreleasedEntries, formatLocalReleaseDate, prepareChangelogClosing, verifyChangelogUpdate } from "../create-version/changelog.js";
 import { ReleaseStepError, describeError } from "../create-version/errors.js";
 import { readJsonManifest } from "../create-version/json.js";
 import { describePublishedRelease, readNpmPackIntegrity } from "../create-version/npm.js";
@@ -125,7 +125,12 @@ function renderMonorepoDiagnosis(state, repositoryRoot) {
     const released = lastRelease?.version ? paint("cyan", lastRelease.tag ?? lastRelease.version) : paint("gray", "sin releases");
     const pending = unreleasedCommits.length > 0 ? paint("yellow", `${unreleasedCommits.length} commit(s) sin publicar`) : "al día";
     const published = npm ? (npm.status === NPM_LOOKUP_STATUS.ok ? `${npm.registryLabel ?? "npm"} ${npm.latestVersion ?? npm.publishedVersions.at(-1) ?? "—"}` : paint("red", `${npm.registryLabel ?? "npm"} no respondió`)) : null;
-    const changelogNote = unreleasedCommits.length > 0 ? paint(changelog.updated ? "gray" : "yellow", changelog.updated ? "CHANGELOG actualizado manualmente" : "CHANGELOG sin actualización manual; bloquea si se elige publicar") : null;
+    const missingEntries = changelog.updated ? describeMissingUnreleasedEntries(changelog, unit.changelogPath) : null;
+    const changelogReady = changelog.updated && !missingEntries;
+    const changelogNote =
+      unreleasedCommits.length > 0
+        ? paint(changelogReady ? "gray" : "yellow", changelogReady ? "CHANGELOG actualizado manualmente" : missingEntries ? "CHANGELOG sin entradas en [Unreleased]; bloquea si se elige publicar" : "CHANGELOG sin actualización manual; bloquea si se elige publicar")
+        : null;
     rows.push(
       renderRow(
         unreleasedCommits.length > 0 ? ICON.warning : ICON.success,
@@ -288,15 +293,18 @@ async function chooseVersionsStep(context) {
 }
 
 /**
- * Verifies the chosen packages' manual changelogs before migrations and preserves their bytes.
+ * Verifies the chosen packages' manual changelogs and their `[Unreleased]` entries before migrations,
+ * capturing their bytes for the release commit, which closes that section.
  *
  * @param {MonorepoContext} context - Context.
  * @returns {Promise<void>}
  */
 async function verifyChangelogsStep(context) {
   for (const { unit, snapshot } of context.chosen) {
-    context.changelogFiles.push(await verifyChangelogUpdate(context, unit.changelogPath, snapshot.lastRelease?.sha ?? null));
-    print(`${ICON.success} ${unit.changelogPath} actualizado manualmente; se conserva sin reescribirlo.`);
+    const changelog = await verifyChangelogUpdate(context, unit.changelogPath, snapshot.lastRelease?.sha ?? null);
+    assertUnreleasedEntries(context, changelog);
+    context.changelogFiles.push(changelog);
+    print(`${ICON.success} ${unit.changelogPath} actualizado manualmente; el commit de release cierra su sección [Unreleased].`);
   }
 }
 
@@ -306,7 +314,7 @@ async function verifyChangelogsStep(context) {
  * @param {MonorepoContext} context - Context.
  * @returns {Map<string, string[]>} Files per package name.
  * @throws {ReleaseStepError} When an entry is outside every released package, or is the manifest or
- *   changelog of its package (the release commit includes it without rewriting it).
+ *   changelog of its package (the release commit writes them: it bumps the manifest and closes the changelog).
  */
 function groupVersionFilesByPackage(context) {
   /** @type {Map<string, string[]>} */
@@ -325,7 +333,7 @@ function groupVersionFilesByPackage(context) {
     }
     if (filePath === owner.manifestPath || filePath.toLowerCase() === owner.changelogPath.toLowerCase()) {
       throw new ReleaseStepError(
-        `${filePath} (versionFiles) es el package.json o el CHANGELOG.md de ${owner.name}: el commit de release los incluye y no reescribe el CHANGELOG.`,
+        `${filePath} (versionFiles) es el package.json o el CHANGELOG.md de ${owner.name}: el commit de release los incluye y cierra la sección [Unreleased] del CHANGELOG.`,
         `Sacalo de versionFiles en beez-rp.config.(m)js y volvé a correr ${context.commands.createVersion}; no se tocó la versión.`
       );
     }
@@ -414,8 +422,8 @@ async function assertReleaseScope(context) {
 }
 
 /**
- * Writes the new versions, preserves every manual changelog and creates the release commit with an
- * annotated tag per package. Every file is computed before anything is written, and the commit
+ * Writes the new versions, closes the `[Unreleased]` section of every released changelog and creates
+ * the release commit with an annotated tag per package. Every file is computed before anything is written, and the commit
  * reuses the single-package one: literal staging, rollback on failure and the prepared-tree check.
  *
  * @param {MonorepoContext} context - Context.
@@ -436,9 +444,18 @@ async function bumpPackagesStep(context) {
     if (context.config.publish === JSR_REGISTRY_PROVIDER) releaseFiles.push(...await prepareJsrVersionUpdates(context, path.join(context.repositoryRoot, unit.directory), context.config.publication, version));
   }
 
+  const releaseDate = formatLocalReleaseDate();
+  const closedChangelogs = context.chosen.map(({ unit, version }) => {
+    const changelog = context.changelogFiles.find(({ filePath }) => filePath === unit.changelogPath);
+    if (!changelog) {
+      throw new ReleaseStepError(`No se verificó ${unit.changelogPath} antes del commit de release.`, `Volvé a correr ${context.commands.createVersion}; no se tocó la versión.`);
+    }
+    return prepareChangelogClosing(context, changelog, version, releaseDate);
+  });
+
   const ordered = sortByPublicationOrder(context.chosen.map((release) => ({ ...release, name: release.unit.name, publishedDependencies: release.unit.publishedDependencies })));
   const subject = buildMonorepoReleaseSubject(ordered.map(({ name, version }) => ({ name, version })));
-  await commitReleaseFiles(context, releaseFiles, subject, context.changelogFiles);
+  await commitReleaseFiles(context, [...releaseFiles, ...closedChangelogs], subject, closedChangelogs);
 
   const commitSha = await context.reader.git(["rev-parse", "HEAD"]);
   for (const release of context.chosen) {

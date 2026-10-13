@@ -88,8 +88,9 @@ import { CI_CONFIG_EXPORT } from "../constants/ci-release.js";
  *   `packages` turns on the monorepo mode: every non-private workspace package (`"workspaces"`: the
  *   ones the root `package.json` declares; or explicit patterns such as `["packages/*"]`) gets its
  *   own version, CHANGELOG and tag, formatted with `tagFormat` (`{component}-v{version}` by default).
- *   Changelogs are maintained manually and must change since the last release; the command
- *   includes them without rewriting their content.
+ *   Changelog entries are written by hand under `## [Unreleased]`, which must change since the last
+ *   release and hold at least one entry; the release commit renames it to `## [X.Y.Z] - YYYY-MM-DD`
+ *   and leaves a new, empty `## [Unreleased]` on top.
  *   `preMajorShift` lowers the suggested release type one level while a version is `0.x`
  *   (breaking → minor, features → patch).
  * @typedef {{
@@ -315,7 +316,7 @@ export function resolveCreateVersionConfig(rawConfig, { packageScripts = {}, com
   if (builtInVersionFile !== undefined) {
     throw invalidField(
       "versionFiles",
-      `a list without ${RELEASE_COMMIT_BUILT_IN_FILES.join(" nor ")}, which the release commit owns and includes without rewriting CHANGELOG.md (found ${JSON.stringify(builtInVersionFile)})`
+      `a list without ${RELEASE_COMMIT_BUILT_IN_FILES.join(" nor ")}, which the release commit owns (it bumps package.json and closes the [Unreleased] section of CHANGELOG.md) (found ${JSON.stringify(builtInVersionFile)})`
     );
   }
 

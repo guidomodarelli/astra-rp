@@ -1,5 +1,6 @@
 /**
- * Exercises manual changelog verification with real Git repositories and preserved release files.
+ * Exercises manual changelog verification with real Git repositories, and the closing of
+ * `[Unreleased]` that the release commit carries.
  *
  * @module tests/create-version/changelog
  */
@@ -8,7 +9,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { assertPreservedFilesUnchanged, readChangelogUpdateState, verifyChangelogUpdate } from "../../src/create-version/changelog.js";
+import {
+  assertPreservedFilesUnchanged,
+  assertUnreleasedEntries,
+  closeUnreleasedSection,
+  formatLocalReleaseDate,
+  prepareChangelogClosing,
+  readChangelogUpdateState,
+  verifyChangelogUpdate,
+} from "../../src/create-version/changelog.js";
 import { createGitReader } from "../../src/create-version/process.js";
 import { DEFAULT_PROJECT_COMMANDS } from "../../src/package-manager.js";
 import { cleanupTemporaryDirectories, createTemporaryDirectory, runGit } from "./support/cli-harness.js";
@@ -108,5 +117,66 @@ describe("manual changelog verification", () => {
     // Act and Assert
     expect(() => assertPreservedFilesUnchanged(context, [preserved])).toThrow("Un paso anterior modificó CHANGELOG.md");
     expect(readFileSync(changelogPath)).toEqual(changed);
+  });
+});
+
+describe("closing [Unreleased] in the release commit", () => {
+  it("should rename [Unreleased] to the released version and date, keeping its body and the published history", () => {
+    // Arrange
+    const changelog = "# Changelog\n\nIntro.\n\n## [Unreleased]\n\n### Added\n\n- Algo nuevo.\n\n## [1.0.0] - 2026-01-01\n\n- Primera versión.\n";
+
+    // Act
+    const closed = closeUnreleasedSection(changelog, "1.1.0", "2026-10-13");
+
+    // Assert
+    expect(closed).toBe("# Changelog\n\nIntro.\n\n## [Unreleased]\n\n## [1.1.0] - 2026-10-13\n\n### Added\n\n- Algo nuevo.\n\n## [1.0.0] - 2026-01-01\n\n- Primera versión.\n");
+  });
+
+  it("should keep CRLF line breaks and sections outside Keep a Changelog", () => {
+    expect(closeUnreleasedSection("# Notas\r\n\r\n## [unreleased]\r\n\r\n### Mejoras\r\n\r\n- Algo.\r\n", "2.0.0", "2026-02-03")).toBe(
+      "# Notas\r\n\r\n## [Unreleased]\r\n\r\n## [2.0.0] - 2026-02-03\r\n\r\n### Mejoras\r\n\r\n- Algo.\r\n"
+    );
+  });
+
+  it.each([
+    ["without an [Unreleased] heading", "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- Primera versión.\n", "no tiene una sección ## [Unreleased]"],
+    ["with an [Unreleased] block without entries", "# Changelog\n\n## [Unreleased]\n\n### Added\n\n## [1.0.0] - 2026-01-01\n\n- Primera versión.\n", "no tiene entradas"],
+  ])("should refuse to close a changelog %s", (_description, changelog, message) => {
+    expect(() => closeUnreleasedSection(changelog, "1.1.0", "2026-10-13")).toThrow(message);
+  });
+
+  it("should date the release with the local day, padded to YYYY-MM-DD", () => {
+    expect(formatLocalReleaseDate(new Date(2026, 0, 5, 23, 59))).toBe("2026-01-05");
+    expect(formatLocalReleaseDate(new Date(2026, 11, 31, 0, 0))).toBe("2026-12-31");
+  });
+
+  it("should prepare the closed changelog with its original bytes for the rollback", async () => {
+    // Arrange
+    const { context, changelogPath } = createChangelogRepository();
+    writeFileSync(changelogPath, "# Release notes\n\n## [Unreleased]\n\n- Mejora.\n\n## 1.0.0\n\n- Primera versión.\n");
+    const before = readFileSync(changelogPath);
+    const verified = await verifyChangelogUpdate(context, "CHANGELOG.md", null);
+
+    // Act
+    const update = prepareChangelogClosing(context, verified, "1.1.0", "2026-10-13");
+
+    // Assert
+    expect(update).toEqual({
+      filePath: "CHANGELOG.md",
+      originalBytes: before,
+      content: "# Release notes\n\n## [Unreleased]\n\n## [1.1.0] - 2026-10-13\n\n- Mejora.\n\n## 1.0.0\n\n- Primera versión.\n",
+    });
+    expect(readFileSync(changelogPath)).toEqual(before);
+  });
+
+  it("should stop with an actionable hint when [Unreleased] has no entries or a check changed the changelog", async () => {
+    // Arrange
+    const { context, changelogPath } = createChangelogRepository();
+    const verified = await verifyChangelogUpdate(context, "CHANGELOG.md", null);
+
+    // Act and Assert
+    expect(() => assertUnreleasedEntries(context, verified)).toThrow(expect.objectContaining({ hint: expect.stringContaining("bajo ## [Unreleased] en CHANGELOG.md, sin versión ni fecha") }));
+    writeFileSync(changelogPath, "# Notas modificadas por un check\n\n## [Unreleased]\n\n- Algo.\n");
+    expect(() => prepareChangelogClosing(context, verified, "1.1.0", "2026-10-13")).toThrow("Un paso anterior modificó CHANGELOG.md");
   });
 });

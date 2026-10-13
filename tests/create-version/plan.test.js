@@ -95,7 +95,7 @@ describe("create-version plan", () => {
 
   it("should run every configured step of an npm package in order", () => {
     const state = createMainState({
-      changelog: { exists: true, entryCount: 0, unknownSections: [], updated: true, reason: null },
+      changelog: { exists: true, entryCount: 1, unknownSections: [], updated: true, reason: null },
       npm: { status: NPM_LOOKUP_STATUS.ok, publishedVersions: ["0.1.0"], reason: null },
     });
 
@@ -294,6 +294,40 @@ describe("create-version plan", () => {
     expect(plan.blockers[0].title).toContain("CHANGELOG.md no fue actualizado");
     expect(plan.blockers[0].code).toBe("changelog-update-required");
     expect(plan.blockers[0].details.join(" ")).toContain("Actualizá CHANGELOG.md manualmente");
+  });
+
+  it.each([
+    ["has no [Unreleased] block", { exists: false, entryCount: 0 }, "CHANGELOG.md no tiene una sección ## [Unreleased]"],
+    ["has an [Unreleased] block without entries", { exists: true, entryCount: 0 }, "La sección ## [Unreleased] de CHANGELOG.md no tiene entradas"],
+  ])("should block a new release before migrations when CHANGELOG.md %s, since the bump closes that block", (_description, unreleased, title) => {
+    // Arrange
+    const state = createMainState({
+      changelog: { ...unreleased, unknownSections: [], updated: true, reason: null },
+      migrations: { status: MIGRATION_STATUS.pending, pending: ["0001_init"], target: "db.example.test", reason: null },
+    });
+
+    // Act
+    const plan = buildReleasePlan(state, NPM_PACKAGE, { ignoreLocalChanges: true, skipUnpublished: true });
+
+    // Assert
+    expect(plan.mode).toBe(RELEASE_MODE.blocked);
+    expect(plan.steps).toEqual([]);
+    expect(plan.blockers).toEqual([
+      {
+        code: "changelog-update-required",
+        title,
+        details: [expect.stringContaining("bajo ## [Unreleased] en CHANGELOG.md, sin versión ni fecha")],
+      },
+    ]);
+  });
+
+  it("should not require [Unreleased] entries to resume a release commit, whose changelog is already closed", () => {
+    const npm = { status: NPM_LOOKUP_STATUS.ok, publishedVersions: ["0.1.0"], reason: null };
+    const plan = buildReleasePlan(createMainState({ headVersion: "0.2.0", headSubject: "0.2.0", npm, changelog: { exists: true, entryCount: 0, unknownSections: [], updated: true, reason: null } }), NPM_PACKAGE);
+
+    expect(plan.mode).toBe(RELEASE_MODE.resume);
+    expect(plan.blockers).toEqual([]);
+    expect(plan.steps.map((planStep) => planStep.id)).not.toContain(RELEASE_STEP.bumpVersion);
   });
 
   it("should block a detached HEAD and a feature branch with its next actions", () => {

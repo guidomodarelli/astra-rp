@@ -51,8 +51,8 @@ export const MARKED_VERSION_PATTERN =
 export const LINE_TERMINATOR_BOUNDARY_PATTERN = /(?<=\n)|(?<=\r)(?!\n)/u;
 
 /**
- * Files the release owns: the bumped `package.json` and the preserved manual CHANGELOG.
- * `versionFiles` cannot list either: rewriting them would undo the bump or modify the changelog.
+ * Files the release owns: the bumped `package.json` and the CHANGELOG whose `[Unreleased]` it closes.
+ * `versionFiles` cannot list either: rewriting them would undo the bump or the closed section.
  */
 export const RELEASE_COMMIT_BUILT_IN_FILES = Object.freeze([PACKAGE_MANIFEST_FILE, CHANGELOG_FILE]);
 

@@ -74,7 +74,7 @@ import {
 } from "./artifact.js";
 import { describeReleaseTypes, loadCreateVersionConfig } from "./config.js";
 import { ciWorkflowPath } from "./ci-config.js";
-import { assertPreservedFilesUnchanged, verifyChangelogUpdate } from "./changelog.js";
+import { assertPreservedFilesUnchanged, assertUnreleasedEntries, describeMissingUnreleasedEntries, formatLocalReleaseDate, prepareChangelogClosing, verifyChangelogUpdate } from "./changelog.js";
 import { ReleaseStepError, describeError } from "./errors.js";
 import { readJsonManifest } from "./json.js";
 import {
@@ -356,7 +356,11 @@ function renderDiagnosis(state, repositoryRoot) {
   }
 
   if (state.unreleasedCommits.length > 0) {
-    rows.push(renderRow(state.changelog.updated ? ICON.success : ICON.warning, "CHANGELOG", state.changelog.updated ? "actualizado manualmente; se conserva sin cambios" : state.changelog.reason ?? "sin actualización manual desde el último release"));
+    const missingEntries = state.changelog.updated ? describeMissingUnreleasedEntries(state.changelog, CHANGELOG_FILE) : null;
+    const changelogValue = !state.changelog.updated
+      ? state.changelog.reason ?? "sin actualización manual desde el último release"
+      : missingEntries ?? "actualizado manualmente; el commit de versión cierra [Unreleased]";
+    rows.push(renderRow(state.changelog.updated && !missingEntries ? ICON.success : ICON.warning, "CHANGELOG", changelogValue));
   } else {
     rows.push(renderRow(ICON.info, "CHANGELOG", "sin actualización requerida"));
   }
@@ -597,18 +601,22 @@ export async function applyMigrationsStep(context) {
 }
 
 /**
- * Verifies the manual changelog before migrations or checks, preserving its exact bytes.
+ * Verifies the manual changelog before migrations or checks and captures its bytes. A new release
+ * also requires entries in `[Unreleased]`, which its bump closes; the CI worker only checks the
+ * changelog of the release commit it received, where `[Unreleased]` is already closed.
  *
  * @param {ReleaseContext} context - Release context.
  * @returns {Promise<void>}
  */
 async function verifyChangelogStep(context) {
-  context.changelogFiles = [await verifyChangelogUpdate(context, CHANGELOG_FILE, context.state.lastRelease?.sha ?? null)];
+  const changelog = await verifyChangelogUpdate(context, CHANGELOG_FILE, context.state.lastRelease?.sha ?? null);
+  if (!context.ciWorker) assertUnreleasedEntries(context, changelog);
+  context.changelogFiles = [changelog];
   if (context.config.publish === JSR_REGISTRY_PROVIDER && context.state.headVersion) {
     const candidate = listNextVersions(context.state.headVersion)[0].version;
     await prepareJsrVersionUpdates(context, context.repositoryRoot, context.config.publication, candidate);
   }
-  print(`${ICON.success} ${CHANGELOG_FILE} actualizado manualmente; se conserva sin reescribirlo.`);
+  print(context.ciWorker ? `${ICON.success} ${CHANGELOG_FILE} del release verificado.` : `${ICON.success} ${CHANGELOG_FILE} actualizado manualmente; el commit de versión cierra su sección [Unreleased].`);
 }
 
 /**
@@ -820,11 +828,10 @@ export async function prepareVersionFileUpdates(context, versionFiles, version) 
  * @param {ReleaseFileUpdate[]} fileUpdates - Files of the release commit.
  * @param {string | null} indexTree - Tree of the index before staging, or `null` when Git could not write it.
  * @param {ReleaseStepError} failure - What failed.
- * @param {readonly import("./changelog.js").PreservedReleaseFile[]} preservedFiles - Files staged without rewriting their content.
  * @returns {Promise<ReleaseStepError>} Failure to throw, whose hint says what was restored.
  */
-async function rollBackRelease(context, fileUpdates, indexTree, failure, preservedFiles) {
-  const releasePathspecs = [...fileUpdates, ...preservedFiles].map(({ filePath }) => toLiteralPathspec(filePath));
+async function rollBackRelease(context, fileUpdates, indexTree, failure) {
+  const releasePathspecs = fileUpdates.map(({ filePath }) => toLiteralPathspec(filePath));
   const indexRestored = indexTree !== null && (await context.reader.tryGit(["reset", "--quiet", indexTree, "--", ...releasePathspecs])) !== null;
   const unrestoredPaths = fileUpdates
     .filter(({ filePath, originalBytes }) => {
@@ -846,8 +853,8 @@ async function rollBackRelease(context, fileUpdates, indexTree, failure, preserv
     .map(({ filePath }) => filePath);
   const restoreNote =
     indexRestored && unrestoredPaths.length === 0
-      ? "se restauraron package.json y versionFiles (contenido y staging), y el staging del CHANGELOG; su contenido no se reescribió, así que no se tocó la versión"
-      : `no se pudo restaurar todo: revisá git status y devolvé ${unrestoredPaths.length > 0 ? unrestoredPaths.join(", ") : "los archivos de versión y el staging del release"} a su estado anterior antes de reintentar; el contenido del CHANGELOG no se reescribió`;
+      ? "se restauraron package.json, versionFiles y el CHANGELOG (contenido y staging), así que no se tocó la versión"
+      : `no se pudo restaurar todo: revisá git status y devolvé ${unrestoredPaths.length > 0 ? unrestoredPaths.join(", ") : "los archivos de versión y el staging del release"} a su estado anterior antes de reintentar`;
 
   return new ReleaseStepError(failure.message, `${failure.hint} Después volvé a correr ${context.commands.createVersion}; ${restoreNote}.`, { cause: failure });
 }
@@ -908,20 +915,21 @@ export async function assertReleaseFilesMatchHead(context, filePaths) {
 }
 
 /**
- * Writes version files, stages them and preserved files literally, and creates the release commit, checking that it
- * holds exactly the prepared tree. Any failure (or a hook that changes the commit) rolls the files and
- * their staging back and undoes the commit, so no tag is created.
+ * Writes the release files (versions and closed changelogs), stages them literally and creates the
+ * release commit, checking that it holds exactly the prepared tree. Any failure (or a hook that changes
+ * the commit, or rewrites a closed changelog in the working tree) rolls the files and their staging
+ * back and undoes the commit, so no tag is created.
  *
  * @param {StepContext} context - Release context.
  * @param {ReleaseFileUpdate[]} releaseFiles - Files of the release commit, with their bytes before the release.
  * @param {string} subject - Subject of the release commit.
- * @param {readonly import("./changelog.js").PreservedReleaseFile[]} [preservedFiles] - Manually maintained files to stage without rewriting or restoring their bytes.
+ * @param {readonly ReleaseFileUpdate[]} [closedChangelogs] - Changelogs among `releaseFiles` whose working-tree bytes
+ *   must still hold their closed `[Unreleased]` after the commit.
  * @param {readonly string[]} [trailers] - Trailer lines (`Key: value`) appended as the last paragraph of the commit message.
  * @returns {Promise<void>}
  * @throws {ReleaseStepError} When writing, staging or committing fails, or the commit differs from the prepared tree.
  */
-export async function commitReleaseFiles(context, releaseFiles, subject, preservedFiles = [], trailers = []) {
-  assertPreservedFilesUnchanged(context, preservedFiles);
+export async function commitReleaseFiles(context, releaseFiles, subject, closedChangelogs = [], trailers = []) {
   // The index before staging, so a rollback puts it back exactly (a CHANGELOG.md the user staged stays staged).
   const indexTree = await context.reader.tryGit(["write-tree"]);
   let preparedTree = "";
@@ -937,7 +945,7 @@ export async function commitReleaseFiles(context, releaseFiles, subject, preserv
         });
       }
     }
-    await runGitStep(context, ["add", "--", ...[...releaseFiles, ...preservedFiles].map(({ filePath }) => toLiteralPathspec(filePath))], "No se pudo stagear package.json, CHANGELOG.md y versionFiles", "Revisá git status.");
+    await runGitStep(context, ["add", "--", ...releaseFiles.map(({ filePath }) => toLiteralPathspec(filePath))], "No se pudo stagear package.json, CHANGELOG.md y versionFiles", "Revisá git status.");
     // What the commit must hold: a hook that changes or stages anything else makes it differ.
     preparedTree = await context.reader.git(["write-tree"]);
     const messageArguments = trailers.length > 0 ? ["-m", subject, "-m", trailers.join("\n")] : ["-m", subject];
@@ -947,7 +955,7 @@ export async function commitReleaseFiles(context, releaseFiles, subject, preserv
       error instanceof ReleaseStepError
         ? error
         : new ReleaseStepError(`No se pudo preparar el commit de versión ${subject} (${describeError(error)}).`, "Revisá git status.", { cause: error });
-    throw await rollBackRelease(context, releaseFiles, indexTree, failure, preservedFiles);
+    throw await rollBackRelease(context, releaseFiles, indexTree, failure);
   }
 
   /** @type {ReleaseStepError | null} */
@@ -960,7 +968,7 @@ export async function commitReleaseFiles(context, releaseFiles, subject, preserv
     );
   } else {
     try {
-      assertPreservedFilesUnchanged(context, preservedFiles);
+      assertPreservedFilesUnchanged(context, closedChangelogs.map(({ filePath, content }) => ({ filePath, originalBytes: Buffer.from(content) })));
     } catch (error) {
       if (!(error instanceof ReleaseStepError)) throw error;
       failure = error;
@@ -970,13 +978,13 @@ export async function commitReleaseFiles(context, releaseFiles, subject, preserv
     if ((await context.reader.tryGit(["reset", "--soft", "--quiet", "HEAD^"])) === null) {
       throw new ReleaseStepError(failure.message, `No se pudo deshacer el commit: corré git reset --soft HEAD^, revisá git status y volvé a correr ${context.commands.createVersion}.`);
     }
-    throw await rollBackRelease(context, releaseFiles, indexTree, failure, preservedFiles);
+    throw await rollBackRelease(context, releaseFiles, indexTree, failure);
   }
 }
 
 /**
- * Chooses the next version (flags or prompt), preserves the manual CHANGELOG and creates
- * the release commit and annotated tag.
+ * Chooses the next version (flags or prompt), closes the `[Unreleased]` section of the CHANGELOG
+ * and creates the release commit and annotated tag.
  *
  * @param {ReleaseContext} context - Release context.
  * @returns {Promise<void>}
@@ -1033,13 +1041,16 @@ async function bumpVersionStep(context) {
   ];
   // Every release of a CI-capable project records where it was prepared, so a resume after a failed push cannot switch modes.
   const executionTrailers = context.config.ci || execution === RELEASE_EXECUTION.ci ? [formatReleaseExecutionTrailer(execution)] : [];
-  await commitReleaseFiles(context, releaseFiles, nextRelease.version, context.changelogFiles, executionTrailers);
+  const releaseDate = formatLocalReleaseDate();
+  const closedChangelogs = context.changelogFiles.map((changelog) => prepareChangelogClosing(context, changelog, nextRelease.version, releaseDate));
+  await commitReleaseFiles(context, [...releaseFiles, ...closedChangelogs], nextRelease.version, closedChangelogs, executionTrailers);
 
   const tag = toReleaseTag(nextRelease.version);
   await createAnnotatedTag(context, tag, nextRelease.version, `Si ya existe, revisalo con git show ${tag}.`);
 
   context.version = nextRelease.version;
   context.commitCount = commits.length;
+  print(`${ICON.success} ${CHANGELOG_FILE}: [Unreleased] cerrado como ## [${nextRelease.version}] - ${releaseDate}.`);
   print(`${ICON.success} Commit ${paint("bold", nextRelease.version)} y tag ${paint(["bold", "cyan"], tag)} creados en local.`);
 }
 

@@ -536,6 +536,81 @@ describe("release location and configuration", () => {
     expect(workflow.split("\n").includes(`      - name: ${CI_GITHUB_PACKAGES_AUTHENTICATION_STEP}`)).toBe(authenticates);
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
+  /** Committed `.npmrc` that makes the generated workflow add the GitHub Packages authentication step. */
+  const GITHUB_PACKAGES_NPMRC = "@fixture-scope:registry=https://npm.pkg.github.com/\n";
+
+  it.each([
+    // Yarn 2+ ignores the runner's ~/.npmrc, so a GitHub Packages setup in .yarnrc.yml would fail with 401 in CI.
+    { source: "a .yarnrc.yml GitHub Packages scope without any other signal", files: { ".yarnrc.yml": "npmScopes:\n  fixture-scope:\n    npmRegistryServer: \"https://npm.pkg.github.com\"\n" }, message: /\.yarnrc\.yml.*Yarn 2/u, hint: /workflow propio/u },
+    { source: "a .yarnrc.yml registry with an uppercase GitHub Packages host", files: { ".yarnrc.yml": "npmRegistryServer: \"https://NPM.PKG.GITHUB.COM\"\n" }, message: /\.yarnrc\.yml.*Yarn 2/u, hint: /workflow propio/u },
+    { source: "a .yarnrc.yml npmAuthToken", files: { ".yarnrc.yml": "npmAuthToken: \"${NPM_TOKEN}\"\n" }, message: /\.yarnrc\.yml.*Yarn 2/u, hint: /workflow propio/u },
+    { source: "a .yarnrc.yml npmAuthIdent next to a GitHub Packages .npmrc", npmrc: GITHUB_PACKAGES_NPMRC, files: { ".yarnrc.yml": "npmAuthIdent: \"fixture-user:fixture-secret-token\"\n" }, message: /\.yarnrc\.yml.*Yarn 2/u, hint: /workflow propio/u },
+    // A lockfile resolving GitHub Packages over HTTP would make the install send the Actions token in clear text.
+    { source: "a pnpm lockfile resolving GitHub Packages over HTTP", npmrc: GITHUB_PACKAGES_NPMRC, files: { "pnpm-lock.yaml": "packages:\n  '@fixture-scope/ui@1.0.0':\n    resolution: {tarball: http://npm.pkg.github.com/download/@fixture-scope/ui/1.0.0/fixture}\n" }, message: /pnpm-lock\.yaml.*http:\/\/npm\.pkg\.github\.com/u, hint: /https:\/\//u },
+    { source: "an npm lockfile resolving an uppercase GitHub Packages host over HTTP", npmrc: GITHUB_PACKAGES_NPMRC, files: { "package-lock.json": "{\"packages\":{\"node_modules/@fixture-scope/ui\":{\"resolved\":\"HTTP://NPM.PKG.GITHUB.COM/download/@fixture-scope/ui/1.0.0/fixture\"}}}\n" }, message: /package-lock\.json.*http:\/\/npm\.pkg\.github\.com/u, hint: /https:\/\//u },
+    { source: "a Bun text lockfile resolving GitHub Packages over HTTP with a declared GITHUB_TOKEN", secrets: ["GITHUB_TOKEN"], files: { "bun.lock": "{\"packages\":{\"@fixture-scope/ui\":[\"@fixture-scope/ui@1.0.0\",\"http://npm.pkg.github.com/@fixture-scope/ui/-/ui-1.0.0.tgz\"]}}\n" }, message: /bun\.lock.*http:\/\/npm\.pkg\.github\.com/u, hint: /https:\/\//u },
+    // Bun reads registries from bunfig.toml before .npmrc, so they could receive the Actions token unchecked.
+    { source: "a bunfig.toml default registry", npmrc: GITHUB_PACKAGES_NPMRC, files: { "bunfig.toml": "[install]\nregistry = \"https://registry.example.test\"\n" }, message: /bunfig\.toml.*registr/u, hint: /\.npmrc.*https:\/\//u },
+    { source: "a bunfig.toml scoped registry section", npmrc: GITHUB_PACKAGES_NPMRC, files: { "bunfig.toml": "[install.scopes]\nfixture-scope = \"https://npm.pkg.github.com/\"\n" }, message: /bunfig\.toml.*registr/u, hint: /\.npmrc.*https:\/\//u },
+    // Disabling TLS verification would let anyone on the path read the Actions token.
+    { source: "a .npmrc that disables strict-ssl", npmrc: `${GITHUB_PACKAGES_NPMRC}strict-ssl=false\n`, message: /strict-ssl.*TLS/u, hint: /strict-ssl/u },
+    { source: "a .npmrc that disables a quoted strict-ssl after enabling it", npmrc: `${GITHUB_PACKAGES_NPMRC}strict-ssl=true\n"strict-ssl"='false'\n`, message: /strict-ssl.*TLS/u, hint: /strict-ssl/u },
+    { source: "NODE_TLS_REJECT_UNAUTHORIZED in ci.variables", npmrc: GITHUB_PACKAGES_NPMRC, variables: ["NODE_TLS_REJECT_UNAUTHORIZED"], message: /NODE_TLS_REJECT_UNAUTHORIZED.*TLS/u, hint: /NODE_TLS_REJECT_UNAUTHORIZED/u },
+    { source: "NODE_TLS_REJECT_UNAUTHORIZED in ci.secrets with a declared GITHUB_TOKEN", secrets: ["GITHUB_TOKEN", "NODE_TLS_REJECT_UNAUTHORIZED"], message: /NODE_TLS_REJECT_UNAUTHORIZED.*TLS/u, hint: /NODE_TLS_REJECT_UNAUTHORIZED/u },
+  ])("should reject the CI workflow before the bump when the project has $source", async ({ npmrc = null, files = {}, secrets = [], variables = [], message, hint }) => {
+    // Arrange
+    const root = createTemporaryDirectory("beez-rp-ci-github-packages-files-rejected-");
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
+    if (npmrc !== null) writeFileSync(path.join(root, ".npmrc"), npmrc);
+    for (const [fileName, content] of Object.entries(files)) writeFileSync(path.join(root, fileName), content);
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", secrets, variables } });
+    commitFixtureRepository(root);
+    // Act
+    const rejection = await renderCiReleaseWorkflow(root, config).catch((caughtError) => caughtError);
+    // Assert
+    expect(rejection).toBeInstanceOf(ReleaseStepError);
+    expect(rejection.message).toMatch(message);
+    expect(rejection.hint).toMatch(hint);
+    expect(`${rejection.message}\n${rejection.hint}`).not.toContain("fixture-secret-token");
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
+  it.each([".yarnrc.yml", "bunfig.toml", "pnpm-lock.yaml"])("should reject the CI workflow before the bump when GitHub Packages is authenticated and the committed %s is not a regular file", async (fileName) => {
+    // Arrange
+    const root = createTemporaryDirectory("beez-rp-ci-github-packages-file-symlink-");
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
+    writeFileSync(path.join(root, ".npmrc"), GITHUB_PACKAGES_NPMRC);
+    commitFixtureRepository(root);
+    // The index entry commits a symlink without depending on file-system symlink support (Windows).
+    const linkTargetPath = path.join(root, "link-target.txt");
+    writeFileSync(linkTargetPath, `config/shared-${fileName}`);
+    const linkTargetBlob = runGit(["hash-object", "-w", linkTargetPath], root);
+    runGit(["update-index", "--add", "--cacheinfo", `120000,${linkTargetBlob},${fileName}`], root);
+    runGit(["commit", "--quiet", "-m", "link package manager config"], root);
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml" } });
+    // Act
+    const rejection = await renderCiReleaseWorkflow(root, config).catch((caughtError) => caughtError);
+    // Assert
+    expect(rejection).toBeInstanceOf(ReleaseStepError);
+    expect(rejection.message).toContain(`${fileName} commiteado no es un archivo regular`);
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
+  it.each([
+    { source: "an HTTPS GitHub Packages lockfile, a bunfig.toml without registries and strict-ssl enabled", npmrc: `${GITHUB_PACKAGES_NPMRC}strict-ssl=true\n`, files: { "pnpm-lock.yaml": "resolution: {tarball: https://npm.pkg.github.com/download/@fixture-scope/ui/1.0.0/fixture}\n", "bunfig.toml": "# registry settings live in .npmrc\n[install]\nexact = true\n" }, variables: [], authenticates: true },
+    { source: "HTTP lockfile URLs, bunfig.toml registries, strict-ssl disabled and NODE_TLS_REJECT_UNAUTHORIZED without GitHub Packages", npmrc: "registry=https://registry.npmjs.org/\nstrict-ssl=false\n", files: { "pnpm-lock.yaml": "resolution: {tarball: http://npm.pkg.github.com/download/@fixture-scope/ui/1.0.0/fixture}\n", "bunfig.toml": "[install]\nregistry = \"https://registry.example.test\"\n", ".yarnrc.yml": "nodeLinker: node-modules\n" }, variables: ["NODE_TLS_REJECT_UNAUTHORIZED"], authenticates: false },
+  ])("should render the CI workflow when the project has $source", async ({ npmrc, files, variables, authenticates }) => {
+    // Arrange
+    const root = createTemporaryDirectory("beez-rp-ci-github-packages-files-accepted-");
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
+    writeFileSync(path.join(root, ".npmrc"), npmrc);
+    for (const [fileName, content] of Object.entries(files)) writeFileSync(path.join(root, fileName), content);
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", variables } });
+    commitFixtureRepository(root);
+    // Act
+    const workflow = await renderCiReleaseWorkflow(root, config);
+    // Assert
+    expect(workflow.split("\n").includes(`      - name: ${CI_GITHUB_PACKAGES_AUTHENTICATION_STEP}`)).toBe(authenticates);
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
   it.each(["--ci-release", "--retry-ci"])("should reject invalid tags at the CLI boundary when using %s", (flag) => {
     // Arrange and Act and Assert
     for (const value of ["", " ", "1.2.4", "v1.2.4-beta.1", "v1.2.4\n"]) expect(() => parseReleaseArguments([flag, value])).toThrow(/tag estable vX\.Y\.Z/);

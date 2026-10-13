@@ -15,9 +15,11 @@ import {
   CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY, CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL, CI_GITHUB_PACKAGES_TOKEN_VARIABLE, CI_NPM_USER_CONFIG_LOCATION_VARIABLES, CI_PACKAGE_MANAGER_CONFIG_VARIABLE_PREFIXES, CI_RUNNER_NPM_USER_CONFIG_PATH,
   NPM_CONFIG_ARRAY_KEY_SUFFIX, NPM_CONFIG_COMMENT_PREFIXES, NPM_CONFIG_JSON_QUOTE, NPM_CONFIG_LINE_BREAK_PATTERN, NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN, NPM_CONFIG_ENVIRONMENT_REFERENCES_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_KEY_PATTERN, NPM_CONFIG_INLINE_COMMENT_PATTERN, NPM_CONFIG_QUOTES, NPM_CONFIG_REGISTRY_KEY_PATTERN, NPM_CONFIG_SECTION_HEADER_PATTERN, NPM_CONFIG_VALUELESS_KEY_VALUE,
   CI_GITHUB_TOKEN_JOB_BINDING, YARN_CLASSIC_CONFIG_FILE, YARN_CLASSIC_CONFIG_REGISTRY_LINE_PATTERN,
+  BUN_CONFIG_FILE, BUN_CONFIG_REGISTRY_LINE_PATTERN, CI_TLS_VERIFICATION_DISABLING_VARIABLES, LOCKFILE_GITHUB_PACKAGES_HTTP_URL, LOCKFILE_GITHUB_PACKAGES_HTTP_URL_PATTERN,
+  NPM_CONFIG_DISABLED_VALUE, NPM_CONFIG_STRICT_SSL_KEY, YARN_BERRY_CONFIG_FILE, YARN_BERRY_CONFIG_GITHUB_PACKAGES_PATTERN,
 } from "../constants/ci-release.js";
 import { CREATE_VERSION_CONFIG_FILES, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
-import { PACKAGE_MANAGER } from "../constants/package-manager.js";
+import { LOCKFILE_NAMES, PACKAGE_MANAGER } from "../constants/package-manager.js";
 import { requiresCiPublicationHistory } from "./ci-publication-history.js";
 import { isCommittedRegularFile, listCommittedTreeEntries, readCommittedFileEntry, readCommittedRegularFile } from "./committed-tree.js";
 import { renderCiReleaseIdentityStep } from "./ci-release-identity-step.js";
@@ -233,45 +235,109 @@ function selectsGithubPackagesRegistry(key, value) {
  *   {@link assertProjectNpmConfigEntriesSupported}.
  * @property {string | null} irregularFileMode - Git tree mode of a committed `.npmrc` that is not a regular file
  *   (a symlink, `120000`, or another kind of entry), which npm still follows in the worker; `null` otherwise.
- * @property {CommittedYarnClassicConfig} yarnConfig - Registry settings of the committed `.yarnrc`.
  */
 
 /**
- * @typedef {object} CommittedYarnClassicConfig
- * @property {boolean} definesRegistry - The committed `.yarnrc` has a default or scoped registry line.
- * @property {string | null} irregularFileMode - Git tree mode of a committed `.yarnrc` that is not a regular file,
- *   which Yarn Classic still follows in the worker; `null` otherwise.
+ * @typedef {object} CommittedPackageManagerFile
+ * @property {string} filePath - Root-relative path of the file committed at HEAD.
+ * @property {string | null} text - Committed content, or `null` when the entry is not a regular file.
+ * @property {string | null} irregularFileMode - Git tree mode of an entry that is not a regular file (a symlink,
+ *   `120000`, or another kind of entry), which the package manager still follows in the worker; `null` otherwise.
  */
 
 /**
- * Describes the registries selected by the `.yarnrc` committed at HEAD. Yarn Classic reads them besides the
- * `.npmrc`, so a registry there could send the Actions token somewhere the `.npmrc` policy never checked.
+ * Reads the package manager files committed at HEAD besides the `.npmrc`. Only HEAD counts because the worker
+ * checks out the release commit; an absent path is omitted.
  * @param {string} repositoryRoot - Project checkout.
- * @returns {Promise<CommittedYarnClassicConfig>} Registry settings of the committed `.yarnrc`.
+ * @param {string[]} filePaths - Root-relative paths to read.
+ * @returns {Promise<CommittedPackageManagerFile[]>} Committed files found at HEAD.
  * @throws {ReleaseStepError} When Git cannot list or read HEAD.
  */
-async function describeCommittedYarnClassicConfig(repositoryRoot) {
-  const [yarnConfigEntry] = await listCommittedTreeEntries(repositoryRoot, [YARN_CLASSIC_CONFIG_FILE]);
-  if (yarnConfigEntry === undefined) return { definesRegistry: false, irregularFileMode: null };
-  if (!isCommittedRegularFile(yarnConfigEntry)) return { definesRegistry: false, irregularFileMode: yarnConfigEntry.mode };
-  const yarnConfigText = await readCommittedFileEntry(repositoryRoot, yarnConfigEntry);
-  return { definesRegistry: yarnConfigText.split(NPM_CONFIG_LINE_BREAK_PATTERN).some((line) => YARN_CLASSIC_CONFIG_REGISTRY_LINE_PATTERN.test(line)), irregularFileMode: null };
+async function readCommittedPackageManagerFiles(repositoryRoot, filePaths) {
+  const entries = await listCommittedTreeEntries(repositoryRoot, filePaths);
+  return Promise.all(entries.map(async (entry) => isCommittedRegularFile(entry)
+    ? { filePath: entry.filePath, text: await readCommittedFileEntry(repositoryRoot, entry), irregularFileMode: null }
+    : { filePath: entry.filePath, text: null, irregularFileMode: entry.mode }));
 }
 
 /**
- * Rejects a committed `.yarnrc` that selects a registry, or that is not a regular file, once the workflow
- * hands the package manager the GitHub Packages token: its registries cannot be checked like the `.npmrc` ones.
- * @param {CommittedYarnClassicConfig} yarnConfig - Committed `.yarnrc` description.
+ * Rejects a committed package manager file that is not a regular file once the workflow hands the package manager
+ * the GitHub Packages token: HEAD only stores its target, so its registries cannot be checked before the bump.
+ * @param {CommittedPackageManagerFile} file - Committed file description.
  * @returns {void}
- * @throws {ReleaseStepError} When the `.yarnrc` selects a registry or is not a regular file.
+ * @throws {ReleaseStepError} When the file is not a regular file.
  */
-function assertYarnClassicConfigWithoutRegistry(yarnConfig) {
-  const action = `Mové los registries al ${PROJECT_NPM_CONFIG_FILE} commiteado con URLs literales ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}// y quitalos del ${YARN_CLASSIC_CONFIG_FILE}, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`;
-  if (yarnConfig.irregularFileMode !== null) {
-    throw new ReleaseStepError(`El ${YARN_CLASSIC_CONFIG_FILE} commiteado no es un archivo regular (modo ${yarnConfig.irregularFileMode}); Yarn lo seguiría en el worker de CI y antes del bump no se puede comprobar qué registry usa con el token de GitHub Packages.`, action);
+function assertCommittedPackageManagerFileRegular(file) {
+  if (file.irregularFileMode === null) return;
+  throw new ReleaseStepError(
+    `El ${file.filePath} commiteado no es un archivo regular (modo ${file.irregularFileMode}); el package manager lo seguiría en el worker de CI y antes del bump no se puede comprobar qué registry usa con el token de GitHub Packages.`,
+    "Reemplazalo por un archivo regular, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.",
+  );
+}
+
+/**
+ * Throws a {@link ReleaseStepError} for a committed package manager config whose registries the generated workflow
+ * cannot check, asking to move them to the committed `.npmrc`.
+ * @param {string} fileName - Committed config file that selects registries.
+ * @param {string} problem - Spanish description following "El <file> commiteado ".
+ * @returns {never}
+ * @throws {ReleaseStepError} Always.
+ */
+function throwUncheckedRegistryConfigError(fileName, problem) {
+  throw new ReleaseStepError(
+    `El ${fileName} commiteado ${problem}; el package manager lo usaría en el worker de CI con el token de GitHub Packages y el workflow generado solo valida los registries del ${PROJECT_NPM_CONFIG_FILE}.`,
+    `Mové los registries al ${PROJECT_NPM_CONFIG_FILE} commiteado con URLs literales ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}// y quitalos del ${fileName}, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
+  );
+}
+
+/**
+ * Rejects a committed `.yarnrc.yml` that configures GitHub Packages or an npm credential, whatever else the project
+ * declares: Yarn 2+ does not read `~/.npmrc`, so the generated workflow cannot authenticate that install.
+ * @param {CommittedPackageManagerFile | undefined} yarnBerryConfig - Committed `.yarnrc.yml`, if any.
+ * @returns {void}
+ * @throws {ReleaseStepError} When its text matches {@link YARN_BERRY_CONFIG_GITHUB_PACKAGES_PATTERN}.
+ */
+function assertYarnBerryConfigWithoutGithubPackages(yarnBerryConfig) {
+  if (!yarnBerryConfig?.text || !YARN_BERRY_CONFIG_GITHUB_PACKAGES_PATTERN.test(yarnBerryConfig.text)) return;
+  throw new ReleaseStepError(
+    `El ${YARN_BERRY_CONFIG_FILE} commiteado configura GitHub Packages o una credencial de npm (npmAuthToken o npmAuthIdent); Yarn 2+ no lee ~/.npmrc y el workflow generado no autentica esa configuración, así que la instalación fallaría en CI.`,
+    `Usá un workflow propio en ci.workflow que autentique Yarn 2+, o mové el registry y la credencial al ${PROJECT_NPM_CONFIG_FILE} commiteado si tu package manager lo lee; commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
+  );
+}
+
+/**
+ * Rejects the package manager files that could send the GitHub Packages token somewhere unchecked once the workflow
+ * hands it to the install: any of them that is not a regular file, a `.yarnrc` or `bunfig.toml` that selects
+ * registries, and a lockfile that resolves GitHub Packages over plain HTTP.
+ * @param {CommittedPackageManagerFile[]} files - Committed package manager files.
+ * @returns {void}
+ * @throws {ReleaseStepError} When one of those files is found.
+ */
+function assertCommittedPackageManagerFilesSupported(files) {
+  for (const file of files) {
+    assertCommittedPackageManagerFileRegular(file);
+    const lines = file.text?.split(NPM_CONFIG_LINE_BREAK_PATTERN) ?? [];
+    if (file.filePath === YARN_CLASSIC_CONFIG_FILE && lines.some((line) => YARN_CLASSIC_CONFIG_REGISTRY_LINE_PATTERN.test(line))) throwUncheckedRegistryConfigError(file.filePath, "define un registry");
+    if (file.filePath === BUN_CONFIG_FILE && lines.some((line) => BUN_CONFIG_REGISTRY_LINE_PATTERN.test(line))) throwUncheckedRegistryConfigError(file.filePath, "configura registries (registry o [install.scopes])");
+    if (LOCKFILE_NAMES.includes(file.filePath) && LOCKFILE_GITHUB_PACKAGES_HTTP_URL_PATTERN.test(file.text ?? "")) {
+      throw new ReleaseStepError(
+        `El ${file.filePath} commiteado resuelve paquetes desde ${LOCKFILE_GITHUB_PACKAGES_HTTP_URL}; la instalación le enviaría el token de GitHub Packages sin cifrar.`,
+        `Regenerá el lockfile con el registry ${GITHUB_PACKAGES_REGISTRY_URL} (${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}//), commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
+      );
+    }
   }
-  if (!yarnConfig.definesRegistry) return;
-  throw new ReleaseStepError(`El ${YARN_CLASSIC_CONFIG_FILE} commiteado define un registry; Yarn lo usaría en el worker de CI con el token de GitHub Packages y el workflow generado solo valida los registries del ${PROJECT_NPM_CONFIG_FILE}.`, action);
+}
+
+/**
+ * Rejects a committed `.npmrc` whose effective `strict-ssl` is `false` once the workflow hands npm the GitHub
+ * Packages token: without TLS verification anyone on the network path could read it.
+ * @param {ProjectGithubPackagesConfig} projectGithubPackages - Committed `.npmrc` description.
+ * @returns {void}
+ * @throws {ReleaseStepError} When TLS verification is disabled.
+ */
+function assertProjectNpmConfigVerifiesTls(projectGithubPackages) {
+  if (!projectGithubPackages.entries.some(({ key, value }) => key === NPM_CONFIG_STRICT_SSL_KEY && value === NPM_CONFIG_DISABLED_VALUE)) return;
+  throwProjectNpmConfigError(`define ${NPM_CONFIG_STRICT_SSL_KEY}=${NPM_CONFIG_DISABLED_VALUE}, que desactiva la verificación TLS; el token de GitHub Packages podría quedar expuesto en la instalación.`, `Quitá ${NPM_CONFIG_STRICT_SSL_KEY}=${NPM_CONFIG_DISABLED_VALUE}`);
 }
 
 /**
@@ -288,7 +354,7 @@ function assertYarnClassicConfigWithoutRegistry(yarnConfig) {
  */
 async function describeProjectGithubPackagesConfig(repositoryRoot) {
   /** @type {ProjectGithubPackagesConfig} */
-  const description = { usesGithubPackages: false, tokenVariable: null, entries: [], irregularFileMode: null, yarnConfig: await describeCommittedYarnClassicConfig(repositoryRoot) };
+  const description = { usesGithubPackages: false, tokenVariable: null, entries: [], irregularFileMode: null };
   const [npmConfigEntry] = await listCommittedTreeEntries(repositoryRoot, [PROJECT_NPM_CONFIG_FILE]);
   if (npmConfigEntry === undefined) return description;
   if (!isCommittedRegularFile(npmConfigEntry)) {
@@ -363,6 +429,7 @@ function assertProjectNpmConfigRegularFile(irregularFileMode) {
  *   away from the runner's `~/.npmrc`, where the step stores the token, and any binding whose name starts, in any
  *   casing, with one of {@link CI_PACKAGE_MANAGER_CONFIG_VARIABLE_PREFIXES} overrides the committed `.npmrc`
  *   (registry, config files, credentials) with a value that cannot be checked before dispatch.
+ * - With the token step, a binding of {@link CI_TLS_VERIFICATION_DISABLING_VARIABLES} turns off TLS verification.
  * - The accepted token must expand an allowed variable (see {@link assertGithubPackagesTokenVariableAllowed}).
  * @param {ResolvedCreateVersionConfig} config - Project configuration.
  * @param {{ githubToken: boolean, deploymentSecrets: string[] }} environment - Worker bindings from {@link describeCiEnvironment}.
@@ -377,6 +444,13 @@ function assertGithubPackagesSetupSupported(config, environment, projectGithubPa
     throw new ReleaseStepError(
       `ci.secrets o ci.variables declara ${configurationVariable}, que cambia la configuración del package manager o dónde la busca; el workflow guarda el token de GitHub Packages en ~/.npmrc del runner y antes del bump no se puede comprobar qué registry ni qué credencial usaría la instalación de dependencias.`,
       `Quitá ${configurationVariable} de ci.secrets y ci.variables (el workflow usa ${CI_RUNNER_NPM_USER_CONFIG_PATH}) y definí registries y credenciales en el ${PROJECT_NPM_CONFIG_FILE} commiteado, con URLs literales ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}//; no se cambió ningún archivo.`,
+    );
+  }
+  const tlsDisablingVariable = declaredNames.find((name) => CI_TLS_VERIFICATION_DISABLING_VARIABLES.includes(name));
+  if (readsGithubPackages(environment, projectGithubPackages) && tlsDisablingVariable !== undefined) {
+    throw new ReleaseStepError(
+      `ci.secrets o ci.variables declara ${tlsDisablingVariable}, que desactiva la verificación TLS de Node.js; la instalación de dependencias podría exponer el token de GitHub Packages.`,
+      `Quitá ${tlsDisablingVariable} de ci.secrets y ci.variables y volvé a correr el comando; no se cambió ningún archivo.`,
     );
   }
   if (projectGithubPackages.tokenVariable !== null) assertGithubPackagesTokenVariableAllowed(config, projectGithubPackages.tokenVariable, environment.deploymentSecrets);
@@ -440,17 +514,27 @@ function renderGithubPackagesAuthenticationStep(config, tokenVariable) {
  * Rejects a GitHub Packages setup the generated workflow cannot authenticate: unsupported committed
  * `.npmrc` entries (see {@link assertProjectNpmConfigEntriesSupported}) and bindings or references
  * it cannot resolve (see {@link assertGithubPackagesSetupSupported}). It applies only to the generated
- * workflow; a customized workflow authenticates on its own.
+ * workflow; a customized workflow authenticates on its own. A `.yarnrc.yml` bound to GitHub Packages is
+ * rejected even without another signal (see {@link assertYarnBerryConfigWithoutGithubPackages}); with the
+ * authentication step, the other committed package manager files and TLS settings are checked too.
+ * @param {string} repositoryRoot - Project checkout.
  * @param {ResolvedCreateVersionConfig} config - Project configuration.
  * @param {ReturnType<typeof describeCiEnvironment>} environment - Worker bindings.
  * @param {ProjectGithubPackagesConfig} projectGithubPackages - Committed `.npmrc` description.
- * @returns {void}
- * @throws {ReleaseStepError} When the setup is unsupported.
+ * @returns {Promise<void>}
+ * @throws {ReleaseStepError} When Git cannot list or read HEAD or the setup is unsupported.
  */
-function assertGeneratedGithubPackagesSetupSupported(config, environment, projectGithubPackages) {
+async function assertGeneratedGithubPackagesSetupSupported(repositoryRoot, config, environment, projectGithubPackages) {
   assertProjectNpmConfigEntriesSupported(projectGithubPackages);
+  const [yarnBerryConfig] = await readCommittedPackageManagerFiles(repositoryRoot, [YARN_BERRY_CONFIG_FILE]);
+  assertYarnBerryConfigWithoutGithubPackages(yarnBerryConfig);
   assertGithubPackagesSetupSupported(config, environment, projectGithubPackages);
-  if (readsGithubPackages(environment, projectGithubPackages)) assertYarnClassicConfigWithoutRegistry(projectGithubPackages.yarnConfig);
+  if (!readsGithubPackages(environment, projectGithubPackages)) return;
+  assertProjectNpmConfigVerifiesTls(projectGithubPackages);
+  assertCommittedPackageManagerFilesSupported([
+    ...(yarnBerryConfig === undefined ? [] : [yarnBerryConfig]),
+    ...await readCommittedPackageManagerFiles(repositoryRoot, [YARN_CLASSIC_CONFIG_FILE, BUN_CONFIG_FILE, ...LOCKFILE_NAMES]),
+  ]);
 }
 
 /**
@@ -472,7 +556,7 @@ function readsGithubPackages(environment, projectGithubPackages) {
  * @throws {ReleaseStepError} When Git cannot list or read HEAD or the setup is unsupported.
  */
 export async function assertCiGithubPackagesSetupSupported(repositoryRoot, config) {
-  assertGeneratedGithubPackagesSetupSupported(config, describeCiEnvironment(config), await describeProjectGithubPackagesConfig(repositoryRoot));
+  await assertGeneratedGithubPackagesSetupSupported(repositoryRoot, config, describeCiEnvironment(config), await describeProjectGithubPackagesConfig(repositoryRoot));
 }
 
 /**
@@ -509,7 +593,7 @@ export async function renderCiReleaseWorkflow(repositoryRoot, config, { validate
   }
   const environment = describeCiEnvironment(config);
   const projectGithubPackages = await describeProjectGithubPackagesConfig(repositoryRoot);
-  if (validateGithubPackages) assertGeneratedGithubPackagesSetupSupported(config, environment, projectGithubPackages);
+  if (validateGithubPackages) await assertGeneratedGithubPackagesSetupSupported(repositoryRoot, config, environment, projectGithubPackages);
   const authenticatesGithubPackages = readsGithubPackages(environment, projectGithubPackages);
   if (authenticatesGithubPackages) packageSetup = `${renderGithubPackagesAuthenticationStep(config, projectGithubPackages.tokenVariable)}\n${packageSetup}`;
   const readsPublicationHistory = requiresCiPublicationHistory(config);

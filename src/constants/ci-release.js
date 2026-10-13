@@ -4,7 +4,7 @@
  */
 
 import { CREATE_VERSION_CONFIG_FILES, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE } from "./create-version.js";
-import { LOCKFILE_PACKAGE_MANAGERS } from "./package-manager.js";
+import { LOCKFILE_NAMES } from "./package-manager.js";
 
 /** Release execution locations offered by the CLI. */
 export const RELEASE_EXECUTION = Object.freeze({ local: "local", ci: "ci" });
@@ -187,6 +187,36 @@ export const YARN_CLASSIC_CONFIG_FILE = ".yarnrc";
  */
 export const YARN_CLASSIC_CONFIG_REGISTRY_LINE_PATTERN = /^\s*(["']?)(?:--)?(?:@[^\s:"']+:)?registry\1(?=[\s:]|$)/u;
 
+/** Yarn 2+ (Berry) project config, which ignores the runner's `~/.npmrc` where the generated step stores the token. */
+export const YARN_BERRY_CONFIG_FILE = ".yarnrc.yml";
+
+/**
+ * `.yarnrc.yml` text configuring GitHub Packages or an npm credential (`npmAuthToken`, `npmAuthIdent`), which the
+ * generated workflow cannot authenticate because Yarn 2+ does not read `~/.npmrc`.
+ */
+export const YARN_BERRY_CONFIG_GITHUB_PACKAGES_PATTERN = /npm\.pkg\.github\.com|npmAuthToken|npmAuthIdent/iu;
+
+/** Bun project config, whose registries Bun reads besides the `.npmrc` checked by the generated workflow. */
+export const BUN_CONFIG_FILE = "bunfig.toml";
+
+/** Uncommented `bunfig.toml` line that mentions a registry or opens the `[install.scopes]` section. */
+export const BUN_CONFIG_REGISTRY_LINE_PATTERN = /^(?!\s*#)(?:.*registry|\s*\[\s*install\.scopes\s*\])/u;
+
+/** GitHub Packages origin over plain HTTP, named in the error about a lockfile that resolves packages from it. */
+export const LOCKFILE_GITHUB_PACKAGES_HTTP_URL = "http://npm.pkg.github.com";
+
+/** {@link LOCKFILE_GITHUB_PACKAGES_HTTP_URL} inside a lockfile, matched as text in any casing. */
+export const LOCKFILE_GITHUB_PACKAGES_HTTP_URL_PATTERN = /http:\/\/npm\.pkg\.github\.com/iu;
+
+/** `.npmrc` key that turns TLS certificate verification on or off. */
+export const NPM_CONFIG_STRICT_SSL_KEY = "strict-ssl";
+
+/** Effective `.npmrc` value that turns a boolean setting such as {@link NPM_CONFIG_STRICT_SSL_KEY} off. */
+export const NPM_CONFIG_DISABLED_VALUE = "false";
+
+/** Environment variables that turn off Node.js TLS certificate verification for every request of the install. */
+export const CI_TLS_VERIFICATION_DISABLING_VARIABLES = Object.freeze(["NODE_TLS_REJECT_UNAUTHORIZED"]);
+
 /** Indentation and marker opening each job step in the generated workflow. */
 export const CI_WORKFLOW_STEP_PREFIX = "      - ";
 
@@ -269,7 +299,7 @@ export const CI_WORKER_CONFIGURATION_FILES = Object.freeze([
   PACKAGE_MANIFEST_FILE,
   PROJECT_NPM_CONFIG_FILE,
   PINNED_NODE_VERSION_FILE,
-  ...LOCKFILE_PACKAGE_MANAGERS.map(([lockfileName]) => lockfileName),
+  ...LOCKFILE_NAMES,
 ]);
 
 /** Prefix of the `run-name` the generated workflow gives each dispatched release, followed by its tag and commit. */

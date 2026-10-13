@@ -35,6 +35,9 @@ export const LOCKFILE_PACKAGE_MANAGERS = Object.freeze([
   ["npm-shrinkwrap.json", PACKAGE_MANAGER.npm],
 ]);
 
+/** Every lockfile name in {@link LOCKFILE_PACKAGE_MANAGERS}, whatever its package manager. */
+export const LOCKFILE_NAMES = Object.freeze(LOCKFILE_PACKAGE_MANAGERS.map(([lockfileName]) => lockfileName));
+
 /**
  * Prefix that runs a `package.json` script by name. `bun create-version` would run `bun create`
  * and `npm create-version` is not a command, so both need `run`; pnpm and yarn run scripts directly.

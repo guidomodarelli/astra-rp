@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   CI_CONFIG_EXPORT, CI_DEFAULT_PNPM_VERSION, CI_DEFAULT_YARN_VERSION, CI_PACKAGE_MANAGER_VERSION_PATTERN, CI_RELEASE_TEMPLATE_FILE,
-  CI_TEMPLATE_PLACEHOLDER, CI_WORKFLOW_DIRECTORY, DEFAULT_CI_WORKFLOW,
+  CI_TEMPLATE_PLACEHOLDER, DEFAULT_CI_WORKFLOW,
   CI_RELEASE_METADATA_FILE, CI_VERCEL_CLI_VERSION, CI_VERCEL_DEPLOYMENT, CI_VERCEL_SECRETS,
   CI_VERCEL_CONFIG_FILE, CI_VERCEL_GATE_FILE, CI_VERCEL_GATE_TEMPLATE, CI_VERCEL_IGNORE_PLACEHOLDER, CI_VERCEL_WORKER_WRITTEN_PATHS,
   CI_DENO_JSR_CLIENT, CI_DENO_VERSION,
@@ -21,6 +21,7 @@ import {
 } from "../constants/ci-release.js";
 import { CREATE_VERSION_CONFIG_FILES, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
 import { LOCKFILE_NAMES, PACKAGE_MANAGER } from "../constants/package-manager.js";
+import { ciWorkflowPath } from "./ci-config.js";
 import { requiresCiPublicationHistory } from "./ci-publication-history.js";
 import { isCommittedRegularFile, listCommittedTreeEntries, readCommittedFileEntry, readCommittedRegularFile } from "./committed-tree.js";
 import { renderCiReleaseIdentityStep } from "./ci-release-identity-step.js";
@@ -115,7 +116,7 @@ export async function describeCiNodeVersion(repositoryRoot) {
  * @param {string | null} [pinnedVersion] - Version pinned by `packageManager`, from {@link extractPinnedPackageManagerVersion}.
  * @returns {boolean} True when the generated workflow must install the npm trusted publishing client.
  */
-export function requiresCiNpmOidcClient(config, pinnedVersion = null) {
+function requiresCiNpmOidcClient(config, pinnedVersion = null) {
   return config.publish === NPM_REGISTRY_PROVIDER && config.publication?.authentication === OIDC_AUTHENTICATION && (config.commands.packageManager !== PACKAGE_MANAGER.npm || pinnedVersion === null);
 }
 
@@ -248,7 +249,7 @@ function selectsGithubPackagesRegistry(key, value) {
  */
 
 /**
- * Reads the package manager files committed at HEAD besides the `.npmrc`. Only HEAD counts because the worker
+ * Reads the package manager files committed at HEAD. Only HEAD counts because the worker
  * checks out the release commit; an absent path is omitted.
  * @param {string} repositoryRoot - Project checkout.
  * @param {string[]} filePaths - Root-relative paths to read.
@@ -271,10 +272,7 @@ async function readCommittedPackageManagerFiles(repositoryRoot, filePaths) {
  */
 function assertCommittedPackageManagerFileRegular(file) {
   if (file.irregularFileMode === null) return;
-  throw new ReleaseStepError(
-    `El ${file.filePath} commiteado no es un archivo regular (modo ${file.irregularFileMode}); el package manager lo seguiría en el worker de CI y antes del bump no se puede comprobar qué registry usa con el token de GitHub Packages.`,
-    "Reemplazalo por un archivo regular, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.",
-  );
+  throwCommittedFileError(file.filePath, `no es un archivo regular (modo ${file.irregularFileMode}); el package manager lo seguiría en el worker de CI y antes del bump no se puede comprobar qué registry usa con el token de GitHub Packages.`, "Reemplazalo por un archivo regular");
 }
 
 /**
@@ -326,15 +324,17 @@ function assertCommittedPackageManagerFilesSupported(files) {
   for (const file of files) {
     assertCommittedPackageManagerFileRegular(file);
     if (file.filePath === PNPM_WORKSPACE_CONFIG_FILE && readUncommentedConfigLines(file).some((line) => PNPM_WORKSPACE_NETWORK_SETTING_LINE_PATTERN.test(line))) {
-      throw new ReleaseStepError(
-        `El ${PNPM_WORKSPACE_CONFIG_FILE} commiteado define registries o ajustes de red (registry, registries, strictSsl, ca, cert, key o proxies); pnpm los usaría en el worker de CI con el token de GitHub Packages y el workflow generado solo valida los registries del ${PROJECT_NPM_CONFIG_FILE}.`,
-        `Mové el registry al ${PROJECT_NPM_CONFIG_FILE} commiteado con una URL literal ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}//, quitá esos ajustes del ${PNPM_WORKSPACE_CONFIG_FILE} sin desactivar la verificación TLS, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
+      throwCommittedFileError(
+        PNPM_WORKSPACE_CONFIG_FILE,
+        `define registries o ajustes de red (registry, registries, strictSsl, ca, cert, key o proxies); pnpm los usaría en el worker de CI con el token de GitHub Packages y el workflow generado solo valida los registries del ${PROJECT_NPM_CONFIG_FILE}.`,
+        `Mové el registry al ${PROJECT_NPM_CONFIG_FILE} commiteado con una URL literal ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}//, quitá esos ajustes del ${PNPM_WORKSPACE_CONFIG_FILE} sin desactivar la verificación TLS`,
       );
     }
     if (LOCKFILE_NAMES.includes(file.filePath) && LOCKFILE_GITHUB_PACKAGES_HTTP_URL_PATTERN.test(file.text ?? "")) {
-      throw new ReleaseStepError(
-        `El ${file.filePath} commiteado resuelve paquetes desde ${LOCKFILE_GITHUB_PACKAGES_HTTP_URL}; la instalación le enviaría el token de GitHub Packages sin cifrar.`,
-        `Regenerá el lockfile con el registry ${GITHUB_PACKAGES_REGISTRY_URL} (${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}//), commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
+      throwCommittedFileError(
+        file.filePath,
+        `resuelve paquetes desde ${LOCKFILE_GITHUB_PACKAGES_HTTP_URL}; la instalación le enviaría el token de GitHub Packages sin cifrar.`,
+        `Regenerá el lockfile con el registry ${GITHUB_PACKAGES_REGISTRY_URL} (${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}//)`,
       );
     }
   }
@@ -349,7 +349,7 @@ function assertCommittedPackageManagerFilesSupported(files) {
  */
 function assertProjectNpmConfigVerifiesTls(projectGithubPackages) {
   if (!projectGithubPackages.entries.some(({ key, value }) => key === NPM_CONFIG_STRICT_SSL_KEY && value === NPM_CONFIG_DISABLED_VALUE)) return;
-  throwProjectNpmConfigError(`define ${NPM_CONFIG_STRICT_SSL_KEY}=${NPM_CONFIG_DISABLED_VALUE}, que desactiva la verificación TLS; el token de GitHub Packages podría quedar expuesto en la instalación.`, `Quitá ${NPM_CONFIG_STRICT_SSL_KEY}=${NPM_CONFIG_DISABLED_VALUE}`);
+  throwCommittedFileError(PROJECT_NPM_CONFIG_FILE, `define ${NPM_CONFIG_STRICT_SSL_KEY}=${NPM_CONFIG_DISABLED_VALUE}, que desactiva la verificación TLS; el token de GitHub Packages podría quedar expuesto en la instalación.`, `Quitá ${NPM_CONFIG_STRICT_SSL_KEY}=${NPM_CONFIG_DISABLED_VALUE}`);
 }
 
 /**
@@ -359,7 +359,7 @@ function assertProjectNpmConfigVerifiesTls(projectGithubPackages) {
  * {@link readTopLevelNpmConfigEntries}): a later assignment replaces an earlier one, as in npm.
  * A committed `.npmrc` that is not a regular file is only recorded in `irregularFileMode`, since its
  * content cannot be read from HEAD. It only describes the file; whether the generated workflow supports
- * it is decided by {@link assertCiGithubPackagesSetupSupported}.
+ * it is decided by {@link assertGeneratedGithubPackagesSetupSupported}.
  * @param {string} repositoryRoot - Project checkout.
  * @returns {Promise<ProjectGithubPackagesConfig>} How the committed `.npmrc` reaches GitHub Packages.
  * @throws {ReleaseStepError} When Git cannot list or read HEAD.
@@ -367,13 +367,13 @@ function assertProjectNpmConfigVerifiesTls(projectGithubPackages) {
 async function describeProjectGithubPackagesConfig(repositoryRoot) {
   /** @type {ProjectGithubPackagesConfig} */
   const description = { usesGithubPackages: false, tokenVariable: null, entries: [], irregularFileMode: null };
-  const [npmConfigEntry] = await listCommittedTreeEntries(repositoryRoot, [PROJECT_NPM_CONFIG_FILE]);
-  if (npmConfigEntry === undefined) return description;
-  if (!isCommittedRegularFile(npmConfigEntry)) {
-    description.irregularFileMode = npmConfigEntry.mode;
+  const [npmConfigFile] = await readCommittedPackageManagerFiles(repositoryRoot, [PROJECT_NPM_CONFIG_FILE]);
+  if (npmConfigFile === undefined) return description;
+  if (npmConfigFile.text === null) {
+    description.irregularFileMode = npmConfigFile.irregularFileMode;
     return description;
   }
-  const npmConfigEntries = readTopLevelNpmConfigEntries(await readCommittedFileEntry(repositoryRoot, npmConfigEntry));
+  const npmConfigEntries = readTopLevelNpmConfigEntries(npmConfigFile.text);
   description.entries = [...npmConfigEntries].map(([key, value]) => ({ key, value }));
   description.usesGithubPackages = description.entries.some(({ key, value }) => selectsGithubPackagesRegistry(key, value) || isGithubPackagesBoundKey(key));
   description.tokenVariable = readAcceptedGithubPackagesTokenVariable(npmConfigEntries.get(CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY));
@@ -395,27 +395,28 @@ async function describeProjectGithubPackagesConfig(repositoryRoot) {
 function assertProjectNpmConfigEntriesSupported(projectGithubPackages) {
   assertProjectNpmConfigRegularFile(projectGithubPackages.irregularFileMode);
   for (const { key, value } of projectGithubPackages.entries) {
-    if (containsNpmConfigEnvironmentReference(key)) throwProjectNpmConfigError(`define la clave ${key}, que npm completa con variables de entorno; antes del bump no se puede saber a qué host apunta ni si reemplazaría el token del workflow.`, `Escribí la clave literal (por ejemplo ${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}) o quitá la línea`);
+    if (containsNpmConfigEnvironmentReference(key)) throwCommittedFileError(PROJECT_NPM_CONFIG_FILE, `define la clave ${key}, que npm completa con variables de entorno; antes del bump no se puede saber a qué host apunta ni si reemplazaría el token del workflow.`, `Escribí la clave literal (por ejemplo ${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}) o quitá la línea`);
     const isRegistryKey = NPM_CONFIG_REGISTRY_KEY_PATTERN.test(key);
-    if (isRegistryKey && containsNpmConfigEnvironmentReference(value)) throwProjectNpmConfigError(`define ${key} con una variable de entorno; antes del bump no se puede comprobar si apunta a GitHub Packages ni que use ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}.`, `Escribí la URL literal ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}// del registry`);
+    if (isRegistryKey && containsNpmConfigEnvironmentReference(value)) throwCommittedFileError(PROJECT_NPM_CONFIG_FILE, `define ${key} con una variable de entorno; antes del bump no se puede comprobar si apunta a GitHub Packages ni que use ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}.`, `Escribí la URL literal ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}// del registry`);
     if (selectsGithubPackagesRegistry(key, value) && new URL(/** @type {string} */ (value)).protocol !== CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL) {
-      throwProjectNpmConfigError(`define ${key} con GitHub Packages sobre ${new URL(/** @type {string} */ (value)).protocol}; el workflow le daría a npm el token de Actions y npm lo enviaría sin cifrar.`, `Usá ${GITHUB_PACKAGES_REGISTRY_URL} como registry`);
+      throwCommittedFileError(PROJECT_NPM_CONFIG_FILE, `define ${key} con GitHub Packages sobre ${new URL(/** @type {string} */ (value)).protocol}; el workflow le daría a npm el token de Actions y npm lo enviaría sin cifrar.`, `Usá ${GITHUB_PACKAGES_REGISTRY_URL} como registry`);
     }
     if (isGithubPackagesBoundKey(key) && (key !== CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY || readAcceptedGithubPackagesTokenVariable(value) === null)) {
-      throwProjectNpmConfigError(`define la credencial ${key} con una forma que el workflow generado no acepta: solo admite ${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}=\${NOMBRE}, porque cualquier otra credencial de GitHub Packages podría tener prioridad sobre el token de Actions y la instalación fallaría con 401.`, `Usá ${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}=\${${GITHUB_REGISTRY_TOKEN_VARIABLE}} o quitá la línea`);
+      throwCommittedFileError(PROJECT_NPM_CONFIG_FILE, `define la credencial ${key} con una forma que el workflow generado no acepta: solo admite ${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}=\${NOMBRE}, porque cualquier otra credencial de GitHub Packages podría tener prioridad sobre el token de Actions y la instalación fallaría con 401.`, `Usá ${CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY}=\${${GITHUB_REGISTRY_TOKEN_VARIABLE}} o quitá la línea`);
     }
   }
 }
 
 /**
- * Throws a {@link ReleaseStepError} about the committed `.npmrc` with the shared closing instructions.
- * @param {string} problem - Spanish description following "El .npmrc commiteado ".
+ * Throws a {@link ReleaseStepError} about a file committed at HEAD with the shared closing instructions.
+ * @param {string} filePath - Root-relative path of the committed file.
+ * @param {string} problem - Spanish description following "El <archivo> commiteado ".
  * @param {string} action - Spanish instruction the hint starts with.
  * @returns {never}
  * @throws {ReleaseStepError} Always.
  */
-function throwProjectNpmConfigError(problem, action) {
-  throw new ReleaseStepError(`El ${PROJECT_NPM_CONFIG_FILE} commiteado ${problem}`, `${action}, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`);
+function throwCommittedFileError(filePath, problem, action) {
+  throw new ReleaseStepError(`El ${filePath} commiteado ${problem}`, `${action}, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`);
 }
 
 /**
@@ -427,10 +428,7 @@ function throwProjectNpmConfigError(problem, action) {
  */
 function assertProjectNpmConfigRegularFile(irregularFileMode) {
   if (irregularFileMode === null) return;
-  throw new ReleaseStepError(
-    `El ${PROJECT_NPM_CONFIG_FILE} commiteado no es un archivo regular (modo ${irregularFileMode}, por ejemplo un enlace simbólico); npm lo seguiría en el worker de CI y antes del bump no se puede comprobar qué registries ni credenciales usa.`,
-    "Reemplazalo por un archivo regular con la configuración de npm, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.",
-  );
+  throwCommittedFileError(PROJECT_NPM_CONFIG_FILE, `no es un archivo regular (modo ${irregularFileMode}, por ejemplo un enlace simbólico); npm lo seguiría en el worker de CI y antes del bump no se puede comprobar qué registries ni credenciales usa.`, "Reemplazalo por un archivo regular con la configuración de npm");
 }
 
 /**
@@ -446,20 +444,21 @@ function assertProjectNpmConfigRegularFile(irregularFileMode) {
  * @param {ResolvedCreateVersionConfig} config - Project configuration.
  * @param {{ githubToken: boolean, deploymentSecrets: string[] }} environment - Worker bindings from {@link describeCiEnvironment}.
  * @param {ProjectGithubPackagesConfig} projectGithubPackages - Committed `.npmrc` description.
+ * @param {boolean} authenticatesGithubPackages - Whether the workflow adds the token step (see {@link readsGithubPackages}).
  * @returns {void}
  * @throws {ReleaseStepError} When any of those setups is found.
  */
-function assertGithubPackagesSetupSupported(config, environment, projectGithubPackages) {
+function assertGithubPackagesSetupSupported(config, environment, projectGithubPackages, authenticatesGithubPackages) {
   const declaredNames = [...(config.ci?.secrets ?? []), ...(config.ci?.variables ?? [])];
   const configurationVariable = declaredNames.find((name) => CI_NPM_USER_CONFIG_LOCATION_VARIABLES.includes(name) || CI_PACKAGE_MANAGER_CONFIG_VARIABLE_PREFIXES.some((prefix) => name.toUpperCase().startsWith(prefix)));
-  if (readsGithubPackages(environment, projectGithubPackages) && configurationVariable !== undefined) {
+  if (authenticatesGithubPackages && configurationVariable !== undefined) {
     throw new ReleaseStepError(
       `ci.secrets o ci.variables declara ${configurationVariable}, que cambia la configuración del package manager o dónde la busca; el workflow guarda el token de GitHub Packages en ~/.npmrc del runner y antes del bump no se puede comprobar qué registry ni qué credencial usaría la instalación de dependencias.`,
       `Quitá ${configurationVariable} de ci.secrets y ci.variables (el workflow usa ${CI_RUNNER_NPM_USER_CONFIG_PATH}) y definí registries y credenciales en el ${PROJECT_NPM_CONFIG_FILE} commiteado, con URLs literales ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}//; no se cambió ningún archivo.`,
     );
   }
   const tlsDisablingVariable = declaredNames.find((name) => CI_TLS_VERIFICATION_DISABLING_VARIABLES.includes(name));
-  if (readsGithubPackages(environment, projectGithubPackages) && tlsDisablingVariable !== undefined) {
+  if (authenticatesGithubPackages && tlsDisablingVariable !== undefined) {
     throw new ReleaseStepError(
       `ci.secrets o ci.variables declara ${tlsDisablingVariable}, que desactiva la verificación TLS de Node.js; la instalación de dependencias podría exponer el token de GitHub Packages.`,
       `Quitá ${tlsDisablingVariable} de ci.secrets y ci.variables y volvé a correr el comando; no se cambió ningún archivo.`,
@@ -492,13 +491,13 @@ function assertGithubPackagesTokenVariableAllowed(config, tokenVariable, deploym
   const usesVariable = `usa \${${tokenVariable}} como token de GitHub Packages`;
   const allowedVariableHint = `Usá \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} o declará el secret en ci.secrets`;
   if (!(config.ci?.secrets ?? []).includes(tokenVariable)) {
-    throwProjectNpmConfigError(`${usesVariable}, que no es ${GITHUB_REGISTRY_TOKEN_VARIABLE} ni un secret declarado en ci.secrets; el workflow no le daría ningún token y la instalación de GitHub Packages fallaría o enviaría otro valor.`, allowedVariableHint);
+    throwCommittedFileError(PROJECT_NPM_CONFIG_FILE, `${usesVariable}, que no es ${GITHUB_REGISTRY_TOKEN_VARIABLE} ni un secret declarado en ci.secrets; el workflow no le daría ningún token y la instalación de GitHub Packages fallaría o enviaría otro valor.`, allowedVariableHint);
   }
   if (deploymentSecrets.includes(tokenVariable)) {
-    throwProjectNpmConfigError(`${usesVariable}, un secret del despliegue de Vercel; solo los pasos de Vercel lo reciben, con su propio valor, así que la instalación de vercel build enviaría ese secret como token de GitHub Packages.`, `${allowedVariableHint} que no sea ${deploymentSecrets.join(", ")}`);
+    throwCommittedFileError(PROJECT_NPM_CONFIG_FILE, `${usesVariable}, un secret del despliegue de Vercel; solo los pasos de Vercel lo reciben, con su propio valor, así que la instalación de vercel build enviaría ese secret como token de GitHub Packages.`, `${allowedVariableHint} que no sea ${deploymentSecrets.join(", ")}`);
   }
   if (tokenVariable === readPublicationTokenVariable(config)) {
-    throwProjectNpmConfigError(`${usesVariable}, el mismo nombre que publication.tokenEnv; el workflow lo carga con el secret de publicación y la instalación de dependencias enviaría ese token a GitHub Packages.`, `Usá \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} en el ${PROJECT_NPM_CONFIG_FILE} o renombrá el secret de publicación (publication.tokenEnv)`);
+    throwCommittedFileError(PROJECT_NPM_CONFIG_FILE, `${usesVariable}, el mismo nombre que publication.tokenEnv; el workflow lo carga con el secret de publicación y la instalación de dependencias enviaría ese token a GitHub Packages.`, `Usá \${${GITHUB_REGISTRY_TOKEN_VARIABLE}} en el ${PROJECT_NPM_CONFIG_FILE} o renombrá el secret de publicación (publication.tokenEnv)`);
   }
 }
 
@@ -533,14 +532,14 @@ function renderGithubPackagesAuthenticationStep(config, tokenVariable) {
  * @param {ResolvedCreateVersionConfig} config - Project configuration.
  * @param {ReturnType<typeof describeCiEnvironment>} environment - Worker bindings.
  * @param {ProjectGithubPackagesConfig} projectGithubPackages - Committed `.npmrc` description.
+ * @param {boolean} authenticatesGithubPackages - Whether the workflow adds the token step (see {@link readsGithubPackages}).
  * @returns {Promise<void>}
  * @throws {ReleaseStepError} When Git cannot list or read HEAD or the setup is unsupported.
  */
-async function assertGeneratedGithubPackagesSetupSupported(repositoryRoot, config, environment, projectGithubPackages) {
+async function assertGeneratedGithubPackagesSetupSupported(repositoryRoot, config, environment, projectGithubPackages, authenticatesGithubPackages) {
   assertProjectNpmConfigEntriesSupported(projectGithubPackages);
-  const authenticatesGithubPackages = readsGithubPackages(environment, projectGithubPackages);
   await assertPackageManagerAuthenticatesGithubPackages(repositoryRoot, config, authenticatesGithubPackages);
-  assertGithubPackagesSetupSupported(config, environment, projectGithubPackages);
+  assertGithubPackagesSetupSupported(config, environment, projectGithubPackages, authenticatesGithubPackages);
   if (!authenticatesGithubPackages) return;
   assertProjectNpmConfigVerifiesTls(projectGithubPackages);
   const workspaceConfigFiles = config.commands.packageManager === PACKAGE_MANAGER.pnpm ? [PNPM_WORKSPACE_CONFIG_FILE] : [];
@@ -558,28 +557,54 @@ function readsGithubPackages(environment, projectGithubPackages) {
 }
 
 /**
- * Checks that the generated workflow can authenticate the project's GitHub Packages setup, for callers
- * that already know the generated workflow is in use (see {@link renderCiReleaseWorkflow}).
- * @param {string} repositoryRoot - Project checkout.
- * @param {ResolvedCreateVersionConfig} config - Project configuration.
- * @returns {Promise<void>}
- * @throws {ReleaseStepError} When Git cannot list or read HEAD or the setup is unsupported.
+ * Renders the steps that install the package manager and the project dependencies, before the GitHub
+ * Packages authentication is prepended.
+ * @param {ResolvedCreateVersionConfig["commands"]["packageManager"]} manager - Package manager of the project.
+ * @param {string | null} pinnedVersion - Version pinned by `packageManager`, or `null`.
+ * @param {string[]} npmOidcClientSetup - Step lines that install the npm trusted publishing client, or none.
+ * @returns {string} Workflow step lines.
  */
-export async function assertCiGithubPackagesSetupSupported(repositoryRoot, config) {
-  await assertGeneratedGithubPackagesSetupSupported(repositoryRoot, config, describeCiEnvironment(config), await describeProjectGithubPackagesConfig(repositoryRoot));
+function renderPackageSetup(manager, pinnedVersion, npmOidcClientSetup) {
+  if (manager === PACKAGE_MANAGER.pnpm) {
+    return ["      - name: Configurar pnpm", "        uses: pnpm/action-setup@v4", "        with:", `          version: '${pinnedVersion ?? CI_DEFAULT_PNPM_VERSION}'`, "      - name: Instalar dependencias", "        run: pnpm install --frozen-lockfile"].join("\n");
+  }
+  if (manager === PACKAGE_MANAGER.bun) {
+    return ["      - name: Configurar Bun", "        uses: oven-sh/setup-bun@v2", ...(pinnedVersion ? ["        with:", `          bun-version: '${pinnedVersion}'`] : []), "      - name: Instalar dependencias", "        run: bun install --frozen-lockfile"].join("\n");
+  }
+  if (manager === PACKAGE_MANAGER.yarn) {
+    // Yarn 2+ (Berry) ships as @yarnpkg/cli-dist and replaced --frozen-lockfile with --immutable.
+    const yarnBerry = pinnedVersion !== null && Number(pinnedVersion.split(".")[0]) > 1;
+    return ["      - name: Configurar Yarn", `        run: npm install --global ${yarnBerry ? "@yarnpkg/cli-dist" : "yarn"}@${pinnedVersion ?? CI_DEFAULT_YARN_VERSION}`, "      - name: Instalar dependencias", `        run: yarn install ${yarnBerry ? "--immutable" : "--frozen-lockfile"}`].join("\n");
+  }
+  return [...(pinnedVersion ? ["      - name: Configurar npm", `        run: npm install --global npm@${pinnedVersion}`] : []), "      - name: Instalar dependencias", "        run: npm ci", ...npmOidcClientSetup].join("\n");
 }
 
 /**
- * Renders a workflow that installs the project's package manager and finishes a pinned release.
+ * Renders the Vercel steps of a workflow that deploys after the worker: the CLI setup, and the
+ * production pull, build and deploy, each with its own credentials.
+ * @param {boolean} deploysToVercel - Whether `ci.deployment` is Vercel.
+ * @returns {{ deploymentSetup: string, deployment: string }} Workflow step lines, empty without Vercel.
+ */
+function renderVercelSteps(deploysToVercel) {
+  if (!deploysToVercel) return { deploymentSetup: "", deployment: "" };
+  const vercelEnvironment = CI_VERCEL_SECRETS.map((name) => `          ${name}: \${{ secrets.${name} }}`).join("\n");
+  return {
+    deploymentSetup: ["      - name: Configurar Vercel", `        run: npm install --global vercel@${CI_VERCEL_CLI_VERSION}`].join("\n"),
+    // Production values are pulled only after checks, migrations and hooks finish, so release code never receives them.
+    deployment: ["      - name: Obtener entorno de producción", "        env:", vercelEnvironment, "        run: |", '          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"', "          cp .vercel/.env.production.local .env","      - name: Construir artefacto de producción", "        env:", vercelEnvironment, '        run: vercel build --prod --token="$VERCEL_TOKEN"', "      - name: Desplegar producción después de los checks", "        env:", vercelEnvironment, '        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"'].join("\n"),
+  };
+}
+
+/**
+ * Renders the release workflow and keeps the GitHub Packages description it was rendered from, so a caller
+ * can compare the workflow first and validate that setup afterwards without describing it twice.
  * @param {string} repositoryRoot - Project checkout.
  * @param {ResolvedCreateVersionConfig} config - Release hooks and package manager.
- * @param {{ validateGithubPackages?: boolean }} [options] - `validateGithubPackages: false` only renders,
- *   for comparisons against a committed workflow that may be customized and authenticate on its own.
- * @returns {Promise<string>} GitHub Actions YAML.
- * @throws {ReleaseStepError} When Git cannot list or read HEAD or, while validating, the GitHub Packages
- *   setup is unsupported (see {@link assertCiGithubPackagesSetupSupported}).
+ * @returns {Promise<{ content: string, assertGithubPackagesSetupSupported: () => Promise<void> }>} GitHub Actions YAML,
+ *   and the check that the generated workflow can authenticate the project's GitHub Packages setup.
+ * @throws {ReleaseStepError} When Git cannot list or read HEAD or the worker bindings are invalid.
  */
-export async function renderCiReleaseWorkflow(repositoryRoot, config, { validateGithubPackages = true } = {}) {
+export async function prepareCiReleaseWorkflow(repositoryRoot, config) {
   const manifest = readJsonManifest(repositoryRoot);
   const manager = config.commands.packageManager;
   const pinnedVersion = extractPinnedPackageManagerVersion(manifest);
@@ -591,26 +616,16 @@ export async function renderCiReleaseWorkflow(repositoryRoot, config, { validate
     // npm projects install their dependencies with the bundled client and get this one afterwards.
     ...(manager === PACKAGE_MANAGER.npm ? [] : npmOidcClientSetup),
   ].join("\n");
-  let packageSetup;
-  if (manager === "pnpm") {
-    packageSetup = ["      - name: Configurar pnpm", "        uses: pnpm/action-setup@v4", "        with:", `          version: '${pinnedVersion ?? CI_DEFAULT_PNPM_VERSION}'`, "      - name: Instalar dependencias", "        run: pnpm install --frozen-lockfile"].join("\n");
-  } else if (manager === "bun") {
-    packageSetup = ["      - name: Configurar Bun", "        uses: oven-sh/setup-bun@v2", ...(pinnedVersion ? ["        with:", `          bun-version: '${pinnedVersion}'`] : []), "      - name: Instalar dependencias", "        run: bun install --frozen-lockfile"].join("\n");
-  } else if (manager === "yarn") {
-    packageSetup = ["      - name: Configurar Yarn", `        run: npm install --global ${pinnedVersion && Number(pinnedVersion.split(".")[0]) > 1 ? "@yarnpkg/cli-dist" : "yarn"}@${pinnedVersion ?? CI_DEFAULT_YARN_VERSION}`, "      - name: Instalar dependencias", `        run: yarn install ${pinnedVersion && Number(pinnedVersion.split(".")[0]) > 1 ? "--immutable" : "--frozen-lockfile"}`].join("\n");
-  } else {
-    packageSetup = [...(pinnedVersion ? ["      - name: Configurar npm", `        run: npm install --global npm@${pinnedVersion}`] : []), "      - name: Instalar dependencias", "        run: npm ci", ...npmOidcClientSetup].join("\n");
-  }
   const environment = describeCiEnvironment(config);
   const projectGithubPackages = await describeProjectGithubPackagesConfig(repositoryRoot);
-  if (validateGithubPackages) await assertGeneratedGithubPackagesSetupSupported(repositoryRoot, config, environment, projectGithubPackages);
   const authenticatesGithubPackages = readsGithubPackages(environment, projectGithubPackages);
-  if (authenticatesGithubPackages) packageSetup = `${renderGithubPackagesAuthenticationStep(config, projectGithubPackages.tokenVariable)}\n${packageSetup}`;
+  const packageSetup = renderPackageSetup(manager, pinnedVersion, npmOidcClientSetup);
+  const authenticatedPackageSetup = authenticatesGithubPackages ? `${renderGithubPackagesAuthenticationStep(config, projectGithubPackages.tokenVariable)}\n${packageSetup}` : packageSetup;
   const readsPublicationHistory = requiresCiPublicationHistory(config);
   // The worker reads its own Actions history, and npm prefers a project `${GITHUB_TOKEN}` host token over ~/.npmrc;
   // any other accepted token variable is a declared secret, already bound from it.
   const bindsGithubToken = environment.githubToken || readsPublicationHistory || projectGithubPackages.tokenVariable === GITHUB_REGISTRY_TOKEN_VARIABLE;
-  // Deployment secrets are bound only on their own steps; a project credential expanding one was rejected above.
+  // Deployment secrets are bound only on their own steps; a project credential expanding one is rejected by the validation.
   const jobSecrets = environment.secrets.filter((name) => !environment.deploymentSecrets.includes(name));
   const bindings = [
     ...jobSecrets.map((name) => `      ${name}: \${{ secrets.${name} }}`),
@@ -622,22 +637,39 @@ export async function renderCiReleaseWorkflow(repositoryRoot, config, { validate
     ...(config.publication.authentication === OIDC_AUTHENTICATION ? ["  id-token: write"] : []),
     ...(authenticatesGithubPackages ? [`  packages: ${environment.githubTokenWrite ? "write" : "read"}`] : []),
   ].join("\n");
-  const releaseCommand = `${config.commands.createVersion}${manager === "npm" ? " --" : ""} --ci-release "$RELEASE_TAG"`;
-  const vercelEnvironment = CI_VERCEL_SECRETS.map((name) => `          ${name}: \${{ secrets.${name} }}`).join("\n");
-  const deploymentSetup = config.ci?.deployment === CI_VERCEL_DEPLOYMENT ? ["      - name: Configurar Vercel", `        run: npm install --global vercel@${CI_VERCEL_CLI_VERSION}`].join("\n") : "";
-  // Production values are pulled only after checks, migrations and hooks finish, so release code never receives them.
-  const deployment = config.ci?.deployment === CI_VERCEL_DEPLOYMENT ? ["      - name: Obtener entorno de producción", "        env:", vercelEnvironment, "        run: |", '          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"', "          cp .vercel/.env.production.local .env","      - name: Construir artefacto de producción", "        env:", vercelEnvironment, '        run: vercel build --prod --token="$VERCEL_TOKEN"', "      - name: Desplegar producción después de los checks", "        env:", vercelEnvironment, '        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"'].join("\n") : "";
+  const releaseCommand = `${config.commands.createVersion}${manager === PACKAGE_MANAGER.npm ? " --" : ""} --ci-release "$RELEASE_TAG"`;
+  const { deploymentSetup, deployment } = renderVercelSteps(config.ci?.deployment === CI_VERCEL_DEPLOYMENT);
   const deno = config.publication.jsrClient === CI_DENO_JSR_CLIENT && config.publish === JSR_REGISTRY_PROVIDER ? ["      - name: Configurar Deno para JSR", "        uses: denoland/setup-deno@v2", "        with:", `          deno-version: '${CI_DENO_VERSION}'`].join("\n") : "";
-  return readFileSync(new URL(CI_RELEASE_TEMPLATE_FILE, import.meta.url), "utf8")
+  const content = readFileSync(new URL(CI_RELEASE_TEMPLATE_FILE, import.meta.url), "utf8")
     .replace(CI_TEMPLATE_PLACEHOLDER.identity, () => renderCiReleaseIdentityStep())
     .replace(CI_TEMPLATE_PLACEHOLDER.node, nodeSetup)
-    .replace(CI_TEMPLATE_PLACEHOLDER.install, packageSetup)
+    .replace(CI_TEMPLATE_PLACEHOLDER.install, authenticatedPackageSetup)
     .replace(CI_TEMPLATE_PLACEHOLDER.environment, bindings.join("\n"))
     .replace(CI_TEMPLATE_PLACEHOLDER.permissions, permissions)
     .replace(CI_TEMPLATE_PLACEHOLDER.command, releaseCommand)
     .replace(CI_TEMPLATE_PLACEHOLDER.deploymentSetup, deploymentSetup)
     .replace(CI_TEMPLATE_PLACEHOLDER.deployment, deployment)
     .replace(CI_TEMPLATE_PLACEHOLDER.deno, deno);
+  return {
+    content,
+    assertGithubPackagesSetupSupported: () => assertGeneratedGithubPackagesSetupSupported(repositoryRoot, config, environment, projectGithubPackages, authenticatesGithubPackages),
+  };
+}
+
+/**
+ * Renders a workflow that installs the project's package manager and finishes a pinned release.
+ * @param {string} repositoryRoot - Project checkout.
+ * @param {ResolvedCreateVersionConfig} config - Release hooks and package manager.
+ * @param {{ validateGithubPackages?: boolean }} [options] - `validateGithubPackages: false` only renders,
+ *   for comparisons against a committed workflow that may be customized and authenticate on its own.
+ * @returns {Promise<string>} GitHub Actions YAML.
+ * @throws {ReleaseStepError} When Git cannot list or read HEAD or, while validating, the GitHub Packages
+ *   setup is unsupported (see {@link assertGeneratedGithubPackagesSetupSupported}).
+ */
+export async function renderCiReleaseWorkflow(repositoryRoot, config, { validateGithubPackages = true } = {}) {
+  const workflow = await prepareCiReleaseWorkflow(repositoryRoot, config);
+  if (validateGithubPackages) await workflow.assertGithubPackagesSetupSupported();
+  return workflow.content;
 }
 
 /**
@@ -650,7 +682,7 @@ export async function renderCiReleaseWorkflow(repositoryRoot, config, { validate
  * @throws {ReleaseStepError} When an existing workflow would be overwritten or configuration cannot be extended.
  */
 export async function prepareCiSetupFiles(repositoryRoot, config, writeConfiguration = true) {
-  const workflowPath = `${CI_WORKFLOW_DIRECTORY}/${config.ci?.workflow ?? DEFAULT_CI_WORKFLOW}`;
+  const workflowPath = ciWorkflowPath(config.ci?.workflow ?? DEFAULT_CI_WORKFLOW);
   assertSafeCiPath(repositoryRoot, workflowPath);
   if (existsSync(path.join(repositoryRoot, workflowPath))) throw new ReleaseStepError(`${workflowPath} ya existe; no se reemplazó.`, "Configurá ci.workflow en beez-rp.config.(m)js y verificá que reciba version, tag y sha y ejecute --ci-release.");
   const configFile = CREATE_VERSION_CONFIG_FILES.find((fileName) => existsSync(path.join(repositoryRoot, fileName)));

@@ -73,6 +73,7 @@ import {
   withArtifactOutsidePackageRoot,
 } from "./artifact.js";
 import { describeReleaseTypes, loadCreateVersionConfig } from "./config.js";
+import { ciWorkflowPath } from "./ci-config.js";
 import { assertPreservedFilesUnchanged, verifyChangelogUpdate } from "./changelog.js";
 import { ReleaseStepError, describeError } from "./errors.js";
 import { readJsonManifest } from "./json.js";
@@ -90,7 +91,7 @@ import { isRegistryProvider } from "./registry-config.js";
 import { checkRegistryAccess, lookupRegistryVersions, publishRegistryRelease, resolveRegistry, selectProjectRegistry } from "./registry.js";
 import { prepareJsrVersionUpdates, readJsrManifest } from "./jsr.js";
 import { JSR_REGISTRY_PROVIDER, REGISTRY_LABELS } from "../constants/registry.js";
-import { CI_DISPATCH_STATUS, CI_GIT_HOOKS_OPTION, CI_VERCEL_DEPLOYMENT, CI_WORKER_CONFIGURATION_FILES, CI_WORKFLOW_DIRECTORY, DISPATCH_CI_RELEASE_STEP, RELEASE_EXECUTION } from "../constants/ci-release.js";
+import { CI_DISPATCH_STATUS, CI_GIT_HOOKS_OPTION, CI_VERCEL_DEPLOYMENT, CI_WORKER_CONFIGURATION_FILES, DISPATCH_CI_RELEASE_STEP, RELEASE_EXECUTION } from "../constants/ci-release.js";
 import { findCompletedCiPublication, requiresCiPublicationHistory } from "./ci-publication-history.js";
 import { appendCiDispatch, assertCiCompatiblePublication, assertCiInstallLockfileCommitted, assertCiNodeVersionFileCommitted, assertGeneratedCiWorkflowCurrent, assertResumeExecutionMatches, buildCiWorkerPlan, chooseReleaseExecution, defaultCiReleaseConfig, isCommittedCiWorkflowGenerated, readCiReleaseIdentity, readCommittedCiWorkflow } from "./ci.js";
 import { assertCiSetupFilesUnchanged, describeCiEnvironment, prepareCiReleaseMetadata, prepareCiSetupFiles } from "./ci-setup.js";
@@ -1560,7 +1561,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
   if (selection.setup && !config.ci) config = { ...config, ci: defaultCiReleaseConfig(repositoryRoot, config) };
   // Setup either writes the generated workflow or keeps an existing one that still matches it; both install from the committed lockfile.
   const setsUpGeneratedWorkflow = selection.setup;
-  if (selection.setup && ciWasConfigured && config.ci && existsSync(path.join(repositoryRoot, CI_WORKFLOW_DIRECTORY, config.ci.workflow))) {
+  if (selection.setup && ciWasConfigured && config.ci && existsSync(path.join(repositoryRoot, ciWorkflowPath(config.ci.workflow)))) {
     // An existing workflow turns setup into an ordinary CI release only while it still matches the current configuration.
     try {
       await assertGeneratedCiWorkflowCurrent(repositoryRoot, config);
@@ -1589,7 +1590,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
   const { migrations } = config;
   let capabilities = describePlannedCapabilities(config, isCiPreparation);
   // The worker reloads these files from the release tag: setting their changes aside would preflight another configuration.
-  const ciWorkerFiles = isCiPreparation && config.ci ? [...CI_WORKER_CONFIGURATION_FILES, `${CI_WORKFLOW_DIRECTORY}/${config.ci.workflow}`] : [];
+  const ciWorkerFiles = isCiPreparation && config.ci ? [...CI_WORKER_CONFIGURATION_FILES, ciWorkflowPath(config.ci.workflow)] : [];
   const planOptions = { skipUnpublished: options.skipUnpublished, ignoreLocalChanges: options.ignoreLocalChanges, ciWorkerFiles };
   const spinner = startSpinner("Diagnosticando el repositorio");
   let state;

@@ -5,8 +5,9 @@
 
 import {
   CI_DIAGNOSTIC_LIMIT, CI_DISPATCH_STATUS, CI_FAILURE_CODE, CI_GITHUB_TOKEN_VARIABLES, CI_ORGANIZATION_BINDING_PAGE_SIZE,
-  CI_ORGANIZATION_BINDING_RESOURCE, CI_RELEASE_RUN_TITLE_PREFIX, CI_RUN_LOOKUP_LIMIT, CI_WORKFLOW_DIRECTORY,
+  CI_ORGANIZATION_BINDING_RESOURCE, CI_RELEASE_RUN_TITLE_PREFIX, CI_RUN_LOOKUP_LIMIT,
 } from "../constants/ci-release.js";
+import { ciWorkflowPath } from "./ci-config.js";
 import { GITHUB_REPOSITORY_PATTERN, MAIN_BRANCH, RELEASE_REMOTE, REMOTE_MAIN_REF } from "../constants/create-version.js";
 import { CiReleaseError } from "./errors.js";
 import { runCaptured } from "./process.js";
@@ -92,6 +93,16 @@ export function createGithubWorkflowClient(repositoryRoot, capture = runCaptured
   }
 
   /**
+   * Tells whether a revision of the checkout contains a file.
+   * @param {string} revision - Ref such as `refs/tags/v1.2.0`.
+   * @param {string} filePath - Root-relative path.
+   * @returns {Promise<boolean>} True when `git cat-file -e` finds the file at that revision.
+   */
+  async function hasFileAt(revision, filePath) {
+    return (await capture("git", ["cat-file", "-e", `${revision}:${filePath}`], { cwd: repositoryRoot })).status === 0;
+  }
+
+  /**
    * Requires the release tag to contain the workflow, since dispatching with `--ref <tag>` runs the
    * definition stored in that tag instead of whatever `main` holds today.
    * @param {string} workflow - Workflow filename.
@@ -101,9 +112,8 @@ export function createGithubWorkflowClient(repositoryRoot, capture = runCaptured
    * @throws {CiReleaseError} When the tag has no such workflow; nothing is dispatched.
    */
   async function assertWorkflowInReleaseTag(workflow, release, retryCommand) {
-    const workflowPath = `${CI_WORKFLOW_DIRECTORY}/${workflow}`;
-    const contained = await capture("git", ["cat-file", "-e", `refs/tags/${release.tag}:${workflowPath}`], { cwd: repositoryRoot });
-    if (contained.status !== 0) throw new CiReleaseError(CI_FAILURE_CODE.preflight, `${release.tag} no contiene ${workflowPath}; el release solo se ejecuta con el workflow de su propio tag, no con el de ${MAIN_BRANCH}.`, `No se envió ninguna ejecución. Publicá ${release.tag} con --local, o traé el tag con git fetch ${RELEASE_REMOTE} tag ${release.tag} si falta localmente y volvé a correr ${retryCommand}.`);
+    const workflowPath = ciWorkflowPath(workflow);
+    if (!(await hasFileAt(`refs/tags/${release.tag}`, workflowPath))) throw new CiReleaseError(CI_FAILURE_CODE.preflight, `${release.tag} no contiene ${workflowPath}; el release solo se ejecuta con el workflow de su propio tag, no con el de ${MAIN_BRANCH}.`, `No se envió ninguna ejecución. Publicá ${release.tag} con --local, o traé el tag con git fetch ${RELEASE_REMOTE} tag ${release.tag} si falta localmente y volvé a correr ${retryCommand}.`);
   }
 
   /**
@@ -118,9 +128,8 @@ export function createGithubWorkflowClient(repositoryRoot, capture = runCaptured
    * @throws {CiReleaseError} When the default branch has no such workflow; nothing is dispatched.
    */
   async function assertWorkflowOnDefaultBranch(workflow, release, retryCommand) {
-    const workflowPath = `${CI_WORKFLOW_DIRECTORY}/${workflow}`;
-    const contained = await capture("git", ["cat-file", "-e", `refs/remotes/${REMOTE_MAIN_REF}:${workflowPath}`], { cwd: repositoryRoot });
-    if (contained.status !== 0) throw new CiReleaseError(CI_FAILURE_CODE.preflight, `${REMOTE_MAIN_REF} no contiene ${workflowPath}: GitHub solo dispara workflow_dispatch para workflows que existen en la rama por defecto (${MAIN_BRANCH}), aunque ${release.tag} conserve el suyo.`, `No se envió ninguna ejecución. Restaurá ${workflowPath} con ese nombre en ${MAIN_BRANCH} y volvé a correr ${retryCommand}, o publicá ${release.tag} con --local.`);
+    const workflowPath = ciWorkflowPath(workflow);
+    if (!(await hasFileAt(`refs/remotes/${REMOTE_MAIN_REF}`, workflowPath))) throw new CiReleaseError(CI_FAILURE_CODE.preflight, `${REMOTE_MAIN_REF} no contiene ${workflowPath}: GitHub solo dispara workflow_dispatch para workflows que existen en la rama por defecto (${MAIN_BRANCH}), aunque ${release.tag} conserve el suyo.`, `No se envió ninguna ejecución. Restaurá ${workflowPath} con ese nombre en ${MAIN_BRANCH} y volvé a correr ${retryCommand}, o publicá ${release.tag} con --local.`);
   }
 
   return {

@@ -334,6 +334,33 @@ describe("release location and configuration", () => {
     expect(readFileSync(path.join(runnerHome, ".npmrc"), "utf8")).toBe("//npm.pkg.github.com/:_authToken=fixture-actions-token\n");
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
+  /** Values GitHub Actions would substitute for the expressions the authentication step may bind. */
+  const ACTIONS_EXPRESSION_FIXTURE_VALUES = new Map([["github.token", "fixture-actions-token"], ["secrets.MY_PKG_TOKEN", "fixture-package-secret"]]);
+
+  it.each([
+    { source: "GITHUB_TOKEN", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\n", secrets: [], expression: "github.token", writtenToken: "fixture-actions-token" },
+    // The project credential expands the declared secret, so ~/.npmrc must hold that same secret, not the Actions token.
+    { source: "a secret declared in ci.secrets", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${MY_PKG_TOKEN}\n", secrets: ["MY_PKG_TOKEN"], expression: "secrets.MY_PKG_TOKEN", writtenToken: "fixture-package-secret" },
+  ])("should store the token the committed .npmrc expands in the runner user config when it expands $source", async ({ npmrc, secrets, expression, writtenToken }) => {
+    // Arrange
+    const root = createTemporaryDirectory("beez-rp-ci-github-packages-token-");
+    const runnerHome = createTemporaryDirectory("beez-rp-ci-runner-home-");
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
+    writeFileSync(path.join(root, ".npmrc"), npmrc);
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", secrets } });
+    commitFixtureRepository(root);
+    // Act
+    const workflow = await renderCiReleaseWorkflow(root, config);
+    const authenticationStep = workflow.split("\n      - name: ").find((step) => step.startsWith(CI_GITHUB_PACKAGES_AUTHENTICATION_STEP)) ?? "";
+    const boundExpression = /\n {10}GITHUB_PACKAGES_TOKEN: \$\{\{ ([^}]+) \}\}/u.exec(authenticationStep)?.[1] ?? "";
+    const authenticationCommand = /\n {8}run: (.+)/u.exec(authenticationStep)?.[1] ?? "exit 1";
+    const executed = spawnSync(resolveBashExecutable(), ["-c", authenticationCommand], { encoding: "utf8", env: commandEnvironment({ HOME: runnerHome, GITHUB_PACKAGES_TOKEN: ACTIONS_EXPRESSION_FIXTURE_VALUES.get(boundExpression) ?? "" }) });
+    // Assert
+    expect(boundExpression).toBe(expression);
+    expect(executed.status).toBe(0);
+    expect(readFileSync(path.join(runnerHome, ".npmrc"), "utf8")).toBe(`//npm.pkg.github.com/:_authToken=${writtenToken}\n`);
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
   /** Hint shared by every GitHub Packages token expanding a variable that is neither `GITHUB_TOKEN` nor declared in `ci.secrets`. */
   const UNDECLARED_TOKEN_VARIABLE_HINT = /\$\{GITHUB_TOKEN\} o declará el secret en ci\.secrets/u;
 
@@ -390,6 +417,11 @@ describe("release location and configuration", () => {
     rejectedCredentialRow("a host-level GitHub Packages username", "//npm.pkg.github.com/:username=fixture-user\n", "//npm.pkg.github.com/:username"),
     // npm drops an INI `[]` array suffix from the key, so it is still the host token and must follow the accepted form.
     rejectedCredentialRow("an array-suffixed GitHub Packages host token", "//npm.pkg.github.com/:_authToken[]=bad\n", "//npm.pkg.github.com/:_authToken"),
+    // An array key bound to GitHub Packages is rejected even when a later array assignment has the accepted value.
+    rejectedCredentialRow("an array-suffixed GitHub Packages host token followed by an accepted array assignment", "//npm.pkg.github.com/:_authToken[]=bad\n//npm.pkg.github.com/:_authToken[]=${GITHUB_TOKEN}\n", "//npm.pkg.github.com/:_authToken[]"),
+    // Every other key on the GitHub Packages host can change how npm or pnpm authenticates there.
+    rejectedCredentialRow("an owner-path GitHub Packages client certificate", "//npm.pkg.github.com/fixture-owner/:certfile=fixture.pem\n", "//npm.pkg.github.com/fixture-owner/:certfile"),
+    rejectedCredentialRow("a pnpm scope-bound GitHub Packages token", "//npm.pkg.github.com/:@fixture-org:_authToken=bad\n", "//npm.pkg.github.com/:@fixture-org:_authToken"),
     // Policy B: the accepted token only expands GITHUB_TOKEN or a secret declared in ci.secrets.
     { source: "a GitHub Packages token expanding PATH", npmrc: "//npm.pkg.github.com/:_authToken=${PATH}\n", message: /\$\{PATH\}.*ci\.secrets/u, hint: UNDECLARED_TOKEN_VARIABLE_HINT },
     { source: "a GitHub Packages token expanding HOME", npmrc: "//npm.pkg.github.com/:_authToken=${HOME}\n", message: /\$\{HOME\}.*ci\.secrets/u, hint: UNDECLARED_TOKEN_VARIABLE_HINT },
@@ -423,6 +455,9 @@ describe("release location and configuration", () => {
     { source: "a declared GITHUB_TOKEN while ci.secrets moves the Bun user config through XDG_CONFIG_HOME", npmrc: "registry=https://registry.npmjs.org/\n", secrets: ["GITHUB_TOKEN", "XDG_CONFIG_HOME"], message: /XDG_CONFIG_HOME.*~\/\.npmrc/u, hint: /XDG_CONFIG_HOME/u },
     { source: "a GitHub Packages registry while ci.secrets declares HOME", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", secrets: ["HOME"], message: /HOME.*~\/\.npmrc/u, hint: /HOME/u },
     { source: "a declared GITHUB_TOKEN while ci.variables declares HOME", npmrc: "registry=https://registry.npmjs.org/\n", secrets: ["GITHUB_TOKEN"], variables: ["HOME"], message: /HOME.*~\/\.npmrc/u, hint: /HOME/u },
+    // Any package manager setting from the environment outranks the committed .npmrc, such as a global config with other credentials.
+    { source: "a GitHub Packages registry while ci.variables sets the npm global config", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", variables: ["NPM_CONFIG_GLOBALCONFIG"], message: /NPM_CONFIG_GLOBALCONFIG.*~\/\.npmrc/u, hint: /NPM_CONFIG_GLOBALCONFIG/u },
+    { source: "a declared GITHUB_TOKEN while ci.secrets sets the npm log level", npmrc: "registry=https://registry.npmjs.org/\n", secrets: ["GITHUB_TOKEN", "NPM_CONFIG_LOGLEVEL"], message: /NPM_CONFIG_LOGLEVEL.*~\/\.npmrc/u, hint: /NPM_CONFIG_LOGLEVEL/u },
   ]))("should reject the CI workflow before the bump when the committed .npmrc uses $source", async ({ npmrc, deployment = null, secrets = [], variables = [], publish = undefined, publication = undefined, message, hint }) => {
     // Arrange
     const root = createTemporaryDirectory("beez-rp-ci-github-packages-rejected-");

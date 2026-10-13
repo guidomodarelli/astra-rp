@@ -147,19 +147,19 @@ export const CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY = "//npm.pkg.github.com/:_authTok
 export const CI_RUNNER_NPM_USER_CONFIG_PATH = "$HOME/.npmrc";
 
 /**
- * Variables that locate the runner's user npm config: `HOME` (the generated step writes `$HOME/.npmrc`),
- * `NPM_CONFIG_USERCONFIG` (npm and pnpm) and `XDG_CONFIG_HOME` (Bun reads `$XDG_CONFIG_HOME/.npmrc`). A job
+ * Variables that locate the runner's user npm config outside the package managers' own settings: `HOME`
+ * (the generated step writes `$HOME/.npmrc`) and `XDG_CONFIG_HOME` (Bun reads `$XDG_CONFIG_HOME/.npmrc`). A job
  * binding of one of them would hide the token the workflow stores there from the install.
  */
-export const CI_NPM_USER_CONFIG_LOCATION_VARIABLES = Object.freeze(["HOME", "NPM_CONFIG_USERCONFIG", "XDG_CONFIG_HOME"]);
+export const CI_NPM_USER_CONFIG_LOCATION_VARIABLES = Object.freeze(["HOME", "XDG_CONFIG_HOME"]);
 
 /**
- * Job bindings that replace the committed default registry: `NPM_CONFIG_REGISTRY` for npm and pnpm
- * (`npm_config_registry` in any casing) and `BUN_CONFIG_REGISTRY` for Bun. Their value cannot be proven to use
- * `https:` before dispatch, so the generated workflow rejects them whenever it hands the package manager the
- * Actions token. Scoped registries cannot be set through a variable name.
+ * Uppercase prefixes of the variables through which npm, pnpm (`NPM_CONFIG_*`, read in any casing) and Bun
+ * (`BUN_CONFIG_*`) take any setting from the environment, outranking the committed `.npmrc`: the registry, the
+ * user or global config file, credentials and so on. None can be proven safe before dispatch, so the generated
+ * workflow rejects every job binding with one of them whenever it hands the package manager the Actions token.
  */
-export const CI_PACKAGE_REGISTRY_OVERRIDE_VARIABLES = Object.freeze(["NPM_CONFIG_REGISTRY", "BUN_CONFIG_REGISTRY"]);
+export const CI_PACKAGE_MANAGER_CONFIG_VARIABLE_PREFIXES = Object.freeze(["NPM_CONFIG_", "BUN_CONFIG_"]);
 
 /** Only URL protocol accepted for a GitHub Packages registry, so the workflow token never travels in clear text. */
 export const CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL = "https:";
@@ -171,10 +171,11 @@ export const NPM_CONFIG_JSON_QUOTE = '"';
 export const NPM_CONFIG_REGISTRY_KEY_PATTERN = /^(?:@[^\s:]+:)?registry$/u;
 
 /**
- * Project `.npmrc` key bound to GitHub Packages, on the host or an owner path; captures the config
- * field, which is a credential when it is one of `NPM_CREDENTIAL_CONFIG_FIELDS`.
+ * Start of every project `.npmrc` key bound to the GitHub Packages host, whatever its path or field
+ * (owner paths, `certfile`, pnpm's `:@scope:_authToken`, array keys...). Only `CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY`
+ * is accepted among them.
  */
-export const NPM_CONFIG_GITHUB_PACKAGES_BOUND_KEY_PATTERN = /^\/\/npm\.pkg\.github\.com(?:\/[^:]*)?:([^:]+)$/u;
+export const NPM_CONFIG_GITHUB_PACKAGES_KEY_PREFIX = "//npm.pkg.github.com";
 
 /** Value npm's INI parser gives a `.npmrc` key written without `=`. */
 export const NPM_CONFIG_VALUELESS_KEY_VALUE = true;
@@ -199,7 +200,10 @@ export const NPM_CONFIG_INLINE_COMMENT_PATTERN = /(?<!\\)[;#]/u;
  */
 export const NPM_CONFIG_SECTION_HEADER_PATTERN = /^\[[^\]]*\]\s*$/u;
 
-/** Suffix npm's INI parser removes from an array key (`key[]=value`), so the entry still configures `key`. */
+/**
+ * Suffix npm's INI parser removes from an array key (`key[]=value`), so the entry still configures `key`.
+ * Keys bound to GitHub Packages keep it, so they are always rejected instead of read as their last assignment.
+ */
 export const NPM_CONFIG_ARRAY_KEY_SUFFIX = "[]";
 
 /** Prefixes of `.npmrc` comment lines. */

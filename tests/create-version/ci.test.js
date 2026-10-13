@@ -303,11 +303,11 @@ describe("release location and configuration", () => {
     { source: "an empty GitHub Packages username and password", npmrc: "//npm.pkg.github.com/:username=\n//npm.pkg.github.com/:_password=\n", secrets: [], authenticates: true, tokenBindings: [] },
     // npm nests keys under an INI [section], so they never configure the top-level registry or its credentials.
     { source: "GitHub Packages settings only inside an INI section", npmrc: "[fixture-section]\n@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=\n", secrets: [], authenticates: false, tokenBindings: [] },
-    // A registry read from the environment is accepted once another signal already enables the GitHub Packages step.
-    { source: "a registry from the environment next to a literal GitHub Packages registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n@private:registry=${PRIVATE_REGISTRY_URL}\n", secrets: [], authenticates: true, tokenBindings: [] },
-    { source: "a registry from the environment with a declared GITHUB_TOKEN secret", npmrc: "@private:registry=${PRIVATE_REGISTRY_URL}\n", secrets: ["GITHUB_TOKEN"], authenticates: true, tokenBindings: ["GITHUB_TOKEN"] },
     // A basic credential reading a declared secret gets that secret, not the Actions token.
     { source: "a GitHub Packages basic credential expanding a declared secret", npmrc: "//npm.pkg.github.com/:_auth=${GITHUB_PACKAGES_BASIC_AUTH}\n", secrets: ["GITHUB_PACKAGES_BASIC_AUTH"], authenticates: true, tokenBindings: [] },
+    // npm prefers the host token the worker writes over host-level basic credentials, so an undeclared reference there is harmless.
+    { source: "a host-level GitHub Packages basic credential expanding an undeclared variable", npmrc: "//npm.pkg.github.com/:_auth=${GITHUB_PACKAGES_BASIC_AUTH}\n", secrets: [], authenticates: true, tokenBindings: [] },
+    { source: "a host-level GitHub Packages password expanding an undeclared variable", npmrc: "//npm.pkg.github.com/:username=fixture-user\n//npm.pkg.github.com/:_password=${GITHUB_PACKAGES_PASSWORD}\n", secrets: [], authenticates: true, tokenBindings: [] },
   ])("should authenticate dependency installs against GitHub Packages when the project uses $source: $authenticates", async ({ npmrc, committed = true, secrets, authenticates, tokenBindings }) => {
     // Arrange
     const root = createTemporaryDirectory("beez-rp-ci-github-packages-");
@@ -373,9 +373,22 @@ describe("release location and configuration", () => {
     // Without another GitHub Packages signal, a registry read from the environment could need the token step that is never added.
     { source: "a scoped registry read from an environment variable", npmrc: "@private:registry=${PRIVATE_REGISTRY_URL}\n", message: /@private:registry.*PRIVATE_REGISTRY_URL/u, hint: /GITHUB_TOKEN.*ci\.secrets/u },
     // An undeclared reference stays literal in npm, takes precedence over the generated token and fails with 401.
-    { source: "a GitHub Packages basic credential expanding an undeclared variable", npmrc: "//npm.pkg.github.com/:_auth=${GITHUB_PACKAGES_BASIC_AUTH}\n", message: /_auth.*GITHUB_PACKAGES_BASIC_AUTH/u, hint: /ci\.secrets/u },
+    // An owner-path credential is more specific than the host token the worker writes, so npm would send it unresolved.
+    { source: "an owner-path GitHub Packages basic credential expanding an undeclared variable", npmrc: "//npm.pkg.github.com/fixture-owner/:_auth=${GITHUB_PACKAGES_BASIC_AUTH}\n", message: /_auth.*GITHUB_PACKAGES_BASIC_AUTH/u, hint: /ci\.secrets/u },
     { source: "an owner-path GitHub Packages username expanding an undeclared variable", npmrc: "//npm.pkg.github.com/fixture-owner/:username=${GITHUB_PACKAGES_USER}\n", message: /username.*GITHUB_PACKAGES_USER/u, hint: /ci\.secrets/u },
-    { source: "a GitHub Packages password expanding an undeclared variable", npmrc: "//npm.pkg.github.com/:_password=${GITHUB_PACKAGES_PASSWORD}\n", message: /_password.*GITHUB_PACKAGES_PASSWORD/u, hint: /ci\.secrets/u },
+    { source: "an owner-path GitHub Packages password expanding an undeclared variable", npmrc: "//npm.pkg.github.com/fixture-owner/:_password=${GITHUB_PACKAGES_PASSWORD}\n", message: /_password.*GITHUB_PACKAGES_PASSWORD/u, hint: /ci\.secrets/u },
+    // npm reads a key without `=` as `true`, which would replace the generated token with that literal.
+    { source: "a GitHub Packages host token without a value", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*sin valor/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "an owner-path GitHub Packages basic credential without a value", npmrc: "//npm.pkg.github.com/fixture-owner/:_auth\n", message: /fixture-owner\/:_auth.*sin valor/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    // A registry read from the environment cannot be proven https: once the workflow hands npm the Actions token.
+    { source: "a registry from the environment next to a literal GitHub Packages registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n@private:registry=${PRIVATE_REGISTRY_URL}\n", message: /@private:registry.*PRIVATE_REGISTRY_URL.*https:/u, hint: /URL literal https:\/\//u },
+    { source: "a registry from the environment with a declared GITHUB_TOKEN secret", npmrc: "@private:registry=${PRIVATE_REGISTRY_URL}\n", secrets: ["GITHUB_TOKEN"], message: /@private:registry.*PRIVATE_REGISTRY_URL.*https:/u, hint: /URL literal https:\/\//u },
+    // HOME locates the runner's ~/.npmrc too, so redeclaring it would hide the token the workflow stores there.
+    { source: "a GitHub Packages registry while ci.secrets declares HOME", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", secrets: ["HOME"], message: /HOME.*~\/\.npmrc/u, hint: /HOME/u },
+    { source: "a declared GITHUB_TOKEN while ci.variables declares HOME", npmrc: "registry=https://registry.npmjs.org/\n", secrets: ["GITHUB_TOKEN"], variables: ["HOME"], message: /HOME.*~\/\.npmrc/u, hint: /HOME/u },
+    // npm also expands references inside keys, so a credential key whose host comes from the environment may target GitHub Packages.
+    { source: "a credential key whose host is read from the environment", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//${GH_HOST}/:_authToken=${GITHUB_TOKEN}\n", message: /\/\/\$\{GH_HOST\}\/:_authToken/u, hint: /host literal/u },
+    { source: "a basic credential key read from the environment with a declared GITHUB_TOKEN secret", npmrc: "//${GH_HOST}/fixture-owner/:_auth=${GITHUB_PACKAGES_BASIC_AUTH}\n", secrets: ["GITHUB_TOKEN", "GITHUB_PACKAGES_BASIC_AUTH"], message: /\$\{GH_HOST\}\/fixture-owner\/:_auth/u, hint: /host literal/u },
   ])("should reject the CI workflow before the bump when the committed .npmrc uses $source", async ({ npmrc, deployment = null, secrets = [], variables = [], publish = undefined, publication = undefined, message, hint }) => {
     // Arrange
     const root = createTemporaryDirectory("beez-rp-ci-github-packages-rejected-");
@@ -950,6 +963,25 @@ describe("local CI preparation with real Git", () => {
     const status = await runCreateVersion({ repositoryRoot: root, argv: ["--ci", "--bump", "patch"] });
     // Assert
     expect(await isCommittedCiWorkflowGenerated(root, await loadCreateVersionConfig(root))).toBe(false);
+    expect(status).toBe(0);
+    expect(runGit(["rev-parse", "v1.2.4^{commit}"], remote)).toBe(runGit(["rev-parse", "HEAD"], root));
+    expect(github.dispatch).toHaveBeenCalledOnce();
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
+  it("should keep an ordinary CI release with a customized workflow when the committed .npmrc is outside what setup generates", async () => {
+    // Arrange
+    const { root, remote } = createCiProject();
+    // The customized workflow authenticates on its own; the generated one cannot bind this reserved token variable.
+    writeFileSync(path.join(root, ".npmrc"), "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${HUSKY}\n");
+    runGit(["add", ".npmrc"], root);
+    runGit(["commit", "--quiet", "-m", "chore: authenticate GitHub Packages"], root);
+    runGit(["push", "--quiet", "origin", "main"], root);
+    const github = isolateGithub();
+    // Act
+    const generated = isCommittedCiWorkflowGenerated(root, await loadCreateVersionConfig(root));
+    const status = await runCreateVersion({ repositoryRoot: root, argv: ["--ci", "--bump", "patch"] });
+    // Assert
+    await expect(generated).resolves.toBe(false);
     expect(status).toBe(0);
     expect(runGit(["rev-parse", "v1.2.4^{commit}"], remote)).toBe(runGit(["rev-parse", "HEAD"], root));
     expect(github.dispatch).toHaveBeenCalledOnce();

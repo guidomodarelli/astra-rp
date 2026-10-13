@@ -179,6 +179,18 @@ export const NPM_CONFIG_GITHUB_PACKAGES_TOKEN_KEY_PATTERN = /^\/\/npm\.pkg\.gith
  */
 export const NPM_CONFIG_GITHUB_PACKAGES_BOUND_KEY_PATTERN = /^\/\/npm\.pkg\.github\.com(?:\/[^:]*)?:([^:]+)$/u;
 
+/**
+ * Project `.npmrc` GitHub Packages key bound to an owner path (`//npm.pkg.github.com/OWNER/:field`), which
+ * npm prefers over the host-level token the generated workflow writes.
+ */
+export const NPM_CONFIG_GITHUB_PACKAGES_OWNER_PATH_KEY_PATTERN = /^\/\/npm\.pkg\.github\.com\/[^:]+:[^:]+$/u;
+
+/** Config field of any `.npmrc` key (`_auth`, `//host/:_authToken`, `@scope:registry`); captures the text after the last `:`. */
+export const NPM_CONFIG_KEY_FIELD_PATTERN = /(?:^|:)([^:]*)$/u;
+
+/** Value npm's INI parser gives a `.npmrc` key written without `=`. */
+export const NPM_CONFIG_VALUELESS_KEY_VALUE = true;
+
 /** `.npmrc` value that is exactly one `${NAME}` environment reference; captures the variable name. */
 export const NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/u;
 

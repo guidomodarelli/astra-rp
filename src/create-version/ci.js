@@ -17,7 +17,7 @@ import { RELEASE_TAG_PREFIX } from "../constants/versions.js";
 import { compareReleaseVersions, findHighestStableVersion, isStableReleaseVersion, parseReleaseVersion, toReleaseTag } from "../versions.js";
 import { print, select } from "../terminal-ui.js";
 import { ReleaseStepError } from "./errors.js";
-import { assertSafeCiPath, describeCiNodeVersion, extractPinnedPackageManagerVersion, readRunningNodeMajor, renderCiReleaseWorkflow } from "./ci-setup.js";
+import { assertCiGithubPackagesSetupSupported, assertSafeCiPath, describeCiNodeVersion, extractPinnedPackageManagerVersion, readRunningNodeMajor, renderCiReleaseWorkflow } from "./ci-setup.js";
 import { listCommittedTreeEntries, readCommittedRegularFile } from "./committed-tree.js";
 import { runCaptured } from "./process.js";
 import { readReleaseExecutionTrailer } from "./release-execution.js";
@@ -376,16 +376,23 @@ function haveSameWorkflowLines(committedContent, renderedContent) {
  * Tells whether the configured workflow committed at HEAD is exactly the one setup renders for the
  * current configuration, so an ordinary CI release knows it installs dependencies with a frozen
  * lockfile and follows the committed `.nvmrc` like `--setup-ci` does. A missing, non-regular or
- * customized workflow is not the generated one; its own checks stay with the release flow.
+ * customized workflow is not the generated one; its own checks stay with the release flow. The
+ * comparison renders without the generated workflow's GitHub Packages validations, so a customized
+ * workflow that authenticates on its own is never blocked by them; they run only once the committed
+ * workflow is known to be the generated one.
  * @param {string} repositoryRoot - Project root.
  * @param {import("./config.js").ResolvedCreateVersionConfig} config - Project configuration.
  * @returns {Promise<boolean>} True when HEAD commits the generated workflow unchanged.
- * @throws {ReleaseStepError} When Git cannot list or read HEAD.
+ * @throws {ReleaseStepError} When Git cannot list or read HEAD, or HEAD commits the generated workflow
+ *   with a GitHub Packages setup it cannot authenticate.
  */
 export async function isCommittedCiWorkflowGenerated(repositoryRoot, config) {
   if (!config.ci) return false;
   const committedWorkflow = await readCommittedRegularFile(repositoryRoot, `${CI_WORKFLOW_DIRECTORY}/${config.ci.workflow}`);
-  return committedWorkflow !== null && haveSameWorkflowLines(committedWorkflow, await renderCiReleaseWorkflow(repositoryRoot, config));
+  if (committedWorkflow === null) return false;
+  if (!haveSameWorkflowLines(committedWorkflow, await renderCiReleaseWorkflow(repositoryRoot, config, { validateGithubPackages: false }))) return false;
+  await assertCiGithubPackagesSetupSupported(repositoryRoot, config);
+  return true;
 }
 
 /**

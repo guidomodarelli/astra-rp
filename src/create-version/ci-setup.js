@@ -14,9 +14,10 @@ import {
   CI_DENO_JSR_CLIENT, CI_DENO_VERSION,
   CI_GITHUB_PACKAGES_AUTHENTICATION_STEP, CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY, CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL, CI_GITHUB_PACKAGES_TOKEN_VARIABLE, CI_NPM_USER_CONFIG_LOCATION_VARIABLES, CI_PACKAGE_MANAGER_CONFIG_VARIABLE_PREFIXES, CI_RUNNER_NPM_USER_CONFIG_PATH,
   NPM_CONFIG_ARRAY_KEY_SUFFIX, NPM_CONFIG_COMMENT_PREFIXES, NPM_CONFIG_JSON_QUOTE, NPM_CONFIG_LINE_BREAK_PATTERN, NPM_CONFIG_ENVIRONMENT_REFERENCE_PATTERN, NPM_CONFIG_ENVIRONMENT_REFERENCES_PATTERN, NPM_CONFIG_GITHUB_PACKAGES_KEY_PATTERN, NPM_CONFIG_INLINE_COMMENT_PATTERN, NPM_CONFIG_QUOTES, NPM_CONFIG_REGISTRY_KEY_PATTERN, NPM_CONFIG_SECTION_HEADER_PATTERN, NPM_CONFIG_VALUELESS_KEY_VALUE,
-  CI_GITHUB_TOKEN_JOB_BINDING, YARN_CLASSIC_CONFIG_FILE, YARN_CLASSIC_CONFIG_REGISTRY_LINE_PATTERN,
-  BUN_CONFIG_FILE, BUN_CONFIG_REGISTRY_LINE_PATTERN, CI_TLS_VERIFICATION_DISABLING_VARIABLES, LOCKFILE_GITHUB_PACKAGES_HTTP_URL, LOCKFILE_GITHUB_PACKAGES_HTTP_URL_PATTERN,
-  NPM_CONFIG_DISABLED_VALUE, NPM_CONFIG_STRICT_SSL_KEY, YARN_BERRY_CONFIG_FILE, YARN_BERRY_CONFIG_GITHUB_PACKAGES_PATTERN,
+  CI_GITHUB_TOKEN_JOB_BINDING, CI_GITHUB_PACKAGES_AUTHENTICATED_PACKAGE_MANAGERS, CI_UNAUTHENTICATED_PACKAGE_MANAGER_CONFIG_FILES,
+  GITHUB_PACKAGES_HOST_MENTION_PATTERN, PACKAGE_MANAGER_CONFIG_COMMENT_PREFIX, PNPM_WORKSPACE_CONFIG_FILE, PNPM_WORKSPACE_NETWORK_SETTING_LINE_PATTERN,
+  CI_TLS_VERIFICATION_DISABLING_VARIABLES, LOCKFILE_GITHUB_PACKAGES_HTTP_URL, LOCKFILE_GITHUB_PACKAGES_HTTP_URL_PATTERN,
+  NPM_CONFIG_DISABLED_VALUE, NPM_CONFIG_STRICT_SSL_KEY,
 } from "../constants/ci-release.js";
 import { CREATE_VERSION_CONFIG_FILES, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
 import { LOCKFILE_NAMES, PACKAGE_MANAGER } from "../constants/package-manager.js";
@@ -276,39 +277,46 @@ function assertCommittedPackageManagerFileRegular(file) {
 }
 
 /**
- * Throws a {@link ReleaseStepError} for a committed package manager config whose registries the generated workflow
- * cannot check, asking to move them to the committed `.npmrc`.
- * @param {string} fileName - Committed config file that selects registries.
- * @param {string} problem - Spanish description following "El <file> commiteado ".
- * @returns {never}
- * @throws {ReleaseStepError} Always.
+ * Reads the uncommented lines of a committed package manager config: a line whose trimmed text starts with
+ * {@link PACKAGE_MANAGER_CONFIG_COMMENT_PREFIX} is a comment and configures nothing.
+ * @param {CommittedPackageManagerFile} file - Committed file description.
+ * @returns {string[]} Uncommented lines, or none when the entry is not a regular file.
  */
-function throwUncheckedRegistryConfigError(fileName, problem) {
-  throw new ReleaseStepError(
-    `El ${fileName} commiteado ${problem}; el package manager lo usaría en el worker de CI con el token de GitHub Packages y el workflow generado solo valida los registries del ${PROJECT_NPM_CONFIG_FILE}.`,
-    `Mové los registries al ${PROJECT_NPM_CONFIG_FILE} commiteado con URLs literales ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}// y quitalos del ${fileName}, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
-  );
+function readUncommentedConfigLines(file) {
+  return (file.text?.split(NPM_CONFIG_LINE_BREAK_PATTERN) ?? []).filter((line) => !line.trim().startsWith(PACKAGE_MANAGER_CONFIG_COMMENT_PREFIX));
 }
 
 /**
- * Rejects a committed `.yarnrc.yml` that configures GitHub Packages or an npm credential, whatever else the project
- * declares: Yarn 2+ does not read `~/.npmrc`, so the generated workflow cannot authenticate that install.
- * @param {CommittedPackageManagerFile | undefined} yarnBerryConfig - Committed `.yarnrc.yml`, if any.
- * @returns {void}
- * @throws {ReleaseStepError} When its text matches {@link YARN_BERRY_CONFIG_GITHUB_PACKAGES_PATTERN}.
+ * Rejects a GitHub Packages setup for a package manager the generated workflow does not authenticate (Yarn of any
+ * version or Bun): each reads registries and credentials from its own config files and environment variables, which
+ * the workflow cannot validate before handing it the Actions token. Besides the shared signals (see
+ * {@link readsGithubPackages}), an uncommented mention of the GitHub Packages host in the package manager's own
+ * committed config (see {@link CI_UNAUTHENTICATED_PACKAGE_MANAGER_CONFIG_FILES}) counts as a signal. npm and pnpm
+ * never read the config files of other package managers, so those files are not inspected for them.
+ * @param {string} repositoryRoot - Project checkout.
+ * @param {ResolvedCreateVersionConfig} config - Project configuration.
+ * @param {boolean} sharedSignal - Whether a declared `GITHUB_TOKEN` or the committed `.npmrc` selects GitHub Packages.
+ * @returns {Promise<void>}
+ * @throws {ReleaseStepError} When Git cannot list or read HEAD or such a project uses GitHub Packages.
  */
-function assertYarnBerryConfigWithoutGithubPackages(yarnBerryConfig) {
-  if (!yarnBerryConfig?.text || !YARN_BERRY_CONFIG_GITHUB_PACKAGES_PATTERN.test(yarnBerryConfig.text)) return;
+async function assertPackageManagerAuthenticatesGithubPackages(repositoryRoot, config, sharedSignal) {
+  const manager = config.commands.packageManager;
+  if (CI_GITHUB_PACKAGES_AUTHENTICATED_PACKAGE_MANAGERS.includes(manager)) return;
+  const ownConfigFiles = await readCommittedPackageManagerFiles(repositoryRoot, [...(CI_UNAUTHENTICATED_PACKAGE_MANAGER_CONFIG_FILES[manager] ?? [])]);
+  const configuredFile = ownConfigFiles.find((file) => readUncommentedConfigLines(file).some((line) => GITHUB_PACKAGES_HOST_MENTION_PATTERN.test(line)));
+  if (!sharedSignal && configuredFile === undefined) return;
+  const signal = configuredFile === undefined ? `ci.secrets declara ${GITHUB_REGISTRY_TOKEN_VARIABLE} o el ${PROJECT_NPM_CONFIG_FILE} commiteado usa GitHub Packages` : `el ${configuredFile.filePath} commiteado usa GitHub Packages`;
   throw new ReleaseStepError(
-    `El ${YARN_BERRY_CONFIG_FILE} commiteado configura GitHub Packages o una credencial de npm (npmAuthToken o npmAuthIdent); Yarn 2+ no lee ~/.npmrc y el workflow generado no autentica esa configuración, así que la instalación fallaría en CI.`,
-    `Usá un workflow propio en ci.workflow que autentique Yarn 2+, o mové el registry y la credencial al ${PROJECT_NPM_CONFIG_FILE} commiteado si tu package manager lo lee; commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
+    `El workflow generado solo autentica GitHub Packages con npm o pnpm y el proyecto usa ${manager}, pero ${signal}; ${manager} lee registries y credenciales de su propia configuración y el workflow no puede comprobarlos antes de darle el token de Actions.`,
+    `Usá un workflow propio en ci.workflow que autentique ${manager} con GitHub Packages, o quitá la configuración de GitHub Packages; no se cambió ningún archivo.`,
   );
 }
 
 /**
  * Rejects the package manager files that could send the GitHub Packages token somewhere unchecked once the workflow
- * hands it to the install: any of them that is not a regular file, a `.yarnrc` or `bunfig.toml` that selects
- * registries, and a lockfile that resolves GitHub Packages over plain HTTP.
+ * hands it to the install: any of them that is not a regular file, a `pnpm-workspace.yaml` that defines registries
+ * or network settings (see {@link PNPM_WORKSPACE_NETWORK_SETTING_LINE_PATTERN}), and a lockfile that resolves GitHub
+ * Packages over plain HTTP.
  * @param {CommittedPackageManagerFile[]} files - Committed package manager files.
  * @returns {void}
  * @throws {ReleaseStepError} When one of those files is found.
@@ -316,9 +324,12 @@ function assertYarnBerryConfigWithoutGithubPackages(yarnBerryConfig) {
 function assertCommittedPackageManagerFilesSupported(files) {
   for (const file of files) {
     assertCommittedPackageManagerFileRegular(file);
-    const lines = file.text?.split(NPM_CONFIG_LINE_BREAK_PATTERN) ?? [];
-    if (file.filePath === YARN_CLASSIC_CONFIG_FILE && lines.some((line) => YARN_CLASSIC_CONFIG_REGISTRY_LINE_PATTERN.test(line))) throwUncheckedRegistryConfigError(file.filePath, "define un registry");
-    if (file.filePath === BUN_CONFIG_FILE && lines.some((line) => BUN_CONFIG_REGISTRY_LINE_PATTERN.test(line))) throwUncheckedRegistryConfigError(file.filePath, "configura registries (registry o [install.scopes])");
+    if (file.filePath === PNPM_WORKSPACE_CONFIG_FILE && readUncommentedConfigLines(file).some((line) => PNPM_WORKSPACE_NETWORK_SETTING_LINE_PATTERN.test(line))) {
+      throw new ReleaseStepError(
+        `El ${PNPM_WORKSPACE_CONFIG_FILE} commiteado define registries o ajustes de red (registry, registries, strictSsl, ca, cert, key o proxies); pnpm los usaría en el worker de CI con el token de GitHub Packages y el workflow generado solo valida los registries del ${PROJECT_NPM_CONFIG_FILE}.`,
+        `Mové el registry al ${PROJECT_NPM_CONFIG_FILE} commiteado con una URL literal ${CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL}//, quitá esos ajustes del ${PNPM_WORKSPACE_CONFIG_FILE} sin desactivar la verificación TLS, commiteá el cambio y volvé a correr el comando; no se cambió ningún archivo.`,
+      );
+    }
     if (LOCKFILE_NAMES.includes(file.filePath) && LOCKFILE_GITHUB_PACKAGES_HTTP_URL_PATTERN.test(file.text ?? "")) {
       throw new ReleaseStepError(
         `El ${file.filePath} commiteado resuelve paquetes desde ${LOCKFILE_GITHUB_PACKAGES_HTTP_URL}; la instalación le enviaría el token de GitHub Packages sin cifrar.`,
@@ -514,9 +525,9 @@ function renderGithubPackagesAuthenticationStep(config, tokenVariable) {
  * Rejects a GitHub Packages setup the generated workflow cannot authenticate: unsupported committed
  * `.npmrc` entries (see {@link assertProjectNpmConfigEntriesSupported}) and bindings or references
  * it cannot resolve (see {@link assertGithubPackagesSetupSupported}). It applies only to the generated
- * workflow; a customized workflow authenticates on its own. A `.yarnrc.yml` bound to GitHub Packages is
- * rejected even without another signal (see {@link assertYarnBerryConfigWithoutGithubPackages}); with the
- * authentication step, the other committed package manager files and TLS settings are checked too.
+ * workflow; a customized workflow authenticates on its own. Only npm and pnpm are authenticated: Yarn and
+ * Bun with any GitHub Packages signal are rejected (see {@link assertPackageManagerAuthenticatesGithubPackages}).
+ * With the authentication step, TLS settings, lockfiles and, for pnpm, `pnpm-workspace.yaml` are checked too.
  * @param {string} repositoryRoot - Project checkout.
  * @param {ResolvedCreateVersionConfig} config - Project configuration.
  * @param {ReturnType<typeof describeCiEnvironment>} environment - Worker bindings.
@@ -526,15 +537,13 @@ function renderGithubPackagesAuthenticationStep(config, tokenVariable) {
  */
 async function assertGeneratedGithubPackagesSetupSupported(repositoryRoot, config, environment, projectGithubPackages) {
   assertProjectNpmConfigEntriesSupported(projectGithubPackages);
-  const [yarnBerryConfig] = await readCommittedPackageManagerFiles(repositoryRoot, [YARN_BERRY_CONFIG_FILE]);
-  assertYarnBerryConfigWithoutGithubPackages(yarnBerryConfig);
+  const authenticatesGithubPackages = readsGithubPackages(environment, projectGithubPackages);
+  await assertPackageManagerAuthenticatesGithubPackages(repositoryRoot, config, authenticatesGithubPackages);
   assertGithubPackagesSetupSupported(config, environment, projectGithubPackages);
-  if (!readsGithubPackages(environment, projectGithubPackages)) return;
+  if (!authenticatesGithubPackages) return;
   assertProjectNpmConfigVerifiesTls(projectGithubPackages);
-  assertCommittedPackageManagerFilesSupported([
-    ...(yarnBerryConfig === undefined ? [] : [yarnBerryConfig]),
-    ...await readCommittedPackageManagerFiles(repositoryRoot, [YARN_CLASSIC_CONFIG_FILE, BUN_CONFIG_FILE, ...LOCKFILE_NAMES]),
-  ]);
+  const workspaceConfigFiles = config.commands.packageManager === PACKAGE_MANAGER.pnpm ? [PNPM_WORKSPACE_CONFIG_FILE] : [];
+  assertCommittedPackageManagerFilesSupported(await readCommittedPackageManagerFiles(repositoryRoot, [...workspaceConfigFiles, ...LOCKFILE_NAMES]));
 }
 
 /**

@@ -4,7 +4,7 @@
  */
 
 import { CREATE_VERSION_CONFIG_FILES, PACKAGE_MANIFEST_FILE, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE } from "./create-version.js";
-import { LOCKFILE_NAMES } from "./package-manager.js";
+import { LOCKFILE_NAMES, PACKAGE_MANAGER } from "./package-manager.js";
 
 /** Release execution locations offered by the CLI. */
 export const RELEASE_EXECUTION = Object.freeze({ local: "local", ci: "ci" });
@@ -138,8 +138,8 @@ export const CI_GITHUB_PACKAGES_AUTHENTICATION_STEP = "Autenticar GitHub Package
 export const CI_GITHUB_PACKAGES_TOKEN_VARIABLE = "GITHUB_PACKAGES_TOKEN";
 
 /**
- * User npm config key bound to GitHub Packages. The user config (`~/.npmrc`) is read by npm, pnpm
- * (which ignores credentials in the repository `.npmrc`), Yarn 1 and Bun alike.
+ * User npm config key bound to GitHub Packages. The user config (`~/.npmrc`) is read by npm and pnpm (which
+ * ignores credentials in the repository `.npmrc`), the only package managers the generated workflow authenticates.
  */
 export const CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY = "//npm.pkg.github.com/:_authToken";
 
@@ -147,19 +147,19 @@ export const CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY = "//npm.pkg.github.com/:_authTok
 export const CI_RUNNER_NPM_USER_CONFIG_PATH = "$HOME/.npmrc";
 
 /**
- * Variables that locate the runner's user npm config outside the package managers' own settings: `HOME`
- * (the generated step writes `$HOME/.npmrc`) and `XDG_CONFIG_HOME` (Bun reads `$XDG_CONFIG_HOME/.npmrc`). A job
+ * Variables that locate the runner's user config outside the package managers' own settings: `HOME` (the
+ * generated step writes `$HOME/.npmrc`) and `XDG_CONFIG_HOME` (pnpm reads its global config under it). A job
  * binding of one of them would hide the token the workflow stores there from the install.
  */
 export const CI_NPM_USER_CONFIG_LOCATION_VARIABLES = Object.freeze(["HOME", "XDG_CONFIG_HOME"]);
 
 /**
- * Uppercase prefixes of the variables through which npm, pnpm (`NPM_CONFIG_*`, read in any casing) and Bun
- * (`BUN_CONFIG_*`) take any setting from the environment, outranking the committed `.npmrc`: the registry, the
- * user or global config file, credentials and so on. None can be proven safe before dispatch, so the generated
+ * Uppercase prefixes of the variables through which npm and pnpm (`NPM_CONFIG_*`, `PNPM_CONFIG_*`, read in any
+ * casing) take any setting from the environment, outranking the committed `.npmrc`: the registry, the user or
+ * global config file, credentials, TLS and so on. None can be proven safe before dispatch, so the generated
  * workflow rejects every job binding with one of them whenever it hands the package manager the Actions token.
  */
-export const CI_PACKAGE_MANAGER_CONFIG_VARIABLE_PREFIXES = Object.freeze(["NPM_CONFIG_", "BUN_CONFIG_"]);
+export const CI_PACKAGE_MANAGER_CONFIG_VARIABLE_PREFIXES = Object.freeze(["NPM_CONFIG_", "PNPM_CONFIG_"]);
 
 /** Only URL protocol accepted for a GitHub Packages registry, so the workflow token never travels in clear text. */
 export const CI_GITHUB_PACKAGES_REGISTRY_PROTOCOL = "https:";
@@ -178,35 +178,48 @@ export const NPM_CONFIG_REGISTRY_KEY_PATTERN = /^(?:@[^\s:]+:)?registry$/u;
  */
 export const NPM_CONFIG_GITHUB_PACKAGES_KEY_PATTERN = /^\/\/npm\.pkg\.github\.com(?:[/:]|$)/u;
 
-/** Yarn Classic project config, which can select registries that the generated workflow cannot check. */
-export const YARN_CLASSIC_CONFIG_FILE = ".yarnrc";
+/**
+ * Package managers whose GitHub Packages install the generated workflow authenticates through the runner's `~/.npmrc`.
+ * @type {readonly import("../package-manager.js").PackageManagerName[]}
+ */
+export const CI_GITHUB_PACKAGES_AUTHENTICATED_PACKAGE_MANAGERS = Object.freeze([PACKAGE_MANAGER.npm, PACKAGE_MANAGER.pnpm]);
 
 /**
- * `.yarnrc` line selecting a registry, default (`registry`) or scoped (`@scope:registry`), with or without
- * quotes or the `--` CLI form, separated from its value by whitespace or `:`.
+ * Committed configuration files of the package managers the generated workflow does not authenticate, whose
+ * uncommented mention of the GitHub Packages host is a GitHub Packages signal: Yarn reads `.yarnrc` (Yarn 1) and
+ * `.yarnrc.yml` (Yarn 2+), Bun reads `bunfig.toml`. Other package managers never read them, so they are not inspected.
+ * @type {Readonly<Partial<Record<import("../package-manager.js").PackageManagerName, readonly string[]>>>}
  */
-export const YARN_CLASSIC_CONFIG_REGISTRY_LINE_PATTERN = /^\s*(["']?)(?:--)?(?:@[^\s:"']+:)?registry\1(?=[\s:]|$)/u;
+export const CI_UNAUTHENTICATED_PACKAGE_MANAGER_CONFIG_FILES = Object.freeze({
+  [PACKAGE_MANAGER.yarn]: Object.freeze([".yarnrc", ".yarnrc.yml"]),
+  [PACKAGE_MANAGER.bun]: Object.freeze(["bunfig.toml"]),
+});
 
-/** Yarn 2+ (Berry) project config, which ignores the runner's `~/.npmrc` where the generated step stores the token. */
-export const YARN_BERRY_CONFIG_FILE = ".yarnrc.yml";
+/** Prefix of a comment line (after trimming) in `.yarnrc`, `.yarnrc.yml`, `bunfig.toml` and `pnpm-workspace.yaml`. */
+export const PACKAGE_MANAGER_CONFIG_COMMENT_PREFIX = "#";
+
+/** Mention of the GitHub Packages host in a package manager config line, in any casing. */
+export const GITHUB_PACKAGES_HOST_MENTION_PATTERN = /npm\.pkg\.github\.com/iu;
+
+/** pnpm workspace config, from which pnpm 11+ reads registries and network settings besides the `.npmrc`. */
+export const PNPM_WORKSPACE_CONFIG_FILE = "pnpm-workspace.yaml";
 
 /**
- * `.yarnrc.yml` text configuring GitHub Packages or an npm credential (`npmAuthToken`, `npmAuthIdent`), which the
- * generated workflow cannot authenticate because Yarn 2+ does not read `~/.npmrc`.
+ * `pnpm-workspace.yaml` line defining a registry or network setting (`registry`, `registries`, TLS, certificates or
+ * proxies) as a key at the start of the line, with or without indentation or quotes, followed by `:`. The generated
+ * workflow only validates registries in the `.npmrc`, so any of them could send the token somewhere unchecked.
  */
-export const YARN_BERRY_CONFIG_GITHUB_PACKAGES_PATTERN = /npm\.pkg\.github\.com|npmAuthToken|npmAuthIdent/iu;
-
-/** Bun project config, whose registries Bun reads besides the `.npmrc` checked by the generated workflow. */
-export const BUN_CONFIG_FILE = "bunfig.toml";
-
-/** Uncommented `bunfig.toml` line that mentions a registry or opens the `[install.scopes]` section. */
-export const BUN_CONFIG_REGISTRY_LINE_PATTERN = /^(?!\s*#)(?:.*registry|\s*\[\s*install\.scopes\s*\])/u;
+export const PNPM_WORKSPACE_NETWORK_SETTING_LINE_PATTERN = /^\s*(["']?)(?:registry|registries|strictSsl|strict-ssl|ca|cafile|cert|key|proxy|httpsProxy|https-proxy|noProxy)\1\s*:/u;
 
 /** GitHub Packages origin over plain HTTP, named in the error about a lockfile that resolves packages from it. */
 export const LOCKFILE_GITHUB_PACKAGES_HTTP_URL = "http://npm.pkg.github.com";
 
-/** {@link LOCKFILE_GITHUB_PACKAGES_HTTP_URL} inside a lockfile, matched as text in any casing. */
-export const LOCKFILE_GITHUB_PACKAGES_HTTP_URL_PATTERN = /http:\/\/npm\.pkg\.github\.com/iu;
+/**
+ * {@link LOCKFILE_GITHUB_PACKAGES_HTTP_URL} inside a lockfile, matched as text in any casing. The host must end right
+ * there (followed by `/`, `:`, a quote, whitespace or the end of the text), so another host that only starts with the
+ * same name, such as `http://npm.pkg.github.com.corp.example/`, never receives the generated credential and is not matched.
+ */
+export const LOCKFILE_GITHUB_PACKAGES_HTTP_URL_PATTERN = /http:\/\/npm\.pkg\.github\.com(?=[/:"'\s]|$)/iu;
 
 /** `.npmrc` key that turns TLS certificate verification on or off. */
 export const NPM_CONFIG_STRICT_SSL_KEY = "strict-ssl";

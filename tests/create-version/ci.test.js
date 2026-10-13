@@ -22,6 +22,7 @@ import { GIT_FIXTURE_TEST_TIMEOUT_MS, cleanupTemporaryDirectories, commandEnviro
 import { FIXTURE_GITHUB_REPOSITORY, FIXTURE_GITHUB_TOKEN, startFixtureGithubActionsApi } from "./support/fixture-github-actions-api.js";
 import { startFixtureNpmRegistry } from "./support/fixture-npm-registry.js";
 import { CI_GITHUB_PACKAGES_AUTHENTICATION_STEP } from "../../src/constants/ci-release.js";
+import { describeProjectCommands } from "../../src/package-manager.js";
 
 /** Project configuration whose custom publisher (logged like `prepare`) is followed by a Vercel deployment. */
 /**
@@ -451,8 +452,8 @@ describe("release location and configuration", () => {
     // Policy D: an environment registry override outranks the committed .npmrc and cannot be proven to use https:.
     { source: "a GitHub Packages registry while ci.variables overrides the npm registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", variables: ["NPM_CONFIG_REGISTRY"], message: /NPM_CONFIG_REGISTRY.*registry/u, hint: /NPM_CONFIG_REGISTRY/u },
     { source: "a declared GITHUB_TOKEN while ci.secrets overrides the npm registry", npmrc: "registry=https://registry.npmjs.org/\n", secrets: ["GITHUB_TOKEN", "NPM_CONFIG_REGISTRY"], message: /NPM_CONFIG_REGISTRY.*registry/u, hint: /NPM_CONFIG_REGISTRY/u },
-    { source: "a GitHub Packages registry while ci.variables overrides the Bun registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", variables: ["BUN_CONFIG_REGISTRY"], message: /BUN_CONFIG_REGISTRY.*registry/u, hint: /BUN_CONFIG_REGISTRY/u },
-    { source: "a declared GITHUB_TOKEN while ci.secrets overrides the Bun registry", npmrc: "registry=https://registry.npmjs.org/\n", secrets: ["GITHUB_TOKEN", "BUN_CONFIG_REGISTRY"], message: /BUN_CONFIG_REGISTRY.*registry/u, hint: /BUN_CONFIG_REGISTRY/u },
+    { source: "a GitHub Packages registry while ci.variables overrides the pnpm registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", variables: ["PNPM_CONFIG_REGISTRY"], message: /PNPM_CONFIG_REGISTRY.*registry/u, hint: /PNPM_CONFIG_REGISTRY/u },
+    { source: "a declared GITHUB_TOKEN while ci.secrets overrides pnpm TLS verification", npmrc: "registry=https://registry.npmjs.org/\n", secrets: ["GITHUB_TOKEN", "PNPM_CONFIG_STRICT_SSL"], message: /PNPM_CONFIG_STRICT_SSL.*registry/u, hint: /PNPM_CONFIG_STRICT_SSL/u },
     // The workflow writes the Actions token only to the runner's ~/.npmrc, so moving the user config would hide it.
     { source: "a GitHub Packages registry while ci.variables moves the npm user config", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", variables: ["NPM_CONFIG_USERCONFIG"], message: /NPM_CONFIG_USERCONFIG.*~\/\.npmrc/u, hint: /NPM_CONFIG_USERCONFIG/u },
     { source: "a GitHub Packages registry while ci.secrets moves the npm user config", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", secrets: ["NPM_CONFIG_USERCONFIG"], message: /NPM_CONFIG_USERCONFIG.*~\/\.npmrc/u, hint: /NPM_CONFIG_USERCONFIG/u },
@@ -500,58 +501,58 @@ describe("release location and configuration", () => {
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it.each([
-    { source: "a default registry over HTTP", yarnrc: "registry \"http://npm.pkg.github.com\"\n" },
-    { source: "a quoted scoped registry", yarnrc: "\"@fixture-scope:registry\" \"https://npm.pkg.github.com\"\n" },
-    { source: "an unquoted scoped registry after a comment", yarnrc: "# yarn lockfile v1\n@fixture-scope:registry \"https://registry.example.test\"\n" },
-  ])("should reject the CI workflow before the bump when GitHub Packages is authenticated and the committed .yarnrc defines $source", async ({ yarnrc }) => {
+    { source: "Yarn 1 uses a GitHub Packages registry in .npmrc", packageManager: "yarn", pin: "yarn@1.22.22", files: { ".npmrc": "@fixture-scope:registry=https://npm.pkg.github.com/\n" } },
+    // Yarn reads YARN_REGISTRY, so the generated workflow no longer authenticates Yarn at all.
+    { source: "Yarn 1 declares GITHUB_TOKEN and YARN_REGISTRY", packageManager: "yarn", pin: "yarn@1.22.22", secrets: ["GITHUB_TOKEN"], variables: ["YARN_REGISTRY"] },
+    { source: "Yarn 1 configures GitHub Packages only in .yarnrc", packageManager: "yarn", pin: "yarn@1.22.22", files: { ".yarnrc": "\"@fixture-scope:registry\" \"https://npm.pkg.github.com\"\n" } },
+    { source: "Yarn 4 configures GitHub Packages only in .yarnrc.yml", packageManager: "yarn", pin: "yarn@4.5.0", files: { ".yarnrc.yml": "npmScopes:\n  fixture-scope:\n    npmRegistryServer: \"https://NPM.PKG.GITHUB.COM\"\n" } },
+    // Bun reads scoped registries from bunfig.toml in several TOML forms; any uncommented mention is a signal.
+    { source: "Bun configures a dotted GitHub Packages scope only in bunfig.toml", packageManager: "bun", pin: "bun@1.3.11", files: { "bunfig.toml": "install.scopes.\"@fixture-scope\" = \"http://npm.pkg.github.com/\"\n" } },
+    { source: "Bun configures a GitHub Packages scope table only in bunfig.toml", packageManager: "bun", pin: "bun@1.3.11", files: { "bunfig.toml": "[install.scopes]\nfixture-scope = { url = \"https://npm.pkg.github.com\", token = \"$GITHUB_TOKEN\" }\n" } },
+    { source: "Bun declares GITHUB_TOKEN", packageManager: "bun", pin: "bun@1.3.11", secrets: ["GITHUB_TOKEN"] },
+  ])("should reject the CI workflow before the bump when $source", async ({ packageManager, pin, files = {}, secrets = [], variables = [] }) => {
     // Arrange
-    const root = createTemporaryDirectory("beez-rp-ci-yarnrc-registry-");
-    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "yarn@1.22.22" }));
-    writeFileSync(path.join(root, ".npmrc"), "@fixture-scope:registry=https://npm.pkg.github.com/\n");
-    writeFileSync(path.join(root, ".yarnrc"), yarnrc);
-    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml" } });
+    const root = createTemporaryDirectory("beez-rp-ci-github-packages-unsupported-manager-");
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: pin }));
+    for (const [fileName, content] of Object.entries(files)) writeFileSync(path.join(root, fileName), content);
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", secrets, variables } }, { commands: describeProjectCommands(/** @type {import("../../src/package-manager.js").PackageManagerName} */ (packageManager)) });
     commitFixtureRepository(root);
     // Act
-    const rendering = renderCiReleaseWorkflow(root, config);
+    const rejection = await renderCiReleaseWorkflow(root, config).catch((caughtError) => caughtError);
     // Assert
-    await expect(rendering).rejects.toBeInstanceOf(ReleaseStepError);
-    await expect(rendering).rejects.toThrow(/\.yarnrc.*registry/u);
-    await expect(rendering).rejects.toMatchObject({ hint: expect.stringMatching(/\.npmrc.*https:\/\//u) });
+    expect(rejection).toBeInstanceOf(ReleaseStepError);
+    expect(rejection.message).toMatch(/solo autentica GitHub Packages con npm o pnpm/u);
+    expect(rejection.hint).toMatch(/workflow propio/u);
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it.each([
-    { source: "a .yarnrc without registries next to a GitHub Packages registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n", yarnrc: "network-timeout 600000\n", authenticates: true },
-    { source: "a .yarnrc registry without GitHub Packages", npmrc: "registry=https://registry.npmjs.org/\n", yarnrc: "registry \"https://registry.yarnpkg.com\"\n", authenticates: false },
-  ])("should render the CI workflow when the project has $source", async ({ npmrc, yarnrc, authenticates }) => {
+    // Commented lines are not configuration, so they are no GitHub Packages signal for Yarn or Bun.
+    { source: "a Yarn 4 project whose .yarnrc.yml mentions GitHub Packages only in a comment", packageManager: "yarn", pin: "yarn@4.5.0", files: { ".yarnrc.yml": "# npmRegistryServer: \"https://npm.pkg.github.com\" lives in our custom workflow\nnodeLinker: node-modules\n" } },
+    { source: "a Bun project whose bunfig.toml mentions GitHub Packages only in a comment", packageManager: "bun", pin: "bun@1.3.11", files: { "bunfig.toml": "  # fixture-scope = \"https://npm.pkg.github.com\"\n[install]\nexact = true\n" } },
+  ])("should render the CI workflow without GitHub Packages authentication for $source", async ({ packageManager, pin, files }) => {
     // Arrange
-    const root = createTemporaryDirectory("beez-rp-ci-yarnrc-accepted-");
-    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "yarn@1.22.22" }));
-    writeFileSync(path.join(root, ".npmrc"), npmrc);
-    writeFileSync(path.join(root, ".yarnrc"), yarnrc);
-    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml" } });
+    const root = createTemporaryDirectory("beez-rp-ci-github-packages-unsupported-manager-accepted-");
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: pin }));
+    for (const [fileName, content] of Object.entries(files)) writeFileSync(path.join(root, fileName), content);
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml" } }, { commands: describeProjectCommands(/** @type {import("../../src/package-manager.js").PackageManagerName} */ (packageManager)) });
     commitFixtureRepository(root);
     // Act
     const workflow = await renderCiReleaseWorkflow(root, config);
     // Assert
-    expect(workflow.split("\n").includes(`      - name: ${CI_GITHUB_PACKAGES_AUTHENTICATION_STEP}`)).toBe(authenticates);
+    expect(workflow.split("\n").includes(`      - name: ${CI_GITHUB_PACKAGES_AUTHENTICATION_STEP}`)).toBe(false);
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   /** Committed `.npmrc` that makes the generated workflow add the GitHub Packages authentication step. */
   const GITHUB_PACKAGES_NPMRC = "@fixture-scope:registry=https://npm.pkg.github.com/\n";
 
   it.each([
-    // Yarn 2+ ignores the runner's ~/.npmrc, so a GitHub Packages setup in .yarnrc.yml would fail with 401 in CI.
-    { source: "a .yarnrc.yml GitHub Packages scope without any other signal", files: { ".yarnrc.yml": "npmScopes:\n  fixture-scope:\n    npmRegistryServer: \"https://npm.pkg.github.com\"\n" }, message: /\.yarnrc\.yml.*Yarn 2/u, hint: /workflow propio/u },
-    { source: "a .yarnrc.yml registry with an uppercase GitHub Packages host", files: { ".yarnrc.yml": "npmRegistryServer: \"https://NPM.PKG.GITHUB.COM\"\n" }, message: /\.yarnrc\.yml.*Yarn 2/u, hint: /workflow propio/u },
-    { source: "a .yarnrc.yml npmAuthToken", files: { ".yarnrc.yml": "npmAuthToken: \"${NPM_TOKEN}\"\n" }, message: /\.yarnrc\.yml.*Yarn 2/u, hint: /workflow propio/u },
-    { source: "a .yarnrc.yml npmAuthIdent next to a GitHub Packages .npmrc", npmrc: GITHUB_PACKAGES_NPMRC, files: { ".yarnrc.yml": "npmAuthIdent: \"fixture-user:fixture-secret-token\"\n" }, message: /\.yarnrc\.yml.*Yarn 2/u, hint: /workflow propio/u },
     // A lockfile resolving GitHub Packages over HTTP would make the install send the Actions token in clear text.
     { source: "a pnpm lockfile resolving GitHub Packages over HTTP", npmrc: GITHUB_PACKAGES_NPMRC, files: { "pnpm-lock.yaml": "packages:\n  '@fixture-scope/ui@1.0.0':\n    resolution: {tarball: http://npm.pkg.github.com/download/@fixture-scope/ui/1.0.0/fixture}\n" }, message: /pnpm-lock\.yaml.*http:\/\/npm\.pkg\.github\.com/u, hint: /https:\/\//u },
     { source: "an npm lockfile resolving an uppercase GitHub Packages host over HTTP", npmrc: GITHUB_PACKAGES_NPMRC, files: { "package-lock.json": "{\"packages\":{\"node_modules/@fixture-scope/ui\":{\"resolved\":\"HTTP://NPM.PKG.GITHUB.COM/download/@fixture-scope/ui/1.0.0/fixture\"}}}\n" }, message: /package-lock\.json.*http:\/\/npm\.pkg\.github\.com/u, hint: /https:\/\//u },
     { source: "a Bun text lockfile resolving GitHub Packages over HTTP with a declared GITHUB_TOKEN", secrets: ["GITHUB_TOKEN"], files: { "bun.lock": "{\"packages\":{\"@fixture-scope/ui\":[\"@fixture-scope/ui@1.0.0\",\"http://npm.pkg.github.com/@fixture-scope/ui/-/ui-1.0.0.tgz\"]}}\n" }, message: /bun\.lock.*http:\/\/npm\.pkg\.github\.com/u, hint: /https:\/\//u },
-    // Bun reads registries from bunfig.toml before .npmrc, so they could receive the Actions token unchecked.
-    { source: "a bunfig.toml default registry", npmrc: GITHUB_PACKAGES_NPMRC, files: { "bunfig.toml": "[install]\nregistry = \"https://registry.example.test\"\n" }, message: /bunfig\.toml.*registr/u, hint: /\.npmrc.*https:\/\//u },
-    { source: "a bunfig.toml scoped registry section", npmrc: GITHUB_PACKAGES_NPMRC, files: { "bunfig.toml": "[install.scopes]\nfixture-scope = \"https://npm.pkg.github.com/\"\n" }, message: /bunfig\.toml.*registr/u, hint: /\.npmrc.*https:\/\//u },
+    // pnpm 11+ reads registries and network settings from pnpm-workspace.yaml, which the generated workflow does not validate.
+    { source: "a pnpm-workspace.yaml with scoped registries", npmrc: GITHUB_PACKAGES_NPMRC, files: { "pnpm-workspace.yaml": "packages:\n  - packages/*\nregistries:\n  \"@fixture-scope\": http://npm.pkg.github.com/\n" }, message: /pnpm-workspace\.yaml.*registr/u, hint: /\.npmrc.*https:\/\/.*TLS/u },
+    { source: "a pnpm-workspace.yaml that disables strictSsl", secrets: ["GITHUB_TOKEN"], files: { "pnpm-workspace.yaml": "# network settings\n  strictSsl: false\n" }, message: /pnpm-workspace\.yaml.*registr/u, hint: /\.npmrc.*https:\/\/.*TLS/u },
     // Disabling TLS verification would let anyone on the path read the Actions token.
     { source: "a .npmrc that disables strict-ssl", npmrc: `${GITHUB_PACKAGES_NPMRC}strict-ssl=false\n`, message: /strict-ssl.*TLS/u, hint: /strict-ssl/u },
     { source: "a .npmrc that disables a quoted strict-ssl after enabling it", npmrc: `${GITHUB_PACKAGES_NPMRC}strict-ssl=true\n"strict-ssl"='false'\n`, message: /strict-ssl.*TLS/u, hint: /strict-ssl/u },
@@ -574,7 +575,7 @@ describe("release location and configuration", () => {
     expect(`${rejection.message}\n${rejection.hint}`).not.toContain("fixture-secret-token");
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
-  it.each([".yarnrc.yml", "bunfig.toml", "pnpm-lock.yaml"])("should reject the CI workflow before the bump when GitHub Packages is authenticated and the committed %s is not a regular file", async (fileName) => {
+  it.each(["pnpm-workspace.yaml", "pnpm-lock.yaml"])("should reject the CI workflow before the bump when GitHub Packages is authenticated and the committed %s is not a regular file", async (fileName) => {
     // Arrange
     const root = createTemporaryDirectory("beez-rp-ci-github-packages-file-symlink-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
@@ -595,15 +596,20 @@ describe("release location and configuration", () => {
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it.each([
-    { source: "an HTTPS GitHub Packages lockfile, a bunfig.toml without registries and strict-ssl enabled", npmrc: `${GITHUB_PACKAGES_NPMRC}strict-ssl=true\n`, files: { "pnpm-lock.yaml": "resolution: {tarball: https://npm.pkg.github.com/download/@fixture-scope/ui/1.0.0/fixture}\n", "bunfig.toml": "# registry settings live in .npmrc\n[install]\nexact = true\n" }, variables: [], authenticates: true },
-    { source: "HTTP lockfile URLs, bunfig.toml registries, strict-ssl disabled and NODE_TLS_REJECT_UNAUTHORIZED without GitHub Packages", npmrc: "registry=https://registry.npmjs.org/\nstrict-ssl=false\n", files: { "pnpm-lock.yaml": "resolution: {tarball: http://npm.pkg.github.com/download/@fixture-scope/ui/1.0.0/fixture}\n", "bunfig.toml": "[install]\nregistry = \"https://registry.example.test\"\n", ".yarnrc.yml": "nodeLinker: node-modules\n" }, variables: ["NODE_TLS_REJECT_UNAUTHORIZED"], authenticates: false },
-  ])("should render the CI workflow when the project has $source", async ({ npmrc, files, variables, authenticates }) => {
+    { source: "an HTTPS GitHub Packages lockfile, a pnpm-workspace.yaml with only packages and strict-ssl enabled", npmrc: `${GITHUB_PACKAGES_NPMRC}strict-ssl=true\n`, files: { "pnpm-lock.yaml": "resolution: {tarball: https://npm.pkg.github.com/download/@fixture-scope/ui/1.0.0/fixture}\n", "pnpm-workspace.yaml": "packages:\n  - packages/*\n  # registries: live in .npmrc\n" }, variables: [], authenticates: true },
+    // pnpm and npm never read .yarnrc.yml, so even an active-looking Yarn credential in a comment is irrelevant.
+    { source: "a pnpm project whose .yarnrc.yml mentions a credential in a comment", npmrc: GITHUB_PACKAGES_NPMRC, files: { ".yarnrc.yml": "# npmAuthToken is supplied by our custom workflow\n" }, variables: [], authenticates: true },
+    { source: "an npm project whose .yarnrc.yml mentions a credential in a comment", packageManager: "npm", pin: "npm@11.11.1", npmrc: GITHUB_PACKAGES_NPMRC, files: { ".yarnrc.yml": "# npmAuthToken is supplied by our custom workflow\n" }, variables: [], authenticates: true },
+    // The generated credential only matches the GitHub Packages host, not another host that starts with its name.
+    { source: "a lockfile resolving a lookalike host over HTTP", npmrc: GITHUB_PACKAGES_NPMRC, files: { "pnpm-lock.yaml": "resolution: {tarball: http://npm.pkg.github.com.corp.example/package.tgz}\n" }, variables: [], authenticates: true },
+    { source: "HTTP lockfile URLs, strict-ssl disabled and NODE_TLS_REJECT_UNAUTHORIZED without GitHub Packages", npmrc: "registry=https://registry.npmjs.org/\nstrict-ssl=false\n", files: { "pnpm-lock.yaml": "resolution: {tarball: http://npm.pkg.github.com/download/@fixture-scope/ui/1.0.0/fixture}\n", "pnpm-workspace.yaml": "strictSsl: false\n" }, variables: ["NODE_TLS_REJECT_UNAUTHORIZED"], authenticates: false },
+  ])("should render the CI workflow when the project has $source", async ({ packageManager = "pnpm", pin = "pnpm@12.6.0", npmrc, files, variables, authenticates }) => {
     // Arrange
     const root = createTemporaryDirectory("beez-rp-ci-github-packages-files-accepted-");
-    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: pin }));
     writeFileSync(path.join(root, ".npmrc"), npmrc);
     for (const [fileName, content] of Object.entries(files)) writeFileSync(path.join(root, fileName), content);
-    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", variables } });
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", variables } }, { commands: describeProjectCommands(/** @type {import("../../src/package-manager.js").PackageManagerName} */ (packageManager)) });
     commitFixtureRepository(root);
     // Act
     const workflow = await renderCiReleaseWorkflow(root, config);

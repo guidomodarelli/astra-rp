@@ -39,6 +39,15 @@ const CLI_PATH = fileURLToPath(new URL("../../../bin/beez-rp.js", import.meta.ur
 /** Directories created by the current test, removed by {@link cleanupTemporaryDirectories}. */
 export const temporaryDirectories = /** @type {string[]} */ ([]);
 
+/** Commands started by {@link runCliAsync} that have not exited yet, such as one a timed-out test left behind. */
+const runningCommands = new Set(/** @type {import("node:child_process").ChildProcess[]} */ ([]));
+
+/**
+ * Removal retries while Windows releases files a stopped command still held open (EPERM, EBUSY).
+ * `rmSync` waits `retryDelay` times the attempt number between tries.
+ */
+const TEMPORARY_DIRECTORY_REMOVAL = { maxRetries: 10, retryDelay: 100 };
+
 /**
  * @param {string} prefix - Directory name prefix.
  * @returns {string} New temporary directory, removed after the test.
@@ -49,10 +58,17 @@ export function createTemporaryDirectory(prefix) {
   return directory;
 }
 
-/** Removes every directory {@link createTemporaryDirectory} created. */
+/**
+ * Stops commands still running and removes every directory {@link createTemporaryDirectory} created.
+ * A test that times out leaves its command running inside those directories, which Windows refuses to delete.
+ */
 export function cleanupTemporaryDirectories() {
+  for (const command of runningCommands) {
+    command.kill();
+  }
+  runningCommands.clear();
   for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, ...TEMPORARY_DIRECTORY_REMOVAL });
   }
 }
 
@@ -161,9 +177,13 @@ export function runCli(repositoryRoot, commandArguments) {
 export function runCliAsync(repositoryRoot, commandArguments, environmentOverrides = {}) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI_PATH, "create-version", ...commandArguments], { cwd: repositoryRoot, env: commandEnvironment(environmentOverrides) });
+    runningCommands.add(child);
     let output = "";
     child.stdout.setEncoding("utf8").on("data", (chunk) => (output += chunk));
     child.stderr.setEncoding("utf8").on("data", (chunk) => (output += chunk));
-    child.on("close", (status) => resolve({ status, output }));
+    child.on("close", (status) => {
+      runningCommands.delete(child);
+      resolve({ status, output });
+    });
   });
 }

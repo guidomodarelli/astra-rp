@@ -280,7 +280,6 @@ describe("release location and configuration", () => {
     { source: "a quoted GitHub Packages registry key in .npmrc", npmrc: "\"@fixture-scope:registry\"=https://npm.pkg.github.com/\n", secrets: [], authenticates: true, tokenBindings: [] },
     { source: "a GitHub Packages registry followed by an inline comment in .npmrc", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/ ; private UI kit\n", secrets: [], authenticates: true, tokenBindings: [] },
     { source: "a project GitHub Packages credential that expands an environment variable", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["NODE_AUTH_TOKEN"] },
-    { source: "a project GitHub Packages credential that expands a Vercel deployment secret", npmrc: "//npm.pkg.github.com/:_authToken=${VERCEL_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["VERCEL_TOKEN"] },
     { source: "a literal project GitHub Packages token", npmrc: "//npm.pkg.github.com/:_authToken=fixture-literal-token\n", secrets: [], authenticates: true, tokenBindings: [] },
     { source: "a quoted project GitHub Packages basic credential key", npmrc: "\"//npm.pkg.github.com/fixture-owner/:_auth\"=Zml4dHVyZTpmaXh0dXJl\n", secrets: [], authenticates: true, tokenBindings: [] },
     { source: "a project GitHub Packages username", npmrc: "//npm.pkg.github.com/:username=fixture-user\n", secrets: [], authenticates: true, tokenBindings: [] },
@@ -293,6 +292,10 @@ describe("release location and configuration", () => {
     { source: "a reserved token variable replaced by a later quoted-key assignment", npmrc: "//npm.pkg.github.com/:_authToken=${HUSKY}\n\"//npm.pkg.github.com/:_authToken\"=${NODE_AUTH_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["NODE_AUTH_TOKEN"] },
     { source: "a runner default variable replaced by a later assignment", npmrc: "//npm.pkg.github.com/:_authToken=${GITHUB_REPOSITORY}\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n", secrets: [], authenticates: true, tokenBindings: ["NODE_AUTH_TOKEN"] },
     { source: "a GitHub Packages registry replaced by a later public registry", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n@fixture-scope:registry=https://registry.npmjs.org/\n", secrets: [], authenticates: false, tokenBindings: [] },
+    // npm skips an empty owner-path token and empty basic credentials in favor of the host token the worker writes.
+    { source: "an empty owner-scoped GitHub Packages token", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/fixture-owner/:_authToken=\n", secrets: [], authenticates: true, tokenBindings: [] },
+    { source: "an empty owner-scoped GitHub Packages basic credential followed by a comment", npmrc: "//npm.pkg.github.com/fixture-owner/:_auth= ; filled locally\n", secrets: [], authenticates: true, tokenBindings: [] },
+    { source: "an empty GitHub Packages username and password", npmrc: "//npm.pkg.github.com/:username=\n//npm.pkg.github.com/:_password=\n", secrets: [], authenticates: true, tokenBindings: [] },
     // npm nests keys under an INI [section], so they never configure the top-level registry or its credentials.
     { source: "GitHub Packages settings only inside an INI section", npmrc: "[fixture-section]\n@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=\n", secrets: [], authenticates: false, tokenBindings: [] },
   ])("should authenticate dependency installs against GitHub Packages when the project uses $source: $authenticates", async ({ npmrc, committed = true, secrets, authenticates, tokenBindings }) => {
@@ -328,9 +331,37 @@ describe("release location and configuration", () => {
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it.each([
-    { source: "an empty GitHub Packages token", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*vacía/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { userConfigVariable: null, writesUserConfigFile: false },
+    { userConfigVariable: "NPM_CONFIG_USERCONFIG", writesUserConfigFile: true },
+    { userConfigVariable: "npm_config_userconfig", writesUserConfigFile: true },
+  ])("should store the Actions token in the user npm config the job selects through $userConfigVariable", async ({ userConfigVariable, writesUserConfigFile }) => {
+    // Arrange
+    const root = createTemporaryDirectory("beez-rp-ci-github-packages-userconfig-");
+    const runnerHome = createTemporaryDirectory("beez-rp-ci-runner-home-");
+    const userConfigFile = path.join(createTemporaryDirectory("beez-rp-ci-userconfig-"), "custom-npmrc");
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
+    writeFileSync(path.join(root, ".npmrc"), "@fixture-scope:registry=https://npm.pkg.github.com/\n");
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml" } });
+    commitFixtureRepository(root);
+    // npm reads the user config path case-insensitively from the environment, so the runner must start without inherited ones.
+    const runnerEnvironment = Object.fromEntries(Object.entries(commandEnvironment({ HOME: runnerHome, GITHUB_PACKAGES_TOKEN: "fixture-actions-token" })).filter(([variableName]) => variableName.toLowerCase() !== "npm_config_userconfig"));
+    if (userConfigVariable !== null) runnerEnvironment[userConfigVariable] = userConfigFile;
+    // Act
+    const workflow = await renderCiReleaseWorkflow(root, config);
+    const authenticationStep = workflow.split("\n      - name: ").find((step) => step.startsWith(CI_GITHUB_PACKAGES_AUTHENTICATION_STEP));
+    const authenticationCommand = /\n {8}run: (.+)/u.exec(authenticationStep ?? "")?.[1];
+    const executed = spawnSync(resolveBashExecutable(), ["-c", authenticationCommand ?? "exit 1"], { encoding: "utf8", env: runnerEnvironment });
+    // Assert
+    expect(executed.status).toBe(0);
+    expect(existsSync(userConfigFile)).toBe(writesUserConfigFile);
+    expect(existsSync(path.join(runnerHome, ".npmrc"))).toBe(!writesUserConfigFile);
+    expect(readFileSync(writesUserConfigFile ? userConfigFile : path.join(runnerHome, ".npmrc"), "utf8")).toBe("//npm.pkg.github.com/:_authToken=fixture-actions-token\n");
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
+  it.each([
+    { source: "an empty GitHub Packages token",npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*vacía/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a quoted empty GitHub Packages token", npmrc: "//npm.pkg.github.com/:_authToken=\"\"\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*vacía/u, hint: /\$\{GITHUB_TOKEN\}/u },
-    { source: "an empty owner-scoped GitHub Packages basic credential followed by a comment", npmrc: "//npm.pkg.github.com/fixture-owner/:_auth= ; filled locally\n", message: /\/\/npm\.pkg\.github\.com\/fixture-owner\/:_auth.*vacía/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a quoted-key empty GitHub Packages token followed by a comment", npmrc: "\"//npm.pkg.github.com/:_authToken\"= ; filled locally\n", message: /\/\/npm\.pkg\.github\.com\/:_authToken.*vacía/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding the reserved HUSKY binding", npmrc: "//npm.pkg.github.com/:_authToken=${HUSKY}\n", message: /HUSKY.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding the reserved release tag binding", npmrc: "//npm.pkg.github.com/:_authToken=${RELEASE_TAG}\n", message: /RELEASE_TAG.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding a reserved release input binding", npmrc: "//npm.pkg.github.com/fixture-owner/:_authToken=${BEEZ_RP_RELEASE_VERSION}\n", message: /BEEZ_RP_RELEASE_VERSION.*reservada/u, hint: /\$\{GITHUB_TOKEN\}/u },
@@ -339,12 +370,15 @@ describe("release location and configuration", () => {
     { source: "a GitHub Packages token expanding the runner's GITHUB_ENV default", npmrc: "//npm.pkg.github.com/fixture-owner/:_authToken=${GITHUB_ENV}\n", message: /GITHUB_ENV.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding the runner's RUNNER_TEMP default", npmrc: "//npm.pkg.github.com/:_authToken=${RUNNER_TEMP}\n", message: /RUNNER_TEMP.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
     { source: "a GitHub Packages token expanding the runner's CI default", npmrc: "//npm.pkg.github.com/:_authToken=${CI}\n", message: /\$\{CI\}.*predefinida del runner/u, hint: /\$\{GITHUB_TOKEN\}/u },
-  ])("should reject the CI workflow before the bump when the committed .npmrc uses $source", async ({ npmrc, message, hint }) => {
+    // The Vercel steps bind their own secrets, so a dependency install there would send the Vercel value as the token.
+    { source: "a GitHub Packages token expanding the VERCEL_TOKEN deployment secret", npmrc: "//npm.pkg.github.com/:_authToken=${VERCEL_TOKEN}\n", deployment: "vercel", message: /VERCEL_TOKEN.*Vercel/u, hint: /\$\{GITHUB_TOKEN\}/u },
+    { source: "a GitHub Packages owner-path token expanding the VERCEL_PROJECT_ID deployment secret", npmrc: "//npm.pkg.github.com/fixture-owner/:_authToken=${VERCEL_PROJECT_ID}\n", deployment: "vercel", message: /VERCEL_PROJECT_ID.*Vercel/u, hint: /\$\{GITHUB_TOKEN\}/u },
+  ])("should reject the CI workflow before the bump when the committed .npmrc uses $source", async ({ npmrc, deployment = null, message, hint }) => {
     // Arrange
     const root = createTemporaryDirectory("beez-rp-ci-github-packages-rejected-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "npm@11.11.1" }));
     writeFileSync(path.join(root, ".npmrc"), npmrc);
-    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml" } });
+    const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", deployment } });
     commitFixtureRepository(root);
     // Act
     const rendering = renderCiReleaseWorkflow(root, config);

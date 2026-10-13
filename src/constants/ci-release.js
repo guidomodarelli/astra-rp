@@ -144,6 +144,15 @@ export const CI_GITHUB_PACKAGES_TOKEN_VARIABLE = "GITHUB_PACKAGES_TOKEN";
  */
 export const CI_GITHUB_PACKAGES_AUTH_TOKEN_KEY = "//npm.pkg.github.com/:_authToken";
 
+/**
+ * Environment variables that move the user npm config away from `~/.npmrc`, in the order the
+ * generated step prefers them; npm and pnpm read whichever the job sets.
+ */
+export const CI_NPM_USER_CONFIG_ENVIRONMENT_VARIABLES = Object.freeze(["NPM_CONFIG_USERCONFIG", "npm_config_userconfig"]);
+
+/** Shell path of the user npm config when no variable of {@link CI_NPM_USER_CONFIG_ENVIRONMENT_VARIABLES} is set. */
+export const CI_DEFAULT_NPM_USER_CONFIG_PATH = "$HOME/.npmrc";
+
 /** `.npmrc` key selecting a registry, default (`registry`) or scoped (`@scope:registry`). */
 export const NPM_CONFIG_REGISTRY_KEY_PATTERN = /^(?:@[^\s:]+:)?registry$/u;
 

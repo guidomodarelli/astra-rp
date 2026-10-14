@@ -74,7 +74,7 @@ import {
 } from "./artifact.js";
 import { describeReleaseTypes, loadCreateVersionConfig } from "./config.js";
 import { ciWorkflowPath } from "./ci-config.js";
-import { assertPreservedFilesUnchanged, assertUnreleasedEntries, describeMissingUnreleasedEntries, formatLocalReleaseDate, prepareChangelogClosing, verifyChangelogUpdate } from "./changelog.js";
+import { assertPreservedFilesUnchanged, assertUnreleasedEntries, describeMissingUnreleasedEntries, formatReleaseDate, prepareChangelogClosing, verifyChangelogUpdate } from "./changelog.js";
 import { ReleaseStepError, describeError } from "./errors.js";
 import { readJsonManifest } from "./json.js";
 import {
@@ -1045,7 +1045,7 @@ async function bumpVersionStep(context) {
   ];
   // Every release of a CI-capable project records where it was prepared, so a resume after a failed push cannot switch modes.
   const executionTrailers = context.config.ci || execution === RELEASE_EXECUTION.ci ? [formatReleaseExecutionTrailer(execution)] : [];
-  const releaseDate = formatLocalReleaseDate();
+  const releaseDate = formatReleaseDate(new Date(), context.config.releaseTimeZone);
   const closedChangelogs = context.changelogFiles.map((changelog) => prepareChangelogClosing(context, changelog, nextRelease.version, releaseDate));
   await commitReleaseFiles(context, [...releaseFiles, ...closedChangelogs], nextRelease.version, closedChangelogs, executionTrailers);
 
@@ -1054,7 +1054,8 @@ async function bumpVersionStep(context) {
 
   context.version = nextRelease.version;
   context.commitCount = commits.length;
-  print(`${ICON.success} ${CHANGELOG_FILE}: [Unreleased] cerrado como ## [${nextRelease.version}] - ${releaseDate}.`);
+  const releaseTimeZoneNote = context.config.releaseTimeZone === null ? "" : ` (zona horaria ${context.config.releaseTimeZone})`;
+  print(`${ICON.success} ${CHANGELOG_FILE}: [Unreleased] cerrado como ## [${nextRelease.version}] - ${releaseDate}${releaseTimeZoneNote}.`);
   print(`${ICON.success} Commit ${paint("bold", nextRelease.version)} y tag ${paint(["bold", "cyan"], tag)} creados en local.`);
 }
 

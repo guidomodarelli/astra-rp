@@ -16,6 +16,7 @@ import {
   runCli,
   runCliAsync,
   runGit,
+  pickTimeZoneOnAnotherDay,
   runWithReleaseDays,
   temporaryDirectories,
 } from "./support/cli-harness.js";
@@ -540,6 +541,7 @@ describe("beez-rp create-version command", () => {
       const closedNotes = releaseDays.map((releaseDay) => closedChangelog("# Changelog\n\n", "0.2.0", releaseDay, "\n\n### Added\n\n- Algo nuevo: feat: add gate.\n"));
       expect(closedNotes).toContain(readFileSync(path.join(repositoryRoot, "CHANGELOG.md"), "utf8"));
       expect(closedNotes.map((notes) => notes.trimEnd())).toContain(runGit(["show", "main:CHANGELOG.md"], remoteRoot));
+      expect(releaseDays.some((releaseDay) => release.output.includes(`[Unreleased] cerrado como ## [0.2.0] - ${releaseDay}.`))).toBe(true);
       expect(runGit(["status", "--porcelain"], repositoryRoot)).toBe("");
 
       const again = runCli(repositoryRoot, ["--dry-run"]);
@@ -549,6 +551,43 @@ describe("beez-rp create-version command", () => {
     },
     GIT_FIXTURE_TEST_TIMEOUT_MS
   );
+
+  it(
+    "should date the closed [Unreleased] with the day of the configured releaseTimeZone and name the zone",
+    async () => {
+      // Arrange: a zone on another day than the local one, so the local day cannot pass for it.
+      const releaseTimeZone = pickTimeZoneOnAnotherDay();
+      const { repositoryRoot, remoteRoot } = createReleasedRepository();
+      pushConfiguration(repositoryRoot, [`export default { checks: false, releaseTimeZone: ${JSON.stringify(releaseTimeZone)} };`]);
+
+      // Act
+      const { result: release, releaseDays } = await runWithReleaseDays(() => runCli(repositoryRoot, ["--bump", "minor"]), { timeZone: releaseTimeZone });
+
+      // Assert
+      expect(release.status, release.output).toBe(0);
+      const closedNotes = releaseDays.map((releaseDay) => closedChangelog("# Changelog\n\n", "0.2.0", releaseDay, "\n\n### Added\n\n- Algo nuevo: feat: add gate."));
+      expect(closedNotes).toContain(runGit(["show", "main:CHANGELOG.md"], remoteRoot));
+      expect(releaseDays.some((releaseDay) => release.output.includes(`[Unreleased] cerrado como ## [0.2.0] - ${releaseDay} (zona horaria ${releaseTimeZone}).`))).toBe(true);
+    },
+    GIT_FIXTURE_TEST_TIMEOUT_MS
+  );
+
+  it("should stop before touching the repository when releaseTimeZone is not a valid IANA zone", () => {
+    // Arrange
+    const { repositoryRoot, remoteRoot } = createReleasedRepository();
+    pushConfiguration(repositoryRoot, ['export default { checks: false, releaseTimeZone: "Argentina" };']);
+    const head = runGit(["rev-parse", "HEAD"], repositoryRoot);
+
+    // Act
+    const release = runCli(repositoryRoot, ["--bump", "minor"]);
+
+    // Assert
+    expect(release.status).not.toBe(0);
+    expect(flattenOutput(release.output)).toContain('releaseTimeZone "Argentina" no es una zona horaria IANA válida');
+    expect(runGit(["rev-parse", "HEAD"], repositoryRoot)).toBe(head);
+    expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
+    expect(runGit(["status", "--porcelain"], repositoryRoot)).toBe("");
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it(
     "should write the new version into the marked versionFiles within the release commit, and stop before bumping when a file has no marker",

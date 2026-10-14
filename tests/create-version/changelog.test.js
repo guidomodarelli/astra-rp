@@ -13,7 +13,7 @@ import {
   assertPreservedFilesUnchanged,
   assertUnreleasedEntries,
   closeUnreleasedSection,
-  formatLocalReleaseDate,
+  formatReleaseDate,
   prepareChangelogClosing,
   readChangelogUpdateState,
   verifyChangelogUpdate,
@@ -145,9 +145,19 @@ describe("closing [Unreleased] in the release commit", () => {
     expect(() => closeUnreleasedSection(changelog, "1.1.0", "2026-10-13")).toThrow(message);
   });
 
-  it("should date the release with the local day, padded to YYYY-MM-DD", () => {
-    expect(formatLocalReleaseDate(new Date(2026, 0, 5, 23, 59))).toBe("2026-01-05");
-    expect(formatLocalReleaseDate(new Date(2026, 11, 31, 0, 0))).toBe("2026-12-31");
+  it("should date the release with the local day, padded to YYYY-MM-DD, without a configured time zone", () => {
+    expect(formatReleaseDate(new Date(2026, 0, 5, 23, 59))).toBe("2026-01-05");
+    expect(formatReleaseDate(new Date(2026, 11, 31, 0, 0), null)).toBe("2026-12-31");
+  });
+
+  it.each([
+    ["America/Argentina/Buenos_Aires", "2026-10-14T01:29:00Z", "2026-10-13"],
+    ["America/Argentina/Buenos_Aires", "2026-10-14T03:00:00Z", "2026-10-14"],
+    ["UTC", "2026-10-14T01:29:00Z", "2026-10-14"],
+    ["Pacific/Kiritimati", "2026-12-31T10:00:00Z", "2027-01-01"],
+    ["Asia/Kolkata", "2026-02-28T18:29:00Z", "2026-02-28"],
+  ])("should date the release with the day of %s at %s", (timeZone, instant, expectedDay) => {
+    expect(formatReleaseDate(new Date(instant), timeZone)).toBe(expectedDay);
   });
 
   it("should prepare the closed changelog with its original bytes for the rollback", async () => {

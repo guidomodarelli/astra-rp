@@ -27,13 +27,14 @@ import {
 } from "../constants/create-version.js";
 import { DEFAULT_MONOREPO_TAG_FORMAT, TAG_FORMAT_PLACEHOLDER, WORKSPACES_PACKAGES } from "../constants/monorepo.js";
 import { RELEASE_COMMIT_BUILT_IN_FILES } from "../constants/version-files.js";
-import { CHANGELOG_FILE } from "../constants/changelog.js";
+import { CHANGELOG_FILE, RELEASE_TIME_ZONE_EXAMPLE, RELEASE_TIME_ZONE_FIELD } from "../constants/changelog.js";
 import { RELEASE_TYPE, RELEASE_TYPE_ORDER } from "../constants/versions.js";
 import { DEFAULT_PROJECT_COMMANDS, describeProjectCommands, detectPackageManager } from "../package-manager.js";
 import { isRegistryProvider, resolvePublicationOptions } from "./registry-config.js";
 import { isPreMajorShiftActive } from "../versions.js";
 import { resolveCiReleaseConfig } from "./ci-config.js";
 import { isRecord } from "./json.js";
+import { formatReleaseDate } from "./changelog.js";
 import { CI_CONFIG_EXPORT } from "../constants/ci-release.js";
 
 /**
@@ -76,6 +77,7 @@ import { CI_CONFIG_EXPORT } from "../constants/ci-release.js";
  *   packages?: "workspaces" | string[],
  *   tagFormat?: string,
  *   ci?: import("./ci-config.js").CiReleaseConfig | null,
+ *   releaseTimeZone?: string,
  * }} CreateVersionConfig
  *   `summary` lines replace `{version}` with the released version (in monorepo mode, a line with
  *   `{version}` or `{name}` is printed once per released package). Without `checks`, the release
@@ -90,7 +92,9 @@ import { CI_CONFIG_EXPORT } from "../constants/ci-release.js";
  *   own version, CHANGELOG and tag, formatted with `tagFormat` (`{component}-v{version}` by default).
  *   Changelog entries are written by hand under `## [Unreleased]`, which must change since the last
  *   release and hold at least one entry; the release commit renames it to `## [X.Y.Z] - YYYY-MM-DD`
- *   and leaves a new, empty `## [Unreleased]` on top.
+ *   and leaves a new, empty `## [Unreleased]` on top. `releaseTimeZone` is the IANA time zone of that
+ *   date (such as `America/Argentina/Buenos_Aires`), in single-package and monorepo mode, locally and
+ *   in CI; without it the date is the local day of the machine that creates the release commit.
  *   `preMajorShift` lowers the suggested release type one level while a version is `0.x`
  *   (breaking → minor, features → patch).
  * @typedef {{
@@ -110,6 +114,7 @@ import { CI_CONFIG_EXPORT } from "../constants/ci-release.js";
  *   packages: "workspaces" | string[] | null,
  *   tagFormat: string | null,
  *   ci: import("./ci-config.js").ResolvedCiReleaseConfig | null,
+ *   releaseTimeZone: string | null,
  *   commands: ProjectCommands,
  * }} ResolvedCreateVersionConfig
  *   `checks` is empty when they are skipped on purpose and `null` when none are configured nor
@@ -211,6 +216,35 @@ function resolveChecks(checks, packageScripts, commands) {
 }
 
 /**
+ * Validates `releaseTimeZone`, the IANA time zone that dates the closed `[Unreleased]` section, with
+ * the same formatter that dates the release, so an unknown zone stops the command before any
+ * change instead of failing in the middle of the release commit.
+ *
+ * @param {unknown} releaseTimeZone - Raw `releaseTimeZone` field.
+ * @returns {string | null} The configured zone, or `null` when the release keeps the local day.
+ * @throws {Error} When the field is not a string or not a time zone `Intl.DateTimeFormat` supports.
+ */
+function resolveReleaseTimeZone(releaseTimeZone) {
+  if (releaseTimeZone === undefined) {
+    return null;
+  }
+
+  const correctionHint = `usá un nombre como "${RELEASE_TIME_ZONE_EXAMPLE}" (Intl.supportedValuesOf("timeZone") lista las disponibles) o quitá la opción para fechar el release con el día local`;
+  if (typeof releaseTimeZone !== "string") {
+    throw new Error(`beez-rp create-version: ${CREATE_VERSION_CONFIG_FILE}: ${RELEASE_TIME_ZONE_FIELD} debe ser un string con una zona horaria IANA; ${correctionHint}.`);
+  }
+
+  try {
+    formatReleaseDate(new Date(), releaseTimeZone);
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    throw new Error(`beez-rp create-version: ${CREATE_VERSION_CONFIG_FILE}: ${RELEASE_TIME_ZONE_FIELD} ${JSON.stringify(releaseTimeZone)} no es una zona horaria IANA válida; ${correctionHint}.`, { cause: error });
+  }
+
+  return releaseTimeZone;
+}
+
+/**
  * Validates a raw configuration and fills its defaults.
  *
  * @param {unknown} rawConfig - Default export of `beez-rp.config.js`.
@@ -307,6 +341,8 @@ export function resolveCreateVersionConfig(rawConfig, { packageScripts = {}, com
     }
   }
 
+  const releaseTimeZone = resolveReleaseTimeZone(config.releaseTimeZone);
+
   const configuredVersionFiles = config.versionFiles ?? [];
   if (!isStringList(configuredVersionFiles) || configuredVersionFiles.some((filePath) => !isPathInsideRoot(filePath))) {
     throw invalidField("versionFiles", "a list of file paths relative to the project root, inside it");
@@ -338,6 +374,7 @@ export function resolveCreateVersionConfig(rawConfig, { packageScripts = {}, com
     tagFormat: /** @type {string | null} */ (tagFormat),
     commands,
     ci,
+    releaseTimeZone,
   };
 }
 

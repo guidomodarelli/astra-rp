@@ -12,6 +12,7 @@ import {
   runCliAsync,
   runGit,
   closedChangelog,
+  pickTimeZoneOnAnotherDay,
   runWithReleaseDays,
 } from "../create-version/support/cli-harness.js";
 import { startFixtureNpmRegistry } from "../create-version/support/fixture-npm-registry.js";
@@ -348,11 +349,14 @@ describe("create-version in monorepo mode", () => {
   );
 
   it(
-    "should keep custom changelog sections while closing [Unreleased] when a package is released",
+    "should keep custom changelog sections while closing [Unreleased] with the day of releaseTimeZone when a package is released",
     async () => {
+      const releaseTimeZone = pickTimeZoneOnAnotherDay();
       const { repositoryRoot, remoteRoot } = createReleasedMonorepo();
       pushCoreFeature(repositoryRoot);
       writeFileSync(path.join(repositoryRoot, "packages/widget/CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n\n### Nope\n\n- Respuesta nueva.\n");
+      const config = readFileSync(path.join(repositoryRoot, "beez-rp.config.js"), "utf8");
+      writeFileSync(path.join(repositoryRoot, "beez-rp.config.js"), config.replace('packages: "workspaces",', `packages: "workspaces",\n  releaseTimeZone: ${JSON.stringify(releaseTimeZone)},`));
       commitAll(repositoryRoot, "docs(widget): use an unknown changelog section");
       runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
       const registry = await startRegistry();
@@ -364,7 +368,7 @@ describe("create-version in monorepo mode", () => {
       expect(previewOutput).toContain("Elegir la versión de cada paquete con cambios (1) @acme/widget");
       expect(previewOutput).toContain("Verificar los CHANGELOG elegidos y sus entradas en [Unreleased]");
 
-      const { result: release, releaseDays } = await runWithReleaseDays(() => runCliAsync(repositoryRoot, ["--bump", "minor"], npmEnvironment(registry.registryUrl)));
+      const { result: release, releaseDays } = await runWithReleaseDays(() => runCliAsync(repositoryRoot, ["--bump", "minor"], npmEnvironment(registry.registryUrl)), { timeZone: releaseTimeZone });
 
       expect(release.status, release.output).toBe(0);
       const changelog = runGit(["show", "HEAD:packages/widget/CHANGELOG.md"], repositoryRoot);

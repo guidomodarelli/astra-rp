@@ -95,6 +95,7 @@ describe("create-version config", () => {
       publish: "npm",
       migrations: null,
       summary: [],
+      releaseTimeZone: null,
     });
     expect(Object.keys(config.releaseTypeDescriptions)).toEqual(["patch", "minor", "major"]);
     expect(config.preMajorShift).toBe(false);
@@ -174,6 +175,21 @@ describe("create-version config", () => {
     [{ changelog: { audience: "x" }, artifact: "releases/{version}.tgz" }, /artifact.*publish/],
   ])("should reject %j", (rawConfig, message) => {
     expect(() => resolveCreateVersionConfig(rawConfig)).toThrow(message);
+  });
+
+  it("should keep a valid IANA releaseTimeZone for the release date", () => {
+    expect(resolveCreateVersionConfig({ releaseTimeZone: "America/Argentina/Buenos_Aires" }).releaseTimeZone).toBe("America/Argentina/Buenos_Aires");
+    expect(resolveCreateVersionConfig({ releaseTimeZone: "UTC" }).releaseTimeZone).toBe("UTC");
+  });
+
+  it.each([
+    ["an unknown zone", "America/Atlantis"],
+    ["a malformed zone", "hora de Argentina"],
+    ["an empty string", ""],
+    ["a number", -3],
+    ["null", null],
+  ])("should reject releaseTimeZone set to %s with an actionable Spanish message", (_description, releaseTimeZone) => {
+    expect(() => resolveCreateVersionConfig({ releaseTimeZone })).toThrow(/releaseTimeZone.*zona horaria IANA.*America\/Argentina\/Buenos_Aires/);
   });
 
   it("should load beez-rp.config.js from the repository root and explain a missing file", async () => {

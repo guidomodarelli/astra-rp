@@ -54,3 +54,21 @@ export const RELEASE_DATE_PART_LENGTH = 2;
 
 /** Padding of a one-digit month or day in a release date. */
 export const RELEASE_DATE_PAD = "0";
+
+/**
+ * Locale whose `Intl.DateTimeFormat` parts are Gregorian with Latin digits, to read the year, month
+ * and day of a release in its configured time zone.
+ */
+export const RELEASE_DATE_LOCALE = "en-US";
+
+/** `Intl.DateTimeFormat` fields of a `YYYY-MM-DD` release date. */
+export const RELEASE_DATE_FORMAT_OPTIONS = Object.freeze({ year: "numeric", month: "2-digit", day: "2-digit" });
+
+/** `Intl.DateTimeFormat` part types of a release date, in `YYYY-MM-DD` order. */
+export const RELEASE_DATE_PART_ORDER = Object.freeze(["year", "month", "day"]);
+
+/** Configuration field naming the IANA time zone that dates the closed `[Unreleased]` section. */
+export const RELEASE_TIME_ZONE_FIELD = "releaseTimeZone";
+
+/** IANA time zone suggested by the messages about `releaseTimeZone`. */
+export const RELEASE_TIME_ZONE_EXAMPLE = "America/Argentina/Buenos_Aires";

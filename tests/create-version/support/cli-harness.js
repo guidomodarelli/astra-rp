@@ -235,17 +235,37 @@ export function spawnTrackedCommand(command, commandArguments, options) {
 const ISO_DAY_LOCALE = "sv-SE";
 
 /**
- * Lists the local days a release created by `run` may carry in its closed changelog: the day before
- * and the day after it ran (they differ only when the run crosses midnight).
+ * IANA zones 14 hours ahead of and 11 hours behind UTC: at any moment at least one of them is on a
+ * different day than any machine's local time zone.
+ */
+const FAR_APART_TIME_ZONES = Object.freeze(["Pacific/Kiritimati", "Pacific/Pago_Pago"]);
+
+/**
+ * Picks an IANA time zone whose current day differs from the machine's local day, so a release
+ * dated with it proves the configured `releaseTimeZone` was used instead of the local day.
+ *
+ * @returns {string} IANA time zone on another day than the local one right now.
+ */
+export function pickTimeZoneOnAnotherDay() {
+  const now = new Date();
+  const localDay = now.toLocaleDateString(ISO_DAY_LOCALE);
+  return FAR_APART_TIME_ZONES.find((timeZone) => now.toLocaleDateString(ISO_DAY_LOCALE, { timeZone }) !== localDay) ?? FAR_APART_TIME_ZONES[0];
+}
+
+/**
+ * Lists the days a release created by `run` may carry in its closed changelog: the day before and
+ * the day after it ran (they differ only when the run crosses midnight), in the machine's local
+ * time zone or in `timeZone` when the project configures `releaseTimeZone`.
  *
  * @template T
  * @param {() => T | Promise<T>} run - Runs the release.
+ * @param {{ timeZone?: string }} [options] - IANA time zone the release dates with; local by default.
  * @returns {Promise<{ result: T, releaseDays: string[] }>} What `run` returned and the possible `YYYY-MM-DD` days.
  */
-export async function runWithReleaseDays(run) {
-  const dayBefore = new Date().toLocaleDateString(ISO_DAY_LOCALE);
+export async function runWithReleaseDays(run, { timeZone } = {}) {
+  const dayBefore = new Date().toLocaleDateString(ISO_DAY_LOCALE, { timeZone });
   const result = await run();
-  return { result, releaseDays: [...new Set([dayBefore, new Date().toLocaleDateString(ISO_DAY_LOCALE)])] };
+  return { result, releaseDays: [...new Set([dayBefore, new Date().toLocaleDateString(ISO_DAY_LOCALE, { timeZone })])] };
 }
 
 /**

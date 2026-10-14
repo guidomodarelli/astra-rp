@@ -11,6 +11,7 @@ import {
   OWNER_TOKEN,
   OWNER_USER,
   cleanupTemporaryDirectories,
+  createTemporaryDirectory,
   flattenOutput,
   closedChangelog,
   runCli,
@@ -424,6 +425,65 @@ describe("beez-rp create-version command", () => {
       expect(output).toContain("La sección ## [Unreleased] de CHANGELOG.md no tiene entradas");
       expect(fakeAgents.readCalls().map((call) => call.name)).toEqual(["claude", "codex"]);
       expect(readFileSync(path.join(repositoryRoot, "CHANGELOG.md"), "utf8")).toBe(notes);
+      expect(runGit(["rev-parse", "HEAD"], repositoryRoot)).toBe(head);
+      expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
+    },
+    GIT_FIXTURE_TEST_TIMEOUT_MS
+  );
+
+  it(
+    "should not draft a symlinked changelog, leaving the file it points to outside the repository untouched",
+    async (testContext) => {
+      // Arrange
+      const { repositoryRoot, remoteRoot } = createReleasedRepository();
+      const notes = pushEmptyChangelogWithDrafting(repositoryRoot);
+      const outsideChangelogPath = path.join(createTemporaryDirectory("beez-rp-outside-changelog-"), "CHANGELOG.md");
+      writeFileSync(outsideChangelogPath, notes);
+      const changelogPath = path.join(repositoryRoot, "CHANGELOG.md");
+      rmSync(changelogPath);
+      try {
+        symlinkSync(outsideChangelogPath, changelogPath, "file");
+      } catch {
+        // Windows only creates file symlinks with Developer Mode or elevated privileges.
+        testContext.skip();
+      }
+      runGit(["add", "-A"], repositoryRoot);
+      runGit(["commit", "--quiet", "-m", "chore: link the changelog"], repositoryRoot);
+      runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
+      const fakeAgents = installFakeAgents({ claude: { kind: "answer", text: "### Added\n\n- Entrada redactada." } });
+
+      // Act
+      const release = await runCliAsync(repositoryRoot, ["--bump", "minor"], withFakeAgentsFirst(fakeAgents.binDirectory));
+
+      // Assert
+      expect(release.status, release.output).toBe(1);
+      expect(flattenOutput(release.output)).toContain("No se redactó CHANGELOG.md: no es un archivo regular");
+      expect(fakeAgents.readCalls()).toEqual([]);
+      expect(readFileSync(outsideChangelogPath, "utf8")).toBe(notes);
+      expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
+    },
+    GIT_FIXTURE_TEST_TIMEOUT_MS
+  );
+
+  it(
+    "should not overwrite a changelog edited while the agent was drafting it",
+    async () => {
+      // Arrange
+      const { repositoryRoot, remoteRoot } = createReleasedRepository();
+      pushEmptyChangelogWithDrafting(repositoryRoot);
+      const changelogPath = path.join(repositoryRoot, "CHANGELOG.md");
+      const editedNotes = "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Entrada escrita a mano mientras el agente redactaba.\n";
+      const fakeAgents = installFakeAgents({ claude: { kind: "answer", text: "### Added\n\n- Entrada redactada.", touch: { filePath: changelogPath, content: editedNotes } } });
+      const head = runGit(["rev-parse", "HEAD"], repositoryRoot);
+
+      // Act
+      const release = await runCliAsync(repositoryRoot, ["--bump", "minor"], withFakeAgentsFirst(fakeAgents.binDirectory));
+
+      // Assert
+      expect(release.status, release.output).toBe(1);
+      expect(flattenOutput(release.output)).toContain("CHANGELOG.md cambió mientras el agente redactaba");
+      expect(fakeAgents.readCalls().map((call) => call.name)).toEqual(["claude"]);
+      expect(readFileSync(changelogPath, "utf8")).toBe(editedNotes);
       expect(runGit(["rev-parse", "HEAD"], repositoryRoot)).toBe(head);
       expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
     },

@@ -12,9 +12,11 @@ import path from "node:path";
 import { createTemporaryDirectory } from "./cli-harness.js";
 
 /**
- * @typedef {{ kind: "answer", text: string } | { kind: "quota" } | { kind: "sleep" }} FakeAgentBehavior
- *   `answer` returns `text` as the agent answer, `quota` fails as an exhausted subscription does and
- *   `sleep` never answers.
+ * @typedef {{ filePath: string, content: string }} FakeAgentTouch
+ *   File the fake agent overwrites with `content` before answering, as an edit made while it ran.
+ * @typedef {{ kind: "answer", text: string, touch?: FakeAgentTouch } | { kind: "quota" } | { kind: "sleep" }} FakeAgentBehavior
+ *   `answer` returns `text` as the agent answer (after writing `touch`, when given), `quota` fails as
+ *   an exhausted subscription does and `sleep` never answers.
  * @typedef {{ name: string, cwd: string, args: string[], prompt: string }} FakeAgentCall
  */
 
@@ -43,6 +45,7 @@ process.stdin.on("end", () => {
   const args = process.argv.slice(2);
   appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ name, cwd: process.cwd(), args, prompt }) + "\\n");
   if (behavior.kind === "sleep") { setInterval(() => {}, 1000); return; }
+  if (behavior.touch) writeFileSync(behavior.touch.filePath, behavior.touch.content);
   if (name === "claude") {
     const quota = behavior.kind === "quota";
     process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: quota, result: quota ? ${JSON.stringify(FAKE_CLAUDE_QUOTA_MESSAGE)} : behavior.text }));

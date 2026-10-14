@@ -625,10 +625,46 @@ function canDraftChangelog(plan, state, config, options) {
 }
 
 /**
+ * Reads the changelog the agent is about to draft, without following symlinks: a link (or any
+ * other entry that is not a regular file) could point outside the repository, so it is reported
+ * instead of read.
+ *
+ * @param {string} changelogPath - Absolute path of the changelog.
+ * @returns {{ kind: "missing" } | { kind: "file", bytes: Buffer } | { kind: "notRegularFile" }} What the path holds.
+ */
+function readChangelogForDraft(changelogPath) {
+  const entry = lstatSync(changelogPath, { throwIfNoEntry: false });
+  if (!entry) return { kind: "missing" };
+  if (!entry.isFile()) return { kind: "notRegularFile" };
+  return { kind: "file", bytes: readFileSync(changelogPath) };
+}
+
+/**
+ * Tells whether the changelog still holds what was read before drafting: same entry type, same
+ * presence and same bytes. Writing over a changelog someone edited while the agent ran would
+ * silently discard those edits.
+ *
+ * @param {string} changelogPath - Absolute path of the changelog.
+ * @param {Buffer | null} originalBytes - Bytes read before drafting, or `null` when it did not exist.
+ * @returns {boolean} Whether the changelog is unchanged; `false` when it cannot be read again.
+ */
+function isChangelogUnchangedSinceDraft(changelogPath, originalBytes) {
+  try {
+    const current = readChangelogForDraft(changelogPath);
+    if (originalBytes === null) return current.kind === "missing";
+    return current.kind === "file" && current.bytes.equals(originalBytes);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Drafts the `[Unreleased]` entries with the configured agent CLIs, in order, and writes the first
  * valid answer to the changelog (creating it when missing). The entries are not confirmed: the
  * release commits them, so they are printed for the user to see. When every agent fails, the
- * reasons are printed and the release keeps its changelog blocker.
+ * reasons are printed and the release keeps its changelog blocker. A changelog that is not a
+ * regular file (for example a symlink) is never drafted, and one that changed while the agent ran
+ * is left untouched.
  *
  * @param {string} repositoryRoot - Repository root.
  * @param {ResolvedCreateVersionConfig} config - Project configuration with `changelogDraft`.
@@ -638,8 +674,18 @@ function canDraftChangelog(plan, state, config, options) {
 async function draftMissingChangelog(repositoryRoot, config, state) {
   const changelogPath = path.join(repositoryRoot, CHANGELOG_FILE);
   let currentChangelog = "";
+  /** @type {Buffer | null} */
+  let originalBytes = null;
   try {
-    if (existsSync(changelogPath)) currentChangelog = STRICT_UTF8_DECODER.decode(readFileSync(changelogPath));
+    const changelog = readChangelogForDraft(changelogPath);
+    if (changelog.kind === "notRegularFile") {
+      print(`${ICON.warning} ${paint("yellow", `No se redactó ${CHANGELOG_FILE}: no es un archivo regular (por ejemplo, un symlink) y escribirlo podría modificar un archivo fuera del repositorio.`)}`);
+      return false;
+    }
+    if (changelog.kind === "file") {
+      originalBytes = changelog.bytes;
+      currentChangelog = STRICT_UTF8_DECODER.decode(originalBytes);
+    }
   } catch (error) {
     print(`${ICON.warning} ${paint("yellow", `No se redactó ${CHANGELOG_FILE}: no se pudo leer como texto UTF-8 (${describeError(error)}).`)}`);
     return false;
@@ -665,8 +711,13 @@ async function draftMissingChangelog(repositoryRoot, config, state) {
 
   const providerLabel = describeChangelogDraftProvider(draft.provider);
   progress.spinner?.succeed(`[Unreleased] redactado con ${providerLabel}`);
+  if (!isChangelogUnchangedSinceDraft(changelogPath, originalBytes)) {
+    print(`${ICON.failure} ${paint("red", `No se escribieron las entradas de ${providerLabel}: ${CHANGELOG_FILE} cambió mientras el agente redactaba. Revisá el archivo y volvé a correr ${config.commands.createVersion}.`)}`);
+    return false;
+  }
   try {
-    writeFileSync(changelogPath, fillUnreleasedEntries(currentChangelog, draft.entries));
+    // `wx` fails if a changelog appeared after the last check, instead of overwriting it.
+    writeFileSync(changelogPath, fillUnreleasedEntries(currentChangelog, draft.entries), { flag: originalBytes === null ? "wx" : "w" });
   } catch (error) {
     print(`${ICON.failure} ${paint("red", `No se pudo escribir ${CHANGELOG_FILE} con las entradas de ${providerLabel} (${describeError(error)}).`)}`);
     return false;

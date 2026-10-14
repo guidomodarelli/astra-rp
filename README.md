@@ -185,6 +185,7 @@ export default {
 - Se pasa al siguiente agente si el actual no está instalado, no tiene cuota o sesión, falla, tarda más de 10 minutos o responde algo que no sean secciones de Keep a Changelog (`### Added`, …) con entradas `- …`.
 - La primera respuesta válida se escribe en `## [Unreleased]` sin pedir confirmación, se muestra en la terminal y el release sigue: el commit de versión la cierra como cualquier entrada manual. Si todos los agentes fallan, se muestra por qué falló cada uno y el release se corta como sin `changelogDraft`.
 - No corre con `--dry-run` (solo avisa que lo haría), en el worker de CI, en `--retry-ci` ni en modo monorepo. Tampoco reemplaza entradas que ya existen.
+- No redacta si `CHANGELOG.md` no es un archivo regular (por ejemplo, un symlink que podría apuntar fuera del repositorio): avisa y el release se corta como sin `changelogDraft`. Si el archivo cambia, aparece o desaparece mientras el agente redacta, no se escribe nada: se avisa y hay que volver a correr el comando.
 
 ### Un registry por proyecto
 

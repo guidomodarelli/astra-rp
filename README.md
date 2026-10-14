@@ -118,8 +118,11 @@ Funciona con pnpm, bun, npm o yarn: beez-rp detecta el package manager por el ca
 
 ```bash
 pnpm create-version            # o pnpm cv
-pnpm cv --bump patch|minor|major # o -b, y también p|m|M: -b m es minor, -b M major
-pnpm cv -p | -m | -M           # atajos de --patch, --minor y --major (-m minor, -M major)
+pnpm cv --bump patch            # o --bump minor / --bump major
+pnpm cv -b m                   # -b acepta también p, m y M: -b m es minor, -b M major
+pnpm cv -p                     # atajo de --patch
+pnpm cv -m                     # atajo de --minor (m minúscula)
+pnpm cv -M                     # atajo de --major (M mayúscula)
 pnpm cv --set-version X.Y.Z    # o -sv X.Y.Z / -sv=X.Y.Z; solo la siguiente patch, minor o major
 pnpm cv -l                     # igual que --local: todo el release en esta máquina, sin preguntar
 pnpm cv --dry-run              # diagnóstico y plan, sin cambiar nada

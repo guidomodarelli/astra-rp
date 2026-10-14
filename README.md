@@ -118,13 +118,17 @@ Funciona con pnpm, bun, npm o yarn: beez-rp detecta el package manager por el ca
 
 ```bash
 pnpm create-version            # o pnpm cv
-pnpm cv --bump patch|minor|major
-pnpm cv --set-version X.Y.Z    # solo la siguiente patch, minor o major
+pnpm cv --bump patch|minor|major # o -b, y también p|m|M: -b m es minor, -b M major
+pnpm cv -p | -m | -M           # atajos de --patch, --minor y --major (-m minor, -M major)
+pnpm cv --set-version X.Y.Z    # o -sv X.Y.Z / -sv=X.Y.Z; solo la siguiente patch, minor o major
+pnpm cv -l                     # igual que --local: todo el release en esta máquina, sin preguntar
 pnpm cv --dry-run              # diagnóstico y plan, sin cambiar nada
 pnpm cv --skip-unpublished     # release nuevo aunque el último no esté en npm (lo saltea)
 pnpm cv --ignore-local-changes # publica aunque haya cambios sin commitear (se apartan y se restauran)
 pnpm cv --accept-suggested     # toma la versión sugerida por los commits sin preguntar
 ```
+
+Los flags cortos (`-b`, `-p`, `-m`, `-M`, `-sv`, `-l`, `-h`) distinguen mayúsculas y van de a uno: `-lm` no se agrupa y corta con un error, igual que un flag corto desconocido; usá `-l -m`. Los que llevan valor lo aceptan en el token siguiente o con `=` (`-b m`, `-b=m`, `-sv=1.3.0`). Pedir dos tipos de versión distintos (`-m -M`, `--minor --bump major`), combinar un tipo con `--set-version` o `--ci` con `--local` corta con un error antes de cualquier cambio. `--ci` sin `ci.workflow` configurado también corta, sin preguntar, y sugiere `--setup-ci` o `--local`.
 
 Sin `--bump` ni `--set-version`, el comando pregunta la versión sin ninguna opción preseleccionada: se elige con su número, o con `↑`/`k` y `↓`/`j`/`Tab` más Enter (Enter no hace nada hasta marcar una). La opción que sugieren los commits lleva una estrella, pero no se elige sola. Sin terminal interactiva (CI) hay que pasar `--bump` o `--set-version`.
 

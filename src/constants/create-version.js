@@ -231,6 +231,9 @@ export const NPM_DIST_TAG = "latest";
 /** Command-line flags of `beez-rp create-version`. */
 export const CREATE_VERSION_FLAG = Object.freeze({
   bump: "bump",
+  patch: "patch",
+  minor: "minor",
+  major: "major",
   setVersion: "set-version",
   dryRun: "dry-run",
   skipUnpublished: "skip-unpublished",
@@ -242,9 +245,37 @@ export const CREATE_VERSION_FLAG = Object.freeze({
   ciRelease: "ci-release",
   retryCi: "retry-ci",
   help: "help",
-  helpShort: "h",
   endOfOptions: "--",
 });
+
+/**
+ * Short name of each release type: `--bump`/`-b` accepts it as a value (`-b m`) and it is also the
+ * short flag of the `--patch`, `--minor` and `--major` shortcuts. Case-sensitive: `m` is minor and
+ * `M` major.
+ */
+export const RELEASE_TYPE_SHORT_NAME = Object.freeze({
+  patch: "p",
+  minor: "m",
+  major: "M",
+});
+
+/**
+ * Long flag of each short flag of `beez-rp create-version`. Short flags are whole tokens (`-sv` has
+ * two letters), so they are never grouped: `-lm` is rejected instead of read as `-l -m`. A value may
+ * follow as the next token or after `=` (`-b m`, `-b=m`, `-sv 1.3.0`, `-sv=1.3.0`).
+ */
+export const CREATE_VERSION_SHORT_FLAG = Object.freeze({
+  b: CREATE_VERSION_FLAG.bump,
+  sv: CREATE_VERSION_FLAG.setVersion,
+  [RELEASE_TYPE_SHORT_NAME.patch]: CREATE_VERSION_FLAG.patch,
+  [RELEASE_TYPE_SHORT_NAME.minor]: CREATE_VERSION_FLAG.minor,
+  [RELEASE_TYPE_SHORT_NAME.major]: CREATE_VERSION_FLAG.major,
+  l: CREATE_VERSION_FLAG.local,
+  h: CREATE_VERSION_FLAG.help,
+});
+
+/** Single-dash token of a short flag, with an optional `=value`: `-l`, `-sv=1.3.0`; not `--local`. */
+export const SHORT_FLAG_TOKEN_PATTERN = /^-(?<name>[^-=][^=]*)(?:=(?<value>.*))?$/su;
 
 /** Message of the `git stash` entry holding the changes `--ignore-local-changes` sets aside. */
 export const LOCAL_CHANGES_STASH_MESSAGE = "beez-rp create-version: cambios locales apartados durante el release";

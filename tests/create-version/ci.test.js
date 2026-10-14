@@ -663,6 +663,19 @@ describe("release location and configuration", () => {
     expect(await chooseReleaseExecution(config, parseReleaseArguments([]))).toEqual({ execution: "local", setup: false });
     await expect(chooseReleaseExecution(config, parseReleaseArguments(["--ci"]))).rejects.toThrow(/No hay un workflow/);
   });
+
+  it("should fail --ci without a configured workflow instead of asking, also in an interactive terminal", async () => {
+    // Arrange
+    const config = resolveCreateVersionConfig({ checks: false });
+    const wasInteractive = process.stdin.isTTY;
+    process.stdin.isTTY = true;
+    try {
+      // Act and Assert
+      await expect(chooseReleaseExecution(config, parseReleaseArguments(["--ci", "-m"]))).rejects.toThrow(/No hay un workflow de release configurado/);
+    } finally {
+      process.stdin.isTTY = wasInteractive;
+    }
+  });
 });
 
 describe("local CI preparation with real Git", () => {

@@ -619,6 +619,60 @@ describe("buildReleasePlan with the project's package manager", () => {
   });
 });
 
+describe("parseReleaseArguments release type and execution shortcuts", () => {
+  it.each([
+    [["--patch"], "patch"],
+    [["-p"], "patch"],
+    [["--minor"], "minor"],
+    [["-m"], "minor"],
+    [["--major"], "major"],
+    [["-M"], "major"],
+    [["--bump", "m"], "minor"],
+    [["--bump", "M"], "major"],
+    [["--bump=p"], "patch"],
+    [["-b", "minor"], "minor"],
+    [["-b", "M"], "major"],
+    [["-b=p"], "patch"],
+    [["--minor", "-b", "m"], "minor"],
+  ])("should read %j as --bump %s", (argv, bump) => {
+    expect(parseReleaseArguments(argv)).toMatchObject({ bump, setVersion: null, execution: null });
+  });
+
+  it.each([
+    [["-sv", "1.3.0"]],
+    [["-sv=1.3.0"]],
+    [["-sv", "v1.3.0"]],
+  ])("should read %j as --set-version 1.3.0", (argv) => {
+    expect(parseReleaseArguments(argv)).toMatchObject({ bump: null, setVersion: "1.3.0" });
+  });
+
+  it("should read -l as --local, -h as --help and combine them with other short flags one per token", () => {
+    expect(parseReleaseArguments(["-l"]).execution).toBe("local");
+    expect(parseReleaseArguments(["-h"]).help).toBe(true);
+    expect(parseReleaseArguments(["-l", "-m", "--dry-run"])).toMatchObject({ bump: "minor", execution: "local", dryRun: true });
+    expect(parseReleaseArguments(["--ci", "-M"])).toMatchObject({ bump: "major", execution: "ci" });
+  });
+
+  it.each([
+    [["--patch", "--minor"], /--patch y --minor no se combinan/],
+    [["-m", "-M"], /--minor y --major no se combinan/],
+    [["-p", "-m", "-M"], /--patch, --minor y --major no se combinan/],
+    [["--minor", "--bump", "major"], /--minor no coincide con --bump major/],
+    [["-M", "-b", "m"], /--major no coincide con --bump m/],
+    [["-p", "--set-version", "1.2.4"], /--set-version, no los dos a la vez/],
+    [["-b", "p", "-sv", "1.2.4"], /--set-version, no los dos a la vez/],
+    [["--bump", "P"], /--bump espera patch\|minor\|major \(o p\|m\|M\) y recibió "P"/],
+    [["-m", "--accept-suggested"], /--accept-suggested.*no se combina/],
+    [["-l", "--ci"], /--local no se combina con --ci/],
+    [["-lm"], /Opción corta desconocida: "-lm".*de a uno/],
+    [["-P"], /Opción corta desconocida: "-P"/],
+    [["-s"], /Opción corta desconocida: "-s"/],
+    [["-sv"], /Opción inválida/],
+  ])("should reject %j with a Spanish message", (argv, message) => {
+    expect(() => parseReleaseArguments(argv)).toThrow(message);
+  });
+});
+
 describe("parseReleaseArguments --accept-suggested", () => {
   it("should take the suggested version and refuse to combine it with an explicit version", () => {
     expect(parseReleaseArguments(["--accept-suggested"]).acceptSuggested).toBe(true);

@@ -133,8 +133,14 @@ export const CONTROL_CHARACTER_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001
 /** Every character {@link CONTROL_CHARACTER_PATTERN} matches, to remove them from agent text shown in the terminal. */
 export const CONTROL_CHARACTERS_PATTERN = new RegExp(CONTROL_CHARACTER_PATTERN.source, "gu");
 
-/** A line a draft may hold: blank, a `### Section` heading, a `- ` entry or an indented continuation. */
-export const CHANGELOG_DRAFT_LINE_PATTERN = /^(?:\s*|### +\S.*|\s*- +\S.*|\s+\S.*)$/u;
+/**
+ * A line a draft may hold: blank, a `### Section` heading or a complete `- ` entry. Each change is a
+ * single `- ` line, so an indented continuation of an entry is rejected.
+ */
+export const CHANGELOG_DRAFT_LINE_PATTERN = /^(?:\s*|### +\S.*|\s*- +\S.*)$/u;
+
+/** An indented line that is not an entry: an entry split across several lines, which a draft must not hold. */
+export const CHANGELOG_DRAFT_CONTINUATION_LINE_PATTERN = /^\s+\S/u;
 
 /** A level-2 heading such as `## [Unreleased]` or `## [1.2.0] - 2026-01-01`, which the draft must not contain. */
 export const RELEASE_LEVEL_HEADING_PATTERN = /^##(?!#)/mu;

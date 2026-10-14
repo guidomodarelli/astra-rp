@@ -94,6 +94,7 @@ describe("changelog draft answers", () => {
     { answer: "### Added\n\n- Una.\n\n### Added\n\n- Otra.", reason: "repite la sección ### Added" },
     { answer: "### Fixed\n\n- Una.\n\n### Added\n\n- Otra.", reason: "la sección ### Added está fuera del orden de Keep a Changelog" },
     { answer: "### Added\n\n### Fixed\n\n- Una.", reason: "la sección ### Added no tiene entradas" },
+    { answer: "### Added\n\n- Una entrada que sigue\n  en otra línea.", reason: "entrada repartida en varias líneas; cada cambio va en una sola línea" },
     { answer: `### Added\n\n- Una.\u001b]52;c;cm0gLXJmIH4=\u0007`, reason: "la respuesta incluye caracteres de control" },
   ])("should reject an answer when $reason", ({ answer, reason }) => {
     const parsed = parseChangelogDraft(answer);

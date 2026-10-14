@@ -16,6 +16,7 @@ import { CHANGE_TYPES, ENTRY_LINE_PATTERN, LINE_BREAK_PATTERN, UNRELEASED_HEADIN
 import {
   BLANK_LINE_PATTERN,
   CHANGELOG_DRAFT_CONTEXT_DIRECTORY,
+  CHANGELOG_DRAFT_CONTINUATION_LINE_PATTERN,
   CHANGELOG_DRAFT_CURRENT_CHANGELOG_FILE,
   CHANGELOG_DRAFT_DIFF_FILE,
   CHANGELOG_DRAFT_EXECUTABLES,
@@ -124,6 +125,9 @@ export function parseChangelogDraft(answer) {
   const lines = entries.split(LINE_BREAK_PATTERN);
   const unexpectedLine = lines.find((line) => !CHANGELOG_DRAFT_LINE_PATTERN.test(line));
   if (unexpectedLine !== undefined) {
+    if (CHANGELOG_DRAFT_CONTINUATION_LINE_PATTERN.test(unexpectedLine)) {
+      return { entries: null, reason: `la respuesta tiene una entrada repartida en varias líneas; cada cambio va en una sola línea "- ": ${truncate(unexpectedLine.trim())}` };
+    }
     return { entries: null, reason: `la respuesta incluye texto que no es una sección ni una entrada: ${truncate(unexpectedLine)}` };
   }
   const structureProblem = findSectionStructureProblem(lines);
@@ -132,7 +136,7 @@ export function parseChangelogDraft(answer) {
 
 /**
  * Checks the sections of a draft whose lines are already known to be headings, entries,
- * continuations or blank: every entry (and continuation) belongs to a section, every section is
+ * or blank: every entry belongs to a section, every section is
  * one of {@link CHANGE_TYPES}, appears once, follows their order and has at least one entry.
  *
  * @param {readonly string[]} lines - Draft lines.

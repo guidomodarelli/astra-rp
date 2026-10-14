@@ -13,11 +13,14 @@ import {
   assertPreservedFilesUnchanged,
   assertUnreleasedEntries,
   closeUnreleasedSection,
+  fillUnreleasedEntries,
   formatReleaseDate,
+  hasOnlyEmptySections,
   prepareChangelogClosing,
   readChangelogUpdateState,
   verifyChangelogUpdate,
 } from "../../src/create-version/changelog.js";
+import { readUnreleased } from "../../src/changelog.js";
 import { createGitReader } from "../../src/create-version/process.js";
 import { DEFAULT_PROJECT_COMMANDS } from "../../src/package-manager.js";
 import { cleanupTemporaryDirectories, createTemporaryDirectory, runGit } from "./support/cli-harness.js";
@@ -205,5 +208,42 @@ describe("closing [Unreleased] in the release commit", () => {
     expect(() => assertUnreleasedEntries(context, verified)).toThrow(expectedFailure);
     expect(() => prepareChangelogClosing(context, verified, "1.1.0", "2026-10-13")).toThrow(expectedFailure);
     expect(readFileSync(changelogPath)).toEqual(latin1Changelog);
+  });
+});
+
+describe("drafting [Unreleased] entries", () => {
+  it.each([
+    {
+      changelogState: "an empty [Unreleased] with empty sections",
+      changelog: "# Cambios\n\n## [Unreleased]\n\n### Added\n\n## [0.1.0] - 2026-01-01\n\n- Viejo.\n",
+      expected: "# Cambios\n\n## [Unreleased]\n\n### Fixed\n\n- Nuevo.\n\n## [0.1.0] - 2026-01-01\n\n- Viejo.\n",
+    },
+    {
+      changelogState: "no [Unreleased] block",
+      changelog: "# Cambios\n\n## [0.1.0] - 2026-01-01\n\n- Viejo.\n",
+      expected: "# Cambios\n\n## [Unreleased]\n\n### Fixed\n\n- Nuevo.\n\n## [0.1.0] - 2026-01-01\n\n- Viejo.\n",
+    },
+    { changelogState: "no file yet", changelog: "", expected: "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Nuevo.\n\n" },
+    {
+      changelogState: "CRLF line breaks",
+      changelog: "# Cambios\r\n\r\n## [Unreleased]\r\n\r\n## [0.1.0] - 2026-01-01\r\n\r\n- Viejo.\r\n",
+      expected: "# Cambios\r\n\r\n## [Unreleased]\r\n\r\n### Fixed\r\n\r\n- Nuevo.\r\n\r\n## [0.1.0] - 2026-01-01\r\n\r\n- Viejo.\r\n",
+    },
+  ])("should write drafted entries into [Unreleased] when the changelog has $changelogState", ({ changelog, expected }) => {
+    // Act and Assert
+    expect(fillUnreleasedEntries(changelog, "### Fixed\n\n- Nuevo.\n")).toBe(expected);
+  });
+
+  it.each([
+    { blockState: "no [Unreleased] block", changelog: "# Cambios\n", draftable: true },
+    { blockState: "an empty block", changelog: "# Cambios\n\n## [Unreleased]\n\n", draftable: true },
+    { blockState: "empty change-type headings", changelog: "# Cambios\r\n\r\n## [Unreleased]\r\n\r\n### Added\r\n\r\n### Fixed\r\n", draftable: true },
+    { blockState: "an HTML comment", changelog: "# Cambios\n\n## [Unreleased]\n\n<!-- Escribí acá las notas del release. -->\n", draftable: false },
+    { blockState: "template text under a heading", changelog: "# Cambios\n\n## [Unreleased]\n\n### Added\n\nPendiente.\n", draftable: false },
+    { blockState: "an unknown section heading", changelog: "# Cambios\n\n## [Unreleased]\n\n### Mejoras\n", draftable: false },
+    { blockState: "entries", changelog: "# Cambios\n\n## [Unreleased]\n\n- Nuevo.\n", draftable: false },
+  ])("should tell whether drafting can replace [Unreleased] when it holds $blockState", ({ changelog, draftable }) => {
+    // Act and Assert
+    expect(hasOnlyEmptySections(readUnreleased(changelog))).toBe(draftable);
   });
 });

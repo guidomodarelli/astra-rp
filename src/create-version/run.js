@@ -75,8 +75,17 @@ import {
 import { describeReleaseTypes, loadCreateVersionConfig } from "./config.js";
 import { ciWorkflowPath } from "./ci-config.js";
 import { describeChangelogDraftProvider, draftChangelogEntries } from "./changelog-draft.js";
-import { fillUnreleasedEntries } from "../changelog.js";
-import { assertPreservedFilesUnchanged, assertUnreleasedEntries, describeMissingUnreleasedEntries, formatReleaseDate, prepareChangelogClosing, verifyChangelogUpdate } from "./changelog.js";
+import { readUnreleased } from "../changelog.js";
+import {
+  assertPreservedFilesUnchanged,
+  assertUnreleasedEntries,
+  describeMissingUnreleasedEntries,
+  fillUnreleasedEntries,
+  formatReleaseDate,
+  hasOnlyEmptySections,
+  prepareChangelogClosing,
+  verifyChangelogUpdate,
+} from "./changelog.js";
 import { ReleaseStepError, describeError } from "./errors.js";
 import { readJsonManifest } from "./json.js";
 import {
@@ -663,8 +672,8 @@ function isChangelogUnchangedSinceDraft(changelogPath, originalBytes) {
  * valid answer to the changelog (creating it when missing). The entries are not confirmed: the
  * release commits them, so they are printed for the user to see. When every agent fails, the
  * reasons are printed and the release keeps its changelog blocker. A changelog that is not a
- * regular file (for example a symlink) is never drafted, and one that changed while the agent ran
- * is left untouched.
+ * regular file (for example a symlink) is never drafted, nor one whose `[Unreleased]` holds text
+ * other than empty change-type headings, and one that changed while the agent ran is left untouched.
  *
  * @param {string} repositoryRoot - Repository root.
  * @param {ResolvedCreateVersionConfig} config - Project configuration with `changelogDraft`.
@@ -688,6 +697,10 @@ async function draftMissingChangelog(repositoryRoot, config, state) {
     }
   } catch (error) {
     print(`${ICON.warning} ${paint("yellow", `No se redactó ${CHANGELOG_FILE}: no se pudo leer como texto UTF-8 (${describeError(error)}).`)}`);
+    return false;
+  }
+  if (!hasOnlyEmptySections(readUnreleased(currentChangelog))) {
+    print(`${ICON.warning} ${paint("yellow", `No se redactó ${CHANGELOG_FILE}: [Unreleased] tiene texto que no es una entrada; agregá las entradas a mano.`)}`);
     return false;
   }
 

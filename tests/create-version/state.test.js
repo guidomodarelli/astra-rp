@@ -466,6 +466,37 @@ describe("beez-rp create-version command", () => {
   );
 
   it(
+    "should not call any agent when [Unreleased] holds text that is not an entry, leaving the changelog untouched",
+    async () => {
+      // Arrange
+      const { repositoryRoot, remoteRoot } = createReleasedRepository();
+      pushEmptyChangelogWithDrafting(repositoryRoot);
+      const changelogPath = path.join(repositoryRoot, "CHANGELOG.md");
+      const notesWithComment = "# Changelog\n\n## [Unreleased]\n\n<!-- Escribí acá las notas del release. -->\n";
+      writeFileSync(changelogPath, notesWithComment);
+      runGit(["add", "-A"], repositoryRoot);
+      runGit(["commit", "--quiet", "-m", "docs: leave release instructions"], repositoryRoot);
+      runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
+      const fakeAgents = installFakeAgents({ claude: { kind: "answer", text: "### Added\n\n- Entrada redactada." } });
+      const head = runGit(["rev-parse", "HEAD"], repositoryRoot);
+
+      // Act
+      const release = await runCliAsync(repositoryRoot, ["--bump", "minor"], withFakeAgentsFirst(fakeAgents.binDirectory));
+
+      // Assert
+      expect(release.status, release.output).toBe(1);
+      const output = flattenOutput(release.output);
+      expect(output).toContain("[Unreleased] tiene texto que no es una entrada; agregá las entradas a mano");
+      expect(output).toContain("La sección ## [Unreleased] de CHANGELOG.md no tiene entradas");
+      expect(fakeAgents.readCalls()).toEqual([]);
+      expect(readFileSync(changelogPath, "utf8")).toBe(notesWithComment);
+      expect(runGit(["rev-parse", "HEAD"], repositoryRoot)).toBe(head);
+      expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
+    },
+    GIT_FIXTURE_TEST_TIMEOUT_MS
+  );
+
+  it(
     "should not overwrite a changelog edited while the agent was drafting it",
     async () => {
       // Arrange

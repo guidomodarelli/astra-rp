@@ -6,23 +6,21 @@
  * Published history, including legacy unbracketed headings, is preserved.
  *
  * `beez-rp create-version` does not generate entries from commits: it requires entries under
- * `[Unreleased]`, written by hand or, with `changelogDraft`, drafted by an agent CLI and written with
- * {@link fillUnreleasedEntries}, and in the release commit only renames that heading to
- * `## [X.Y.Z] - YYYY-MM-DD` and adds an empty `[Unreleased]` on top, keeping any section names.
+ * `[Unreleased]`, written by hand or, with `changelogDraft`, drafted by an agent CLI, and in the
+ * release commit only renames that heading to `## [X.Y.Z] - YYYY-MM-DD` and adds an empty
+ * `[Unreleased]` on top, keeping any section names.
  *
  * @module changelog
  */
 
+import { listBlocks, replaceUnreleasedBody } from "./changelog-blocks.js";
 import {
   CHANGE_TYPES,
   ENTRY_LINE_PATTERN,
   LEADING_WHITESPACE_PATTERN,
   LINE_BREAK_PATTERN,
-  RELEASE_HEADING_PATTERN,
   SECTION_HEADING_PATTERN,
   COMMIT_SHORT_SHA_LENGTH,
-  CHANGELOG_TITLE,
-  CRLF_LINE_BREAK,
   LF_LINE_BREAK,
   UNRELEASED_HEADING,
   UNRELEASED_LINE_PATTERN,
@@ -44,63 +42,9 @@ export function fillUnreleasedFromCommits(changelog, commits) {
 }
 
 /**
- * Writes drafted entries as the body of `[Unreleased]`, replacing what the block held (an empty
- * block, or empty section headings). Creates the block, or the document, when missing, keeps the
- * released history and uses the line breaks of a CRLF changelog.
- *
- * @param {string} changelog - Existing contents, or an empty string for a new file.
- * @param {string} entries - `### Section` headings and `- ` entries, without the `## [Unreleased]` heading.
- * @returns {string} Changelog whose `[Unreleased]` block holds `entries`.
- */
-export function fillUnreleasedEntries(changelog, entries) {
-  const lineBreak = changelog.includes(CRLF_LINE_BREAK) ? CRLF_LINE_BREAK : LF_LINE_BREAK;
-  return replaceUnreleasedBody(changelog, entries.trim().split(LINE_BREAK_PATTERN).join(lineBreak), lineBreak);
-}
-
-/**
- * Replaces the `[Unreleased]` block with `body`, or inserts the block above the newest release.
- *
- * @param {string} changelog - Existing contents, or an empty string for a new file.
- * @param {string} body - New block body, already using `lineBreak`.
- * @param {string} lineBreak - Line break written around the body.
- * @returns {string} Changelog with the new `[Unreleased]` block.
- */
-function replaceUnreleasedBody(changelog, body, lineBreak) {
-  const replacement = `${UNRELEASED_HEADING}${lineBreak}${lineBreak}${body}${lineBreak}${lineBreak}`;
-  const blocks = listBlocks(changelog);
-  const unreleased = blocks.find((block) => UNRELEASED_LINE_PATTERN.test(block.heading));
-  if (unreleased) {
-    return `${changelog.slice(0, unreleased.start)}${replacement}${changelog.slice(unreleased.end)}`;
-  }
-  const insertion = blocks[0]?.start ?? changelog.length;
-  const prefix = changelog.slice(0, insertion).trimEnd() || CHANGELOG_TITLE;
-  return `${prefix}${lineBreak}${lineBreak}${replacement}${changelog.slice(insertion)}`;
-}
-
-/**
- * @typedef {{ label: string, heading: string, start: number, bodyStart: number, end: number }} ChangelogBlock
+ * @typedef {import("./changelog-blocks.js").ChangelogBlock} ChangelogBlock
  * @typedef {{ exists: boolean, entryCount: number, unknownSections: string[], body: string }} UnreleasedState
  */
-
-/**
- * Splits the changelog into release blocks in document order.
- *
- * @param {string} changelog - CHANGELOG.md contents.
- * @returns {ChangelogBlock[]} Blocks.
- */
-function listBlocks(changelog) {
-  const headings = [...changelog.matchAll(RELEASE_HEADING_PATTERN)];
-  return headings.map((match, index) => {
-    const start = match.index ?? 0;
-    return {
-      label: match[1],
-      heading: match[0],
-      start,
-      bodyStart: start + match[0].length,
-      end: headings[index + 1]?.index ?? changelog.length,
-    };
-  });
-}
 
 /**
  * Counts the change entries of a block body.

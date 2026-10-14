@@ -19,7 +19,8 @@ import {
   CI_TLS_VERIFICATION_DISABLING_VARIABLES, LOCKFILE_GITHUB_PACKAGES_HTTP_URL, LOCKFILE_GITHUB_PACKAGES_HTTP_URL_PATTERN,
   NPM_CONFIG_DISABLED_VALUE, NPM_CONFIG_STRICT_SSL_KEY,
 } from "../constants/ci-release.js";
-import { CREATE_VERSION_CONFIG_FILES, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
+import { CREATE_VERSION_CONFIG_FILES, CREATE_VERSION_FLAG, PINNED_NODE_VERSION_FILE, PROJECT_NPM_CONFIG_FILE, VERSION_PREFIX_PATTERN } from "../constants/create-version.js";
+import { describeCreateVersionWithOptions } from "../package-manager.js";
 import { LOCKFILE_NAMES, PACKAGE_MANAGER } from "../constants/package-manager.js";
 import { ciWorkflowPath } from "./ci-config.js";
 import { requiresCiPublicationHistory } from "./ci-publication-history.js";
@@ -637,7 +638,7 @@ export async function prepareCiReleaseWorkflow(repositoryRoot, config) {
     ...(config.publication.authentication === OIDC_AUTHENTICATION ? ["  id-token: write"] : []),
     ...(authenticatesGithubPackages ? [`  packages: ${environment.githubTokenWrite ? "write" : "read"}`] : []),
   ].join("\n");
-  const releaseCommand = `${config.commands.createVersion}${manager === PACKAGE_MANAGER.npm ? " --" : ""} --ci-release "$RELEASE_TAG"`;
+  const releaseCommand = `${describeCreateVersionWithOptions(config.commands)} --${CREATE_VERSION_FLAG.ciRelease} "$RELEASE_TAG"`;
   const { deploymentSetup, deployment } = renderVercelSteps(config.ci?.deployment === CI_VERCEL_DEPLOYMENT);
   const deno = config.publication.jsrClient === CI_DENO_JSR_CLIENT && config.publish === JSR_REGISTRY_PROVIDER ? ["      - name: Configurar Deno para JSR", "        uses: denoland/setup-deno@v2", "        with:", `          deno-version: '${CI_DENO_VERSION}'`].join("\n") : "";
   const content = readFileSync(new URL(CI_RELEASE_TEMPLATE_FILE, import.meta.url), "utf8")

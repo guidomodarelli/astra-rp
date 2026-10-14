@@ -16,6 +16,10 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 - `create-version --ci` sin `ci.workflow` configurado corta con un error claro también en una terminal interactiva, en vez de preguntar si configurar CI o seguir en local.
 
+### Fixed
+
+- En proyectos npm, el comando para reenviar un release a CI que muestran los avisos de recuperación y el que recibe el workflow (`npm run create-version -- --retry-ci vX.Y.Z`) incluye el separador `--`; sin él, npm se quedaba con `--retry-ci` y el reintento no se enviaba.
+
 ## [0.8.0] - 2026-10-13
 
 ### Changed

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { DEFAULT_PROJECT_COMMANDS, describeProjectCommands, detectPackageManager, parsePackageManagerField } from "../src/package-manager.js";
+import { DEFAULT_PROJECT_COMMANDS, describeCreateVersionWithOptions, describeProjectCommands, detectPackageManager, parsePackageManagerField } from "../src/package-manager.js";
 
 /** @type {string[]} */
 const temporaryDirectories = [];
@@ -84,5 +84,19 @@ describe("describeProjectCommands", () => {
 
   it("defaults to the pnpm commands", () => {
     expect(DEFAULT_PROJECT_COMMANDS.createVersion).toBe("pnpm create-version");
+  });
+});
+
+describe("describeCreateVersionWithOptions", () => {
+  it.each([
+    // npm reads every option before `--` as its own configuration and would swallow `--retry-ci`.
+    ["npm", "npm run create-version --"],
+    ["pnpm", "pnpm create-version"],
+    ["yarn", "yarn create-version"],
+    ["bun", "bun run create-version"],
+  ])("builds the %s command that receives create-version options", (packageManager, commandWithOptions) => {
+    const commands = describeProjectCommands(/** @type {import("../src/package-manager.js").PackageManagerName} */ (packageManager));
+
+    expect(describeCreateVersionWithOptions(commands)).toBe(commandWithOptions);
   });
 });

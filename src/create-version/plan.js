@@ -45,8 +45,7 @@ import {
 } from "../constants/create-version.js";
 import { RELEASE_TYPE, RELEASE_TYPE_ORDER } from "../constants/versions.js";
 import { compareReleaseVersions, findHighestStableVersion, isReleaseCommitSubject, isStableReleaseVersion, isStableVersionAbove, toReleaseTag } from "../versions.js";
-import { PACKAGE_MANAGER } from "../constants/package-manager.js";
-import { DEFAULT_PROJECT_COMMANDS } from "../package-manager.js";
+import { DEFAULT_PROJECT_COMMANDS, describeCreateVersionWithOptions } from "../package-manager.js";
 import { describeMissingUnreleasedEntries, describeUnreleasedEntriesHint } from "./changelog.js";
 import { describeError } from "./errors.js";
 import { describeNpmAuthProblem, describeNpmFirstPublicationWarning } from "./npm-auth.js";
@@ -142,18 +141,6 @@ export const RELEASE_USAGE = [
 export function buildReleaseUsage(commands = DEFAULT_PROJECT_COMMANDS) {
   const [, ...options] = RELEASE_USAGE.split("\n");
   return [`Uso: ${describeCreateVersionWithOptions(commands)} [opciones]`, ...options].join("\n");
-}
-
-/**
- * Builds the command that runs `create-version` with options. npm reads every option before its
- * `--` separator as its own configuration (`npm run create-version -b M` forwards only `M`), so npm
- * projects need `npm run create-version -- <opciones>`; pnpm, bun and yarn forward them as is.
- *
- * @param {ProjectCommands} commands - Project commands.
- * @returns {string} Command to which the options are appended.
- */
-function describeCreateVersionWithOptions(commands) {
-  return commands.packageManager === PACKAGE_MANAGER.npm ? `${commands.createVersion} ${CREATE_VERSION_FLAG.endOfOptions}` : commands.createVersion;
 }
 
 /** Release type of each short name accepted by `--bump`/`-b`, such as `m` → `minor`. */

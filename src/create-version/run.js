@@ -83,7 +83,7 @@ import {
 } from "./npm.js";
 import { describeNpmPublishFailure, describeNpmTokenSource } from "./npm-auth.js";
 import { restoreLocalChanges, setAsideLocalChanges } from "./local-changes.js";
-import { describeProjectCommands, detectPackageManager } from "../package-manager.js";
+import { describeCreateVersionWithOptions, describeProjectCommands, detectPackageManager } from "../package-manager.js";
 import { buildReleasePlan, buildReleaseUsage, hasFailedNpmLookup, listLocalChangesToSetAside, parseReleaseArguments } from "./plan.js";
 import { createGitReader, listCommits, runCommandLine, runInherited } from "./process.js";
 import { collectReleaseState, findLastRelease } from "./state.js";
@@ -1319,6 +1319,17 @@ const STEP_EXECUTORS = {
 };
 
 /**
+ * Builds the command that dispatches an existing release tag to CI again, with the separator npm needs
+ * to forward `--retry-ci` to the script.
+ * @param {import("../package-manager.js").ProjectCommands} commands - Project commands.
+ * @param {string} tag - Release tag, such as `v1.2.3`.
+ * @returns {string} Retry command.
+ */
+function describeCiRetryCommand(commands, tag) {
+  return `${describeCreateVersionWithOptions(commands)} --${CREATE_VERSION_FLAG.retryCi} ${tag}`;
+}
+
+/**
  * Dispatches the pushed tag without performing any project checks or publication locally.
  * @param {ReleaseContext} context - Prepared release and GitHub adapter.
  * @returns {Promise<void>} Resolves when GitHub accepted the workflow.
@@ -1327,9 +1338,10 @@ const STEP_EXECUTORS = {
 async function dispatchCiReleaseStep(context) {
   const tag = toReleaseTag(requireReleaseVersion(context));
   const workflow = context.config.ci?.workflow;
-  if (!workflow || !context.workflowClient) throw new ReleaseStepError("No hay un workflow disponible para enviar el release.", `Reintentá con ${context.commands.createVersion} --retry-ci ${tag}.`);
+  const retryCommand = describeCiRetryCommand(context.commands, tag);
+  if (!workflow || !context.workflowClient) throw new ReleaseStepError("No hay un workflow disponible para enviar el release.", `Reintentá con ${retryCommand}.`);
   const release = await readCiReleaseIdentity(context.reader, tag);
-  const result = await context.workflowClient.dispatch(workflow, release, `${context.commands.createVersion} --retry-ci ${tag}`);
+  const result = await context.workflowClient.dispatch(workflow, release, retryCommand);
   print(`${ICON.success} ${tag} ${result.status === CI_DISPATCH_STATUS.existing ? "ya tiene una ejecución activa o exitosa" : "enviado a CI"}. Los checks y la publicación se ejecutan en GitHub.`);
   if (result.url) print(`${ICON.info} ${result.url}`);
 }
@@ -1491,7 +1503,7 @@ async function runRetryCi({ repositoryRoot, reader, config, options, workflowCli
     if (options.dryRun) { print(`--dry-run: se reenviaría ${release.tag} a ${releaseWorkflow}; no se cambió nada.`); return 0; }
     const environment = describeCiEnvironment(releaseConfig);
     await workflowClient.preflight(releaseWorkflow, environment.secrets, environment.variables);
-    const submitted = await workflowClient.dispatch(releaseWorkflow, release, `${config.commands.createVersion} --retry-ci ${release.tag}`);
+    const submitted = await workflowClient.dispatch(releaseWorkflow, release, describeCiRetryCommand(config.commands, release.tag));
     print(`${release.tag} ${submitted.status === CI_DISPATCH_STATUS.existing ? "ya tiene una ejecución activa o exitosa" : "enviado a CI"}: ${submitted.url ?? "revisá Actions"}. No se creó otra versión.`);
     return 0;
   } catch (error) {
@@ -1805,7 +1817,7 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
 async function describeReleaseFailureFollowUp(context, remoteUrl) {
   const releaseOnOrigin = await describeReleaseOnOrigin(context, remoteUrl);
   return ["", context.execution === RELEASE_EXECUTION.ci && context.version && context.pushed
-    ? `${ICON.warning} ${toReleaseTag(context.version)} ya está en origin. Revisá Actions y reenviá el mismo release con ${context.commands.createVersion} --retry-ci ${toReleaseTag(context.version)}; no hagas otro bump.`
+    ? `${ICON.warning} ${toReleaseTag(context.version)} ya está en origin. Revisá Actions y reenviá el mismo release con ${describeCiRetryCommand(context.commands, toReleaseTag(context.version))}; no hagas otro bump.`
     : context.ciWorker && context.version ? `${ICON.warning} ${toReleaseTag(context.version)} ya está en origin. Corregí el paso y reintentá el workflow de este mismo tag; no se hizo otro bump ni push.`
     : releaseOnOrigin ? `${ICON.warning} ${paint("bold", releaseOnOrigin)}` : paint("gray", `${context.commands.createVersion} retoma desde el primer paso que falte.`)];
 }

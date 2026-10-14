@@ -28,6 +28,7 @@ import {
 import { DEFAULT_MONOREPO_TAG_FORMAT, TAG_FORMAT_PLACEHOLDER, WORKSPACES_PACKAGES } from "../constants/monorepo.js";
 import { RELEASE_COMMIT_BUILT_IN_FILES } from "../constants/version-files.js";
 import { CHANGELOG_FILE, RELEASE_TIME_ZONE_EXAMPLE, RELEASE_TIME_ZONE_FIELD } from "../constants/changelog.js";
+import { CHANGELOG_DRAFT_FIELD, CHANGELOG_DRAFT_PROVIDER, DEFAULT_CHANGELOG_DRAFT_PROVIDERS } from "../constants/changelog-draft.js";
 import { RELEASE_TYPE, RELEASE_TYPE_ORDER } from "../constants/versions.js";
 import { DEFAULT_PROJECT_COMMANDS, describeProjectCommands, detectPackageManager } from "../package-manager.js";
 import { isRegistryProvider, resolvePublicationOptions } from "./registry-config.js";
@@ -78,6 +79,7 @@ import { CI_CONFIG_EXPORT } from "../constants/ci-release.js";
  *   tagFormat?: string,
  *   ci?: import("./ci-config.js").CiReleaseConfig | null,
  *   releaseTimeZone?: string,
+ *   changelogDraft?: boolean | import("./changelog-draft.js").ChangelogDraftProvider[],
  * }} CreateVersionConfig
  *   `summary` lines replace `{version}` with the released version (in monorepo mode, a line with
  *   `{version}` or `{name}` is printed once per released package). Without `checks`, the release
@@ -95,6 +97,8 @@ import { CI_CONFIG_EXPORT } from "../constants/ci-release.js";
  *   and leaves a new, empty `## [Unreleased]` on top. `releaseTimeZone` is the IANA time zone of that
  *   date (such as `America/Argentina/Buenos_Aires`), in single-package and monorepo mode, locally and
  *   in CI; without it the date is the local day of the machine that creates the release commit.
+ *   `changelogDraft` drafts missing `[Unreleased]` entries with an agent CLI before a new local release
+ *   stops for them: `true` tries Claude Code and then Codex, a list sets which ones and their order.
  *   `preMajorShift` lowers the suggested release type one level while a version is `0.x`
  *   (breaking → minor, features → patch).
  * @typedef {{
@@ -115,6 +119,7 @@ import { CI_CONFIG_EXPORT } from "../constants/ci-release.js";
  *   tagFormat: string | null,
  *   ci: import("./ci-config.js").ResolvedCiReleaseConfig | null,
  *   releaseTimeZone: string | null,
+ *   changelogDraft: import("./changelog-draft.js").ChangelogDraftProvider[],
  *   commands: ProjectCommands,
  * }} ResolvedCreateVersionConfig
  *   `checks` is empty when they are skipped on purpose and `null` when none are configured nor
@@ -213,6 +218,29 @@ function resolveChecks(checks, packageScripts, commands) {
   }
 
   return checks;
+}
+
+/**
+ * Validates `changelogDraft`: `true` tries every agent CLI in the default order (Claude Code, then
+ * Codex), a list chooses which ones and their order, and `false` or no field turns drafting off.
+ *
+ * @param {unknown} changelogDraft - Raw `changelogDraft` field.
+ * @returns {import("./changelog-draft.js").ChangelogDraftProvider[]} Agent CLIs to try, in order; empty when off.
+ * @throws {Error} When the field is neither a boolean nor a non-empty list of distinct known agents.
+ */
+function resolveChangelogDraft(changelogDraft) {
+  if (changelogDraft === undefined || changelogDraft === false) return [];
+  if (changelogDraft === true) return [...DEFAULT_CHANGELOG_DRAFT_PROVIDERS];
+  const knownProviders = /** @type {readonly unknown[]} */ (Object.values(CHANGELOG_DRAFT_PROVIDER));
+  if (
+    !Array.isArray(changelogDraft) ||
+    changelogDraft.length === 0 ||
+    changelogDraft.some((provider) => !knownProviders.includes(provider)) ||
+    new Set(changelogDraft).size !== changelogDraft.length
+  ) {
+    throw invalidField(CHANGELOG_DRAFT_FIELD, `true, false or a non-empty list of distinct agents among ${knownProviders.map((provider) => JSON.stringify(provider)).join(", ")}`);
+  }
+  return /** @type {import("./changelog-draft.js").ChangelogDraftProvider[]} */ ([...changelogDraft]);
 }
 
 /**
@@ -342,6 +370,7 @@ export function resolveCreateVersionConfig(rawConfig, { packageScripts = {}, com
   }
 
   const releaseTimeZone = resolveReleaseTimeZone(config.releaseTimeZone);
+  const changelogDraft = resolveChangelogDraft(config[CHANGELOG_DRAFT_FIELD]);
 
   const configuredVersionFiles = config.versionFiles ?? [];
   if (!isStringList(configuredVersionFiles) || configuredVersionFiles.some((filePath) => !isPathInsideRoot(filePath))) {
@@ -375,6 +404,7 @@ export function resolveCreateVersionConfig(rawConfig, { packageScripts = {}, com
     commands,
     ci,
     releaseTimeZone,
+    changelogDraft,
   };
 }
 

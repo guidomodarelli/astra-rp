@@ -6,6 +6,10 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+### Added
+
+- Opción `changelogDraft` en `beez-rp.config.js`, apagada por defecto: cuando un release nuevo local se cortaría porque `## [Unreleased]` de `CHANGELOG.md` no tiene entradas, `create-version` las redacta con Claude Code y después con Codex (`true`) o con los agentes y el orden de una lista (`["codex", "claude"]`), las escribe sin pedir confirmación y las muestra en la terminal; si ningún agente puede, informa el motivo y el release se corta como antes, y no corre con `--dry-run`, en CI ni en monorepos. Codex puede leer otros archivos de la máquina además del repositorio: para evitarlo, usá `["claude"]`.
+
 ## [0.9.0] - 2026-10-14
 
 ### Added

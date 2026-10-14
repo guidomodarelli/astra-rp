@@ -1,6 +1,7 @@
 /**
  * Verifies manually maintained changelogs and closes their `[Unreleased]` section in the release
- * commit: the entries are written by hand, the version heading and its date by the release.
+ * commit: the entries are written by hand (or drafted with `changelogDraft`), the version heading
+ * and its date by the release.
  *
  * @module create-version/changelog
  */
@@ -9,9 +10,12 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { readUnreleased } from "../changelog.js";
+import { replaceUnreleasedBody } from "../changelog-blocks.js";
 import {
   CRLF_LINE_BREAK,
   LF_LINE_BREAK,
+  LINE_BREAK_PATTERN,
+  SECTION_HEADING_PATTERN,
   RELEASE_DATE_FORMAT_OPTIONS,
   RELEASE_DATE_LOCALE,
   RELEASE_DATE_PAD,
@@ -74,6 +78,32 @@ export async function readChangelogUpdateState(reader, repositoryRoot, filePath,
 export function describeMissingUnreleasedEntries(unreleased, filePath) {
   if (!unreleased.exists) return `${filePath} no tiene una sección ${UNRELEASED_HEADING}`;
   return unreleased.entryCount === 0 ? `La sección ${UNRELEASED_HEADING} de ${filePath} no tiene entradas` : null;
+}
+
+/**
+ * Tells whether `[Unreleased]` holds nothing an agent draft would discard: only blank lines and
+ * `### <change type>` headings. Comments, release instructions or template text written there by
+ * the user (maybe not committed yet) keep the block from being drafted.
+ *
+ * @param {import("../changelog.js").UnreleasedState} unreleased - `[Unreleased]` block of the changelog.
+ * @returns {boolean} Whether drafted entries can replace the block body.
+ */
+export function hasOnlyEmptySections(unreleased) {
+  return unreleased.entryCount === 0 && unreleased.unknownSections.length === 0 && unreleased.body.replace(SECTION_HEADING_PATTERN, "").trim() === "";
+}
+
+/**
+ * Writes drafted entries as the body of `[Unreleased]`, replacing what the block held (an empty
+ * block, or empty section headings; see {@link hasOnlyEmptySections}). Creates the block, or the
+ * document, when missing, keeps the released history and uses the line breaks of a CRLF changelog.
+ *
+ * @param {string} changelog - Existing contents, or an empty string for a new file.
+ * @param {string} entries - `### Section` headings and `- ` entries, without the `## [Unreleased]` heading.
+ * @returns {string} Changelog whose `[Unreleased]` block holds `entries`.
+ */
+export function fillUnreleasedEntries(changelog, entries) {
+  const lineBreak = changelog.includes(CRLF_LINE_BREAK) ? CRLF_LINE_BREAK : LF_LINE_BREAK;
+  return replaceUnreleasedBody(changelog, entries.trim().split(LINE_BREAK_PATTERN).join(lineBreak), lineBreak);
 }
 
 /**

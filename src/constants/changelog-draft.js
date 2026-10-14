@@ -1,0 +1,180 @@
+/**
+ * Contract of the `[Unreleased]` entries `create-version` drafts with an agent CLI (Claude Code or
+ * Codex) when `changelogDraft` is configured and the release would stop for a missing changelog.
+ *
+ * @module constants/changelog-draft
+ */
+
+/** Configuration field that turns on the drafting and orders the agent CLIs it tries. */
+export const CHANGELOG_DRAFT_FIELD = "changelogDraft";
+
+/** Agent CLIs that can draft the entries. */
+export const CHANGELOG_DRAFT_PROVIDER = Object.freeze({ claude: "claude", codex: "codex" });
+
+/** Order tried with `changelogDraft: true`: Claude Code first, Codex when Claude Code fails or has no quota left. */
+export const DEFAULT_CHANGELOG_DRAFT_PROVIDERS = Object.freeze([CHANGELOG_DRAFT_PROVIDER.claude, CHANGELOG_DRAFT_PROVIDER.codex]);
+
+/** Names printed for each agent CLI. */
+export const CHANGELOG_DRAFT_PROVIDER_LABELS = Object.freeze({ [CHANGELOG_DRAFT_PROVIDER.claude]: "Claude Code", [CHANGELOG_DRAFT_PROVIDER.codex]: "Codex" });
+
+/** Executable of each agent CLI, resolved from `PATH`. */
+export const CHANGELOG_DRAFT_EXECUTABLES = Object.freeze({ [CHANGELOG_DRAFT_PROVIDER.claude]: "claude", [CHANGELOG_DRAFT_PROVIDER.codex]: "codex" });
+
+/**
+ * Prefix of the isolated workspace the agents run in: a temporary directory outside the repository,
+ * removed when the drafting ends.
+ */
+export const CHANGELOG_DRAFT_DIRECTORY_PREFIX = "beez-rp-changelog-draft-";
+
+/**
+ * Directory of the workspace with the files Git tracks at `HEAD` (from `git checkout-index`): no `.git`,
+ * no untracked or ignored files, so local credentials such as an untracked `.env` or `.npmrc` stay
+ * out of the agents' reach.
+ */
+export const CHANGELOG_DRAFT_SNAPSHOT_DIRECTORY = "repository";
+
+/** Directory of the workspace with the release context beez-rp writes for the agents. */
+export const CHANGELOG_DRAFT_CONTEXT_DIRECTORY = "release-context";
+
+/** Release context file with the diff of the release range, without the changelog itself. */
+export const CHANGELOG_DRAFT_DIFF_FILE = "changes.diff";
+
+/** Release context file with the `git log --stat` of the release range. */
+export const CHANGELOG_DRAFT_LOG_FILE = "commits.log";
+
+/** `rmSync` retries when removing the workspace, while Windows releases the files of a stopped agent. */
+export const WORKSPACE_REMOVAL_RETRIES = Object.freeze({ maxRetries: 10, retryDelay: 100 });
+
+/**
+ * Settings file, at the workspace root, that Claude Code loads with `--settings`: its file tools
+ * refuse reads outside the working directory in every permission mode, even when the user's own
+ * settings allow them.
+ */
+export const CLAUDE_DRAFT_SETTINGS_FILE = "claude-settings.json";
+
+/** Contents of {@link CLAUDE_DRAFT_SETTINGS_FILE}. */
+export const CLAUDE_DRAFT_SETTINGS = Object.freeze({ permissions: Object.freeze({ blockReadsOutsideWorkingDirectories: true }) });
+
+/**
+ * Claude Code in print mode, inside the isolated workspace, with only its file tools (`Read`,
+ * `Grep`, `Glob`): no Bash, so no command can write files, and `--strict-mcp-config` without
+ * `--mcp-config` loads no MCP server. Reads inside the working directory need no approval; reads
+ * outside it need one, which `dontAsk` denies instead of asking (Claude Code documentation,
+ * "Configure permissions"), and {@link CLAUDE_DRAFT_SETTINGS_FILE} also refuses them.
+ * `--restricted` (Claude Code v2.1.248 or later) loads only managed settings and `--settings`, not
+ * the user's or the project's, so an inherited `permissions.additionalDirectories` cannot widen the
+ * reads, and confines the file tools to the working directories (Claude Code documentation, "CLI
+ * reference", https://code.claude.com/docs/en/cli-reference). `--no-session-persistence` keeps the
+ * run, with its prompt and the repository excerpts it read, off the disk and not resumable, as
+ * `--ephemeral` does for Codex. Every argument is fixed, so a Windows `.cmd` shim receives no
+ * variable path on its command line. The answer comes back as JSON.
+ */
+export const CLAUDE_DRAFT_ARGUMENTS = Object.freeze([
+  "-p",
+  "--restricted",
+  "--no-session-persistence",
+  "--output-format",
+  "json",
+  "--permission-mode",
+  "dontAsk",
+  "--tools",
+  "Read,Grep,Glob",
+  "--strict-mcp-config",
+  "--settings",
+  CLAUDE_DRAFT_SETTINGS_FILE,
+]);
+
+/** `--output-format json` result that reports a successful answer. */
+export const CLAUDE_SUCCESS_SUBTYPE = "success";
+
+/** File, at the workspace root, where Codex writes its last message (relative to its working directory). */
+export const CODEX_LAST_MESSAGE_FILE = "last-message.md";
+
+/**
+ * Codex in non-interactive mode inside the isolated workspace (its working directory, which is not
+ * a Git repository), sandboxed read-only, without saving the session. Its last message goes to
+ * {@link CODEX_LAST_MESSAGE_FILE} and the prompt comes from stdin (`-`). Every argument is fixed,
+ * so a Windows `.cmd` shim receives no variable path on its command line.
+ *
+ * Residual risk: Codex 0.162 documents no option that limits reads to one directory or turns off
+ * its shell tool, and `read-only` blocks writes but not reads. The workspace keeps the repository's
+ * untracked credentials away, yet Codex could still read other files of the host.
+ */
+export const CODEX_DRAFT_ARGUMENTS = Object.freeze([
+  "exec",
+  "--sandbox",
+  "read-only",
+  "--skip-git-repo-check",
+  "--ephemeral",
+  "--color",
+  "never",
+  "--output-last-message",
+  CODEX_LAST_MESSAGE_FILE,
+  "-",
+]);
+
+/** Time an agent CLI has to explore the repository and answer before the next one is tried. */
+export const CHANGELOG_DRAFT_TIMEOUT_MS = 600_000;
+
+/** Characters of an agent failure shown to the user. */
+export const CHANGELOG_DRAFT_MAX_FAILURE_CHARACTERS = 300;
+
+/** Markdown code fence an agent may wrap its answer in. */
+export const MARKDOWN_FENCE_PATTERN = /^```[^\n]*\n([\s\S]*?)\n```$/u;
+
+/**
+ * A C0 or C1 control character other than a line break or a tab, such as the ESC that starts a
+ * terminal escape sequence (OSC, CSI): an agent answer holding one is rejected before it is shown
+ * or written.
+ */
+// oxlint-disable-next-line no-control-regex -- matching control characters is the purpose of this pattern.
+export const CONTROL_CHARACTER_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
+
+/** Every character {@link CONTROL_CHARACTER_PATTERN} matches, to remove them from agent text shown in the terminal. */
+export const CONTROL_CHARACTERS_PATTERN = new RegExp(CONTROL_CHARACTER_PATTERN.source, "gu");
+
+/**
+ * A line a draft may hold: blank, a `### Section` heading or a complete `- ` entry. Each change is a
+ * single `- ` line, so an indented continuation of an entry is rejected.
+ */
+export const CHANGELOG_DRAFT_LINE_PATTERN = /^(?:\s*|### +\S.*|\s*- +\S.*)$/u;
+
+/** An indented line that is not an entry: an entry split across several lines, which a draft must not hold. */
+export const CHANGELOG_DRAFT_CONTINUATION_LINE_PATTERN = /^\s+\S/u;
+
+/** A level-2 heading such as `## [Unreleased]` or `## [1.2.0] - 2026-01-01`, which the draft must not contain. */
+export const RELEASE_LEVEL_HEADING_PATTERN = /^##(?!#)/mu;
+
+/** A single `### Section` line of a draft, capturing the section name. */
+export const CHANGELOG_DRAFT_SECTION_PATTERN = /^### +(.+?)\s*$/u;
+
+/** A blank line of a draft. */
+export const BLANK_LINE_PATTERN = /^\s*$/u;
+
+/** Windows command that resolves an executable on `PATH`, including the `.cmd` shims npm installs. */
+export const WINDOWS_EXECUTABLE_LOOKUP_COMMAND = "where";
+
+/** Files Windows can run; `where` also lists the extensionless shell script next to an npm `.cmd` shim. */
+export const WINDOWS_RUNNABLE_FILE_PATTERN = /\.(?:exe|com|cmd|bat)$/iu;
+
+/** Windows scripts that only a shell can run, such as the `claude.cmd` shim npm installs. */
+export const WINDOWS_SHELL_SCRIPT_PATTERN = /\.(?:cmd|bat)$/iu;
+
+/**
+ * Characters `cmd.exe` would interpret inside a double-quoted argument: `"` ends the quotes, `%`
+ * and `!` (with delayed expansion) expand variables, and `^&|<>` are its operators. The shim path
+ * and every agent argument on a Windows shell command line are checked against it.
+ */
+export const UNSAFE_SHELL_ARGUMENT_PATTERN = /["%!^&|<>]/u;
+
+/**
+ * Temporary Git index (`GIT_INDEX_FILE`), inside the workspace, that checks out the snapshot
+ * without touching the repository index; removed once the snapshot is written.
+ */
+export const CHANGELOG_DRAFT_INDEX_FILE = "snapshot.index";
+
+/**
+ * Release context file with the working tree changelog the agents will update, so they see it
+ * even when it is untracked or only changed locally.
+ */
+export const CHANGELOG_DRAFT_CURRENT_CHANGELOG_FILE = "CHANGELOG.md";

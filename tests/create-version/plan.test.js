@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { MIGRATION_STATUS, NPM_AUTH_STATUS, NPM_LOOKUP_STATUS, NPM_TOKEN_SOURCE, PULL_REQUEST_STATE, RELEASE_MODE, RELEASE_STEP } from "../../src/constants/create-version.js";
 import { RELEASE_USAGE, buildReleasePlan, buildReleaseUsage, listLocalChangesToSetAside, parseReleaseArguments } from "../../src/create-version/plan.js";
+import { CREATE_VERSION_FLAG as PUBLIC_CREATE_VERSION_FLAG } from "../../src/constants/index.js";
 import { describeProjectCommands } from "../../src/package-manager.js";
 import { resolveRequestedVersion } from "../../src/versions.js";
 import { ALLOWED_NEXT_VERSIONS, CURRENT_STABLE_VERSION, REJECTED_VERSION_BUMP_CASES } from "../../src/testing.js";
@@ -651,6 +652,10 @@ describe("parseReleaseArguments release type and execution shortcuts", () => {
     expect(parseReleaseArguments(["-h"]).help).toBe(true);
     expect(parseReleaseArguments(["-l", "-m", "--dry-run"])).toMatchObject({ bump: "minor", execution: "local", dryRun: true });
     expect(parseReleaseArguments(["--ci", "-M"])).toMatchObject({ bump: "major", execution: "ci" });
+  });
+
+  it("should keep the public helpShort flag of beez-rp/constants opening the help", () => {
+    expect(parseReleaseArguments([`-${PUBLIC_CREATE_VERSION_FLAG.helpShort}`]).help).toBe(true);
   });
 
   it.each([

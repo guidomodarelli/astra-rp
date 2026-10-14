@@ -245,6 +245,8 @@ export const CREATE_VERSION_FLAG = Object.freeze({
   ciRelease: "ci-release",
   retryCi: "retry-ci",
   help: "help",
+  /** Short flag of `--help`; public alias of the `h` entry of `CREATE_VERSION_SHORT_FLAG`. */
+  helpShort: "h",
   endOfOptions: "--",
 });
 
@@ -271,7 +273,7 @@ export const CREATE_VERSION_SHORT_FLAG = Object.freeze({
   [RELEASE_TYPE_SHORT_NAME.minor]: CREATE_VERSION_FLAG.minor,
   [RELEASE_TYPE_SHORT_NAME.major]: CREATE_VERSION_FLAG.major,
   l: CREATE_VERSION_FLAG.local,
-  h: CREATE_VERSION_FLAG.help,
+  [CREATE_VERSION_FLAG.helpShort]: CREATE_VERSION_FLAG.help,
 });
 
 /** Single-dash token of a short flag, with an optional `=value`: `-l`, `-sv=1.3.0`; not `--local`. */

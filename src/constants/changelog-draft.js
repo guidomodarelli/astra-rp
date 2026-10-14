@@ -60,12 +60,19 @@ export const CLAUDE_DRAFT_SETTINGS = Object.freeze({ permissions: Object.freeze(
  * `Grep`, `Glob`): no Bash, so no command can write files, and `--strict-mcp-config` without
  * `--mcp-config` loads no MCP server. Reads inside the working directory need no approval; reads
  * outside it need one, which `dontAsk` denies instead of asking (Claude Code documentation,
- * "Configure permissions"), and {@link CLAUDE_DRAFT_SETTINGS_FILE} also refuses them. Every
- * argument is fixed, so a Windows `.cmd` shim receives no variable path on its command line. The
- * answer comes back as JSON.
+ * "Configure permissions"), and {@link CLAUDE_DRAFT_SETTINGS_FILE} also refuses them.
+ * `--restricted` (Claude Code v2.1.248 or later) loads only managed settings and `--settings`, not
+ * the user's or the project's, so an inherited `permissions.additionalDirectories` cannot widen the
+ * reads, and confines the file tools to the working directories (Claude Code documentation, "CLI
+ * reference", https://code.claude.com/docs/en/cli-reference). `--no-session-persistence` keeps the
+ * run, with its prompt and the repository excerpts it read, off the disk and not resumable, as
+ * `--ephemeral` does for Codex. Every argument is fixed, so a Windows `.cmd` shim receives no
+ * variable path on its command line. The answer comes back as JSON.
  */
 export const CLAUDE_DRAFT_ARGUMENTS = Object.freeze([
   "-p",
+  "--restricted",
+  "--no-session-persistence",
   "--output-format",
   "json",
   "--permission-mode",
@@ -114,6 +121,17 @@ export const CHANGELOG_DRAFT_MAX_FAILURE_CHARACTERS = 300;
 
 /** Markdown code fence an agent may wrap its answer in. */
 export const MARKDOWN_FENCE_PATTERN = /^```[^\n]*\n([\s\S]*?)\n```$/u;
+
+/**
+ * A C0 or C1 control character other than a line break or a tab, such as the ESC that starts a
+ * terminal escape sequence (OSC, CSI): an agent answer holding one is rejected before it is shown
+ * or written.
+ */
+// oxlint-disable-next-line no-control-regex -- matching control characters is the purpose of this pattern.
+export const CONTROL_CHARACTER_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
+
+/** Every character {@link CONTROL_CHARACTER_PATTERN} matches, to remove them from agent text shown in the terminal. */
+export const CONTROL_CHARACTERS_PATTERN = new RegExp(CONTROL_CHARACTER_PATTERN.source, "gu");
 
 /** A line a draft may hold: blank, a `### Section` heading, a `- ` entry or an indented continuation. */
 export const CHANGELOG_DRAFT_LINE_PATTERN = /^(?:\s*|### +\S.*|\s*- +\S.*|\s+\S.*)$/u;

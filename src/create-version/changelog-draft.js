@@ -33,6 +33,8 @@ import {
   CLAUDE_SUCCESS_SUBTYPE,
   CODEX_DRAFT_ARGUMENTS,
   CODEX_LAST_MESSAGE_FILE,
+  CONTROL_CHARACTER_PATTERN,
+  CONTROL_CHARACTERS_PATTERN,
   MARKDOWN_FENCE_PATTERN,
   RELEASE_LEVEL_HEADING_PATTERN,
   UNSAFE_SHELL_ARGUMENT_PATTERN,
@@ -103,14 +105,16 @@ export function buildChangelogDraftPrompt({ packageName, changelogPath, lastRele
 }
 
 /**
- * Checks an agent answer before it reaches the changelog: an optional Markdown fence is removed,
- * and the rest must be Keep a Changelog sections and nothing else, with the structure
+ * Checks an agent answer before it reaches the terminal or the changelog: an answer with control
+ * characters (see {@link CONTROL_CHARACTER_PATTERN}) is rejected, an optional Markdown fence is
+ * removed, and the rest must be Keep a Changelog sections and nothing else, with the structure
  * {@link findSectionStructureProblem} requires.
  *
  * @param {string} answer - Text the agent answered.
  * @returns {ParsedChangelogDraft} Entries to write, or why the answer cannot be used.
  */
 export function parseChangelogDraft(answer) {
+  if (CONTROL_CHARACTER_PATTERN.test(answer)) return { entries: null, reason: "la respuesta incluye caracteres de control" };
   const trimmed = answer.trim();
   const entries = (trimmed.match(MARKDOWN_FENCE_PATTERN)?.[1] ?? trimmed).trim();
 
@@ -360,12 +364,13 @@ function describeFailedRun(status, message) {
 }
 
 /**
- * Shortens agent text shown in the terminal to its first line, up to a fixed length.
+ * Shortens agent text shown in the terminal to its first line, up to a fixed length, without its
+ * control characters, so no terminal escape sequence of the agent reaches the terminal.
  *
  * @param {string} text - Agent text.
  * @returns {string} Shortened text.
  */
 function truncate(text) {
-  const firstLine = text.trim().split(LINE_BREAK_PATTERN)[0] ?? "";
+  const firstLine = text.replace(CONTROL_CHARACTERS_PATTERN, "").trim().split(LINE_BREAK_PATTERN)[0] ?? "";
   return firstLine.length > CHANGELOG_DRAFT_MAX_FAILURE_CHARACTERS ? `${firstLine.slice(0, CHANGELOG_DRAFT_MAX_FAILURE_CHARACTERS)}…` : firstLine;
 }

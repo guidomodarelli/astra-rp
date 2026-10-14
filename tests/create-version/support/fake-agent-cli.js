@@ -15,9 +15,10 @@ import { createTemporaryDirectory } from "./cli-harness.js";
 /**
  * @typedef {{ filePath: string, content: string }} FakeAgentTouch
  *   File the fake agent overwrites with `content` before answering, as an edit made while it ran.
- * @typedef {{ kind: "answer", text: string, touch?: FakeAgentTouch } | { kind: "quota" } | { kind: "sleep" }} FakeAgentBehavior
+ * @typedef {{ kind: "answer", text: string, touch?: FakeAgentTouch } | { kind: "quota" } | { kind: "fail", message: string } | { kind: "sleep" }} FakeAgentBehavior
  *   `answer` returns `text` as the agent answer (after writing `touch`, when given), `quota` fails as
- *   an exhausted subscription does and `sleep` never answers.
+ *   an exhausted subscription does, `fail` exits with code 1 after printing `message` to stderr and
+ *   `sleep` never answers.
  * @typedef {{ name: string, cwd: string, args: string[], prompt: string, files: string[], diff: string | null, changelog: string | null }} FakeAgentCall
  *   `files` lists every file under the working directory (relative, with `/`) when the agent
  *   started, `diff` is the release diff it found there and `changelog` the current changelog, if any.
@@ -57,6 +58,7 @@ process.stdin.on("end", () => {
   const changelog = existsSync(${JSON.stringify(WORKSPACE_CHANGELOG_PATH)}) ? readFileSync(${JSON.stringify(WORKSPACE_CHANGELOG_PATH)}, "utf8") : null;
   appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ name, cwd: process.cwd(), args, prompt, files, diff, changelog }) + "\\n");
   if (behavior.kind === "sleep") { setInterval(() => {}, 1000); return; }
+  if (behavior.kind === "fail") { process.stderr.write(behavior.message); process.exit(1); }
   if (behavior.touch) writeFileSync(behavior.touch.filePath, behavior.touch.content);
   if (name === "claude") {
     const quota = behavior.kind === "quota";

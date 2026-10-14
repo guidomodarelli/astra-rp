@@ -45,6 +45,7 @@ import {
 } from "../constants/create-version.js";
 import { RELEASE_TYPE, RELEASE_TYPE_ORDER } from "../constants/versions.js";
 import { compareReleaseVersions, findHighestStableVersion, isReleaseCommitSubject, isStableReleaseVersion, isStableVersionAbove, toReleaseTag } from "../versions.js";
+import { PACKAGE_MANAGER } from "../constants/package-manager.js";
 import { DEFAULT_PROJECT_COMMANDS } from "../package-manager.js";
 import { describeMissingUnreleasedEntries, describeUnreleasedEntriesHint } from "./changelog.js";
 import { describeError } from "./errors.js";
@@ -140,19 +141,35 @@ export const RELEASE_USAGE = [
  */
 export function buildReleaseUsage(commands = DEFAULT_PROJECT_COMMANDS) {
   const [, ...options] = RELEASE_USAGE.split("\n");
-  return [`Uso: ${commands.createVersion} [opciones]`, ...options].join("\n");
+  return [`Uso: ${describeCreateVersionWithOptions(commands)} [opciones]`, ...options].join("\n");
+}
+
+/**
+ * Builds the command that runs `create-version` with options. npm reads every option before its
+ * `--` separator as its own configuration (`npm run create-version -b M` forwards only `M`), so npm
+ * projects need `npm run create-version -- <opciones>`; pnpm, bun and yarn forward them as is.
+ *
+ * @param {ProjectCommands} commands - Project commands.
+ * @returns {string} Command to which the options are appended.
+ */
+function describeCreateVersionWithOptions(commands) {
+  return commands.packageManager === PACKAGE_MANAGER.npm ? `${commands.createVersion} ${CREATE_VERSION_FLAG.endOfOptions}` : commands.createVersion;
 }
 
 /** Release type of each short name accepted by `--bump`/`-b`, such as `m` → `minor`. */
 const RELEASE_TYPE_BY_SHORT_NAME = Object.freeze(Object.fromEntries(Object.entries(RELEASE_TYPE_SHORT_NAME).map(([releaseType, shortName]) => [shortName, releaseType])));
 
-/** `parseArgs` options of `create-version`, all long: short flags are expanded before parsing. */
+/**
+ * `parseArgs` options of `create-version`, all long: short flags are expanded before parsing. Flags
+ * with a value keep every occurrence (`multiple`) so a repeated flag with another value is rejected
+ * instead of silently keeping the last one.
+ */
 const RELEASE_ARGUMENT_OPTIONS = Object.freeze({
-  [CREATE_VERSION_FLAG.bump]: { type: /** @type {const} */ ("string") },
+  [CREATE_VERSION_FLAG.bump]: { type: /** @type {const} */ ("string"), multiple: /** @type {const} */ (true) },
   [CREATE_VERSION_FLAG.patch]: { type: /** @type {const} */ ("boolean"), default: false },
   [CREATE_VERSION_FLAG.minor]: { type: /** @type {const} */ ("boolean"), default: false },
   [CREATE_VERSION_FLAG.major]: { type: /** @type {const} */ ("boolean"), default: false },
-  [CREATE_VERSION_FLAG.setVersion]: { type: /** @type {const} */ ("string") },
+  [CREATE_VERSION_FLAG.setVersion]: { type: /** @type {const} */ ("string"), multiple: /** @type {const} */ (true) },
   [CREATE_VERSION_FLAG.dryRun]: { type: /** @type {const} */ ("boolean"), default: false },
   [CREATE_VERSION_FLAG.skipUnpublished]: { type: /** @type {const} */ ("boolean"), default: false },
   [CREATE_VERSION_FLAG.ignoreLocalChanges]: { type: /** @type {const} */ ("boolean"), default: false },
@@ -160,8 +177,8 @@ const RELEASE_ARGUMENT_OPTIONS = Object.freeze({
   [CREATE_VERSION_FLAG.local]: { type: /** @type {const} */ ("boolean"), default: false },
   [CREATE_VERSION_FLAG.ci]: { type: /** @type {const} */ ("boolean"), default: false },
   [CREATE_VERSION_FLAG.setupCi]: { type: /** @type {const} */ ("boolean"), default: false },
-  [CREATE_VERSION_FLAG.ciRelease]: { type: /** @type {const} */ ("string") },
-  [CREATE_VERSION_FLAG.retryCi]: { type: /** @type {const} */ ("string") },
+  [CREATE_VERSION_FLAG.ciRelease]: { type: /** @type {const} */ ("string"), multiple: /** @type {const} */ (true) },
+  [CREATE_VERSION_FLAG.retryCi]: { type: /** @type {const} */ ("string"), multiple: /** @type {const} */ (true) },
   [CREATE_VERSION_FLAG.help]: { type: /** @type {const} */ ("boolean"), default: false },
 });
 
@@ -206,19 +223,29 @@ function expandShortFlags(argv) {
 /**
  * Resolves the release type of `--bump` (`-b`) and of the `--patch`, `--minor` and `--major`
  * shortcuts (`-p`, `-m`, `-M`): `--bump` accepts the full name or its short name (`m`, `M`), a
- * single shortcut stands for `--bump <type>`, and repeating the same type is accepted.
+ * single shortcut stands for `--bump <type>`, and repeating the same type is accepted (`-b M --bump major`).
  *
- * @param {string | undefined} bumpValue - Value of `--bump`.
+ * @param {string[]} bumpValues - Every value of `--bump`, in command-line order (empty when it was not passed).
  * @param {string[]} shortcutTypes - Release types whose shortcut flag was passed, in patch-minor-major order.
  * @returns {string | undefined} The requested release type, or `undefined` when none was requested.
  * @throws {Error} With a Spanish message when `--bump` is not a release type or two different types are requested.
  */
-function resolveRequestedReleaseType(bumpValue, shortcutTypes) {
+function resolveRequestedReleaseType(bumpValues, shortcutTypes) {
   const releaseTypes = /** @type {string[]} */ (Object.values(RELEASE_TYPE));
-  const bumpType = bumpValue === undefined ? undefined : RELEASE_TYPE_BY_SHORT_NAME[bumpValue] ?? bumpValue;
-  if (bumpType !== undefined && !releaseTypes.includes(bumpType)) {
-    throw new Error(`--bump espera ${releaseTypes.join("|")} (o ${Object.values(RELEASE_TYPE_SHORT_NAME).join("|")}) y recibió "${bumpValue}".`);
+  const bumpTypes = bumpValues.map((bumpValue) => {
+    const releaseType = RELEASE_TYPE_BY_SHORT_NAME[bumpValue] ?? bumpValue;
+    if (!releaseTypes.includes(releaseType)) {
+      throw new Error(`--bump espera ${releaseTypes.join("|")} (o ${Object.values(RELEASE_TYPE_SHORT_NAME).join("|")}) y recibió "${bumpValue}".`);
+    }
+    return releaseType;
+  });
+
+  const conflictingBumpIndex = bumpTypes.findIndex((releaseType) => releaseType !== bumpTypes[0]);
+  if (conflictingBumpIndex !== -1) {
+    throw new Error(`--bump ${bumpValues[0]} y --bump ${bumpValues[conflictingBumpIndex]} piden tipos de versión distintos: elegí un solo tipo de versión.`);
   }
+  const [bumpType] = bumpTypes;
+  const [bumpValue] = bumpValues;
 
   const shortcutFlags = shortcutTypes.map((releaseType) => `--${releaseType}`);
   if (shortcutFlags.length > 1) {
@@ -233,6 +260,36 @@ function resolveRequestedReleaseType(bumpValue, shortcutTypes) {
 }
 
 /**
+ * Reads the single value of a flag that may be repeated: repeating it with the same value (after
+ * `normalize`, such as `1.3.0` and `v1.3.0`) is accepted, while another value is a conflict that
+ * `parseArgs` would otherwise settle by keeping the last one.
+ *
+ * @param {string} flag - Long flag name, without dashes.
+ * @param {string[] | undefined} flagValues - Every value of the flag, in command-line order.
+ * @param {(value: string) => string} [normalize] - Maps a value to the form compared between occurrences.
+ * @returns {string | undefined} The first value, or `undefined` when the flag was not passed.
+ * @throws {Error} With a Spanish message when the flag received different values.
+ */
+function readSingleFlagValue(flag, flagValues, normalize = (value) => value) {
+  const [firstValue] = flagValues ?? [];
+  const conflictingValue = flagValues?.find((value) => normalize(value) !== normalize(firstValue));
+  if (conflictingValue !== undefined) {
+    throw new Error(`--${flag} recibió valores distintos (${firstValue} y ${conflictingValue}): pasalo una sola vez.`);
+  }
+  return firstValue;
+}
+
+/**
+ * Removes the `v` a typed version may carry (`v1.2.0` means `1.2.0`); the version rules validate the rest.
+ *
+ * @param {string} version - Version as typed.
+ * @returns {string} Version without its prefix.
+ */
+function stripVersionPrefix(version) {
+  return version.replace(VERSION_PREFIX_PATTERN, "");
+}
+
+/**
  * Parses the command-line arguments of `create-version`.
  *
  * @param {string[]} argv - Arguments after the command name.
@@ -241,7 +298,7 @@ function resolveRequestedReleaseType(bumpValue, shortcutTypes) {
  */
 export function parseReleaseArguments(argv) {
   const expandedArguments = expandShortFlags(argv.filter((argument) => argument !== CREATE_VERSION_FLAG.endOfOptions));
-  /** @type {Record<string, string | boolean | undefined>} */
+  /** @type {Record<string, string[] | boolean | undefined>} */
   let values;
 
   try {
@@ -250,8 +307,8 @@ export function parseReleaseArguments(argv) {
     throw new Error(`Opción inválida: ${describeError(error)}. Usá --help para ver las opciones.`, { cause: error });
   }
 
-  const bump = resolveRequestedReleaseType(/** @type {string | undefined} */ (values[CREATE_VERSION_FLAG.bump]), RELEASE_TYPE_ORDER.filter((releaseType) => values[releaseType]));
-  const setVersion = /** @type {string | undefined} */ (values[CREATE_VERSION_FLAG.setVersion]);
+  const bump = resolveRequestedReleaseType(/** @type {string[] | undefined} */ (values[CREATE_VERSION_FLAG.bump]) ?? [], RELEASE_TYPE_ORDER.filter((releaseType) => values[releaseType]));
+  const setVersion = readSingleFlagValue(CREATE_VERSION_FLAG.setVersion, /** @type {string[] | undefined} */ (values[CREATE_VERSION_FLAG.setVersion]), stripVersionPrefix);
 
   if (bump !== undefined && setVersion !== undefined) {
     throw new Error("Usá --bump (o --patch, --minor, --major) o --set-version, no los dos a la vez.");
@@ -263,11 +320,11 @@ export function parseReleaseArguments(argv) {
   if (values[CREATE_VERSION_FLAG.local] && (values[CREATE_VERSION_FLAG.ci] || values[CREATE_VERSION_FLAG.setupCi] || values[CREATE_VERSION_FLAG.retryCi])) {
     throw new Error("--local no se combina con --ci, --setup-ci ni --retry-ci.");
   }
-  const ciRelease = /** @type {string | undefined} */ (values[CREATE_VERSION_FLAG.ciRelease]);
-  const retryCi = /** @type {string | undefined} */ (values[CREATE_VERSION_FLAG.retryCi]);
+  const ciRelease = readSingleFlagValue(CREATE_VERSION_FLAG.ciRelease, /** @type {string[] | undefined} */ (values[CREATE_VERSION_FLAG.ciRelease]));
+  const retryCi = readSingleFlagValue(CREATE_VERSION_FLAG.retryCi, /** @type {string[] | undefined} */ (values[CREATE_VERSION_FLAG.retryCi]));
   for (const [flag, value] of [[CREATE_VERSION_FLAG.ciRelease, ciRelease], [CREATE_VERSION_FLAG.retryCi, retryCi]]) {
     if (value !== undefined) {
-      const version = value.replace(VERSION_PREFIX_PATTERN, "");
+      const version = stripVersionPrefix(value);
       if (value !== value.trim() || !isStableReleaseVersion(version) || toReleaseTag(version) !== value) throw new Error(`--${flag} espera un tag estable vX.Y.Z, no un valor vacío ni una versión sin prefijo.`);
     }
   }
@@ -277,8 +334,7 @@ export function parseReleaseArguments(argv) {
 
   return {
     bump: /** @type {ReleaseOptions["bump"]} */ (bump ?? null),
-    // A typed `v1.2.0` means `1.2.0`; the version rules validate the rest.
-    setVersion: setVersion === undefined ? null : setVersion.replace(VERSION_PREFIX_PATTERN, ""),
+    setVersion: setVersion === undefined ? null : stripVersionPrefix(setVersion),
     dryRun: Boolean(values[CREATE_VERSION_FLAG.dryRun]),
     skipUnpublished: Boolean(values[CREATE_VERSION_FLAG.skipUnpublished]),
     ignoreLocalChanges: Boolean(values[CREATE_VERSION_FLAG.ignoreLocalChanges]),
@@ -406,7 +462,7 @@ export function uncommittedFilesBlocker(blockingChanges, commands) {
     title: `Hay ${blockingChanges.length} archivo(s) sin commitear`,
     details: [
       ...blockingChanges.slice(0, MAX_LISTED_ITEMS),
-      `Commitealos en una rama (o git stash) y volvé a correr ${commands.createVersion}, o corré ${commands.createVersion} --${CREATE_VERSION_FLAG.ignoreLocalChanges} para apartarlos durante el release.`,
+      `Commitealos en una rama (o git stash) y volvé a correr ${commands.createVersion}, o corré ${describeCreateVersionWithOptions(commands)} --${CREATE_VERSION_FLAG.ignoreLocalChanges} para apartarlos durante el release.`,
     ],
   };
 }
@@ -964,7 +1020,7 @@ function unpublishedReleaseBlocker({ version, latestPublished, resumable, regist
 
   return {
     title: `La versión ${version} (último release, tag ${tag}) no está en ${registryLabel}`,
-    details: [`${published}; un release nuevo la saltearía.`, ...howToPublish, `Para saltearla a propósito: ${commands.createVersion} --skip-unpublished.`],
+    details: [`${published}; un release nuevo la saltearía.`, ...howToPublish, `Para saltearla a propósito: ${describeCreateVersionWithOptions(commands)} --${CREATE_VERSION_FLAG.skipUnpublished}.`],
   };
 }
 

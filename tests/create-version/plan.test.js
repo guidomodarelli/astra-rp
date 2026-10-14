@@ -618,6 +618,16 @@ describe("buildReleasePlan with the project's package manager", () => {
     expect(buildReleaseUsage()).toBe(RELEASE_USAGE);
     expect(buildReleaseUsage(BUN_COMMANDS).split("\n")[0]).toBe("Uso: bun run create-version [opciones]");
   });
+
+  it("should put npm's -- separator before the options so npm forwards the short flags to the script", () => {
+    const npmCommands = describeProjectCommands("npm");
+
+    expect(buildReleaseUsage(npmCommands).split("\n")[0]).toBe("Uso: npm run create-version -- [opciones]");
+    expect(buildReleaseUsage(describeProjectCommands("yarn")).split("\n")[0]).toBe("Uso: yarn create-version [opciones]");
+
+    const localChangesHints = buildReleasePlan(createMainState({ workingTreeChanges: [" M src/index.ts"] }), { ...DEPLOYED_APP, commands: npmCommands }).blockers.flatMap((blocker) => blocker.details);
+    expect(localChangesHints.join("\n")).toContain("npm run create-version -- --ignore-local-changes");
+  });
 });
 
 describe("parseReleaseArguments release type and execution shortcuts", () => {
@@ -635,6 +645,8 @@ describe("parseReleaseArguments release type and execution shortcuts", () => {
     [["-b", "M"], "major"],
     [["-b=p"], "patch"],
     [["--minor", "-b", "m"], "minor"],
+    [["-b", "M", "--bump", "major"], "major"],
+    [["-m", "--minor", "-b", "m"], "minor"],
   ])("should read %j as --bump %s", (argv, bump) => {
     expect(parseReleaseArguments(argv)).toMatchObject({ bump, setVersion: null, execution: null });
   });
@@ -643,6 +655,7 @@ describe("parseReleaseArguments release type and execution shortcuts", () => {
     [["-sv", "1.3.0"]],
     [["-sv=1.3.0"]],
     [["-sv", "v1.3.0"]],
+    [["-sv", "1.3.0", "--set-version=v1.3.0"]],
   ])("should read %j as --set-version 1.3.0", (argv) => {
     expect(parseReleaseArguments(argv)).toMatchObject({ bump: null, setVersion: "1.3.0" });
   });
@@ -673,6 +686,11 @@ describe("parseReleaseArguments release type and execution shortcuts", () => {
     [["-P"], /Opción corta desconocida: "-P"/],
     [["-s"], /Opción corta desconocida: "-s"/],
     [["-sv"], /Opción inválida/],
+    [["-b", "p", "-b", "M"], /--bump p y --bump M piden tipos de versión distintos/],
+    [["--bump", "minor", "--bump=major"], /--bump minor y --bump major piden tipos de versión distintos/],
+    [["-b", "m", "-b", "P"], /--bump espera patch\|minor\|major \(o p\|m\|M\) y recibió "P"/],
+    [["-sv", "1.2.4", "--set-version", "1.3.0"], /--set-version recibió valores distintos \(1\.2\.4 y 1\.3\.0\)/],
+    [["--ci-release", "v1.2.3", "--ci-release", "v1.2.4"], /--ci-release recibió valores distintos/],
   ])("should reject %j with a Spanish message", (argv, message) => {
     expect(() => parseReleaseArguments(argv)).toThrow(message);
   });

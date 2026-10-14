@@ -40,7 +40,7 @@ import { isRegistryProvider } from "../create-version/registry-config.js";
 import { checkRegistryAccess, publishRegistryRelease, resolveRegistry, selectProjectRegistry } from "../create-version/registry.js";
 import { prepareJsrVersionUpdates } from "../create-version/jsr.js";
 import { JSR_REGISTRY_PROVIDER } from "../constants/registry.js";
-import { assertUnreleasedEntries, describeMissingUnreleasedEntries, formatLocalReleaseDate, prepareChangelogClosing, verifyChangelogUpdate } from "../create-version/changelog.js";
+import { assertUnreleasedEntries, describeMissingUnreleasedEntries, formatReleaseDate, prepareChangelogClosing, verifyChangelogUpdate } from "../create-version/changelog.js";
 import { ReleaseStepError, describeError } from "../create-version/errors.js";
 import { readJsonManifest } from "../create-version/json.js";
 import { describePublishedRelease, readNpmPackIntegrity } from "../create-version/npm.js";
@@ -444,7 +444,7 @@ async function bumpPackagesStep(context) {
     if (context.config.publish === JSR_REGISTRY_PROVIDER) releaseFiles.push(...await prepareJsrVersionUpdates(context, path.join(context.repositoryRoot, unit.directory), context.config.publication, version));
   }
 
-  const releaseDate = formatLocalReleaseDate();
+  const releaseDate = formatReleaseDate(new Date(), context.config.releaseTimeZone);
   const closedChangelogs = context.chosen.map(({ unit, version }) => {
     const changelog = context.changelogFiles.find(({ filePath }) => filePath === unit.changelogPath);
     if (!changelog) {

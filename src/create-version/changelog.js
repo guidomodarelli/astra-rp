@@ -12,8 +12,11 @@ import { readUnreleased } from "../changelog.js";
 import {
   CRLF_LINE_BREAK,
   LF_LINE_BREAK,
+  RELEASE_DATE_FORMAT_OPTIONS,
+  RELEASE_DATE_LOCALE,
   RELEASE_DATE_PAD,
   RELEASE_DATE_PART_LENGTH,
+  RELEASE_DATE_PART_ORDER,
   RELEASE_DATE_SEPARATOR,
   UNRELEASED_HEADING,
   UNRELEASED_LINE_PATTERN,
@@ -172,16 +175,23 @@ export function assertPreservedFilesUnchanged(context, files) {
 }
 
 /**
- * Formats a date as the `YYYY-MM-DD` day of the machine's local time zone, the date Keep a
- * Changelog gives a version.
+ * Formats a date as the `YYYY-MM-DD` day Keep a Changelog gives a version: the day in `timeZone`
+ * when the project configures `releaseTimeZone`, so a release prepared on a CI runner in UTC keeps
+ * the team's day, or the machine's local day otherwise.
  *
  * @param {Date} [date] - Moment to format; the current time by default.
- * @returns {string} Local day in `YYYY-MM-DD` format.
+ * @param {string | null} [timeZone] - IANA time zone already validated by the configuration, or `null` for the local day.
+ * @returns {string} Release day in `YYYY-MM-DD` format.
  */
-export function formatLocalReleaseDate(date = new Date()) {
-  const month = String(date.getMonth() + 1).padStart(RELEASE_DATE_PART_LENGTH, RELEASE_DATE_PAD);
-  const day = String(date.getDate()).padStart(RELEASE_DATE_PART_LENGTH, RELEASE_DATE_PAD);
-  return [String(date.getFullYear()), month, day].join(RELEASE_DATE_SEPARATOR);
+export function formatReleaseDate(date = new Date(), timeZone = null) {
+  if (timeZone === null) {
+    const month = String(date.getMonth() + 1).padStart(RELEASE_DATE_PART_LENGTH, RELEASE_DATE_PAD);
+    const day = String(date.getDate()).padStart(RELEASE_DATE_PART_LENGTH, RELEASE_DATE_PAD);
+    return [String(date.getFullYear()), month, day].join(RELEASE_DATE_SEPARATOR);
+  }
+
+  const parts = new Intl.DateTimeFormat(RELEASE_DATE_LOCALE, { ...RELEASE_DATE_FORMAT_OPTIONS, timeZone }).formatToParts(date);
+  return RELEASE_DATE_PART_ORDER.map((partType) => parts.find((part) => part.type === partType)?.value ?? "").join(RELEASE_DATE_SEPARATOR);
 }
 
 /**

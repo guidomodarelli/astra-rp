@@ -663,6 +663,19 @@ describe("release location and configuration", () => {
     expect(await chooseReleaseExecution(config, parseReleaseArguments([]))).toEqual({ execution: "local", setup: false });
     await expect(chooseReleaseExecution(config, parseReleaseArguments(["--ci"]))).rejects.toThrow(/No hay un workflow/);
   });
+
+  it("should fail --ci without a configured workflow instead of asking, also in an interactive terminal", async () => {
+    // Arrange
+    const config = resolveCreateVersionConfig({ checks: false });
+    const wasInteractive = process.stdin.isTTY;
+    process.stdin.isTTY = true;
+    try {
+      // Act and Assert
+      await expect(chooseReleaseExecution(config, parseReleaseArguments(["--ci", "-m"]))).rejects.toThrow(/No hay un workflow de release configurado/);
+    } finally {
+      process.stdin.isTTY = wasInteractive;
+    }
+  });
 });
 
 describe("local CI preparation with real Git", () => {
@@ -826,7 +839,7 @@ describe("local CI preparation with real Git", () => {
     expect(runGit(["rev-parse", "v1.3.0^{commit}"], remote)).toBe(runGit(["rev-parse", "HEAD"], root));
     expect(existsSync(path.join(root, "release.log"))).toBe(false);
     expect(existsSync(path.join(root, "hook.log"))).toBe(false);
-    expect(github.dispatch).toHaveBeenCalledWith("release.yml", { version: "1.3.0", tag: "v1.3.0", sha: runGit(["rev-parse", "HEAD"], root) }, "npm run create-version --retry-ci v1.3.0");
+    expect(github.dispatch).toHaveBeenCalledWith("release.yml", { version: "1.3.0", tag: "v1.3.0", sha: runGit(["rev-parse", "HEAD"], root) }, "npm run create-version -- --retry-ci v1.3.0");
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it("should run the complete original flow when local is selected despite configured CI", async () => {
@@ -1259,12 +1272,16 @@ describe("local CI preparation with real Git", () => {
     const { root, remote } = createCiProject();
     const github = isolateGithub();
     vi.mocked(github.dispatch).mockRejectedValueOnce(new CiReleaseError("ci-dispatch-unconfirmed", "No se confirmó el inicio.", "Revisá Actions."));
+    const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     // Act
     const failed = await runCreateVersion({ repositoryRoot: root, argv: ["--bump", "patch"] });
+    const recoveryNotice = flattenOutput(output.mock.calls.map(([chunk]) => String(chunk)).join(""));
+    output.mockRestore();
     const pushedSha = runGit(["rev-parse", "HEAD"], root);
     const retried = await runCreateVersion({ repositoryRoot: root, argv: ["--retry-ci", "v1.2.4"] });
-    // Assert
+    // Assert: npm forwards `--retry-ci` to the script only after its `--` separator.
     expect(failed).toBe(1);
+    expect(recoveryNotice).toContain("reenviá el mismo release con npm run create-version -- --retry-ci v1.2.4;");
     expect(retried).toBe(0);
     expect(runGit(["rev-parse", "HEAD"], root)).toBe(pushedSha);
     expect(runGit(["rev-parse", "main"], remote)).toBe(pushedSha);
@@ -1889,7 +1906,7 @@ describe("CI preparation invariants shared with local releases", () => {
       // Assert: the worker reruns the configuration stored in v1.2.3, which predates the OIDC publication.
       expect(status).toBe(0);
       expect(runGit(["tag", "--list"], remote)).toBe("v1.2.3");
-      expect(github.dispatch).toHaveBeenCalledWith("release.yml", expect.objectContaining({ version: "1.2.3", tag: "v1.2.3" }), "npm run create-version --retry-ci v1.2.3");
+      expect(github.dispatch).toHaveBeenCalledWith("release.yml", expect.objectContaining({ version: "1.2.3", tag: "v1.2.3" }), "npm run create-version -- --retry-ci v1.2.3");
     } finally {
       await registry.close();
     }
@@ -1971,7 +1988,7 @@ describe("CI retry resolves the configuration stored in the release tag", () => 
     // Assert
     expect(status).toBe(0);
     expect(github.preflight).toHaveBeenCalledWith("release.yml", ["RELEASE_DEPLOY_TOKEN"], ["RELEASE_TARGET"]);
-    expect(github.dispatch).toHaveBeenCalledWith("release.yml", { version: "1.2.4", tag: "v1.2.4", sha: releaseSha }, "npm run create-version --retry-ci v1.2.4");
+    expect(github.dispatch).toHaveBeenCalledWith("release.yml", { version: "1.2.4", tag: "v1.2.4", sha: releaseSha }, "npm run create-version -- --retry-ci v1.2.4");
     expect(runGit(["rev-parse", "HEAD"], root)).toBe(mainSha);
     expect(runGit(["rev-parse", "main"], remote)).toBe(mainSha);
     expect(runGit(["ls-files", "--stage"], root)).toBe(indexBefore);

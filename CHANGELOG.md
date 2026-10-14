@@ -9,6 +9,17 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 ### Added
 
 - Opción `releaseTimeZone` en `beez-rp.config.js`: una zona horaria IANA (por ejemplo `"America/Argentina/Buenos_Aires"`) para la fecha de `## [X.Y.Z] - AAAA-MM-DD` al cerrar `## [Unreleased]`, en modo simple y monorepo, en local y en CI, así un release preparado de noche en un runner en UTC no queda fechado al día siguiente. Sin la opción se sigue usando el día local de la máquina que crea el commit; una zona inválida corta el comando con un aviso antes de cualquier cambio, y el mensaje del cierre del CHANGELOG nombra la zona configurada.
+- `create-version` acepta flags cortos y atajos de versión: `-b` para `--bump` (que ahora también acepta `p`, `m` y `M`), `--patch`/`-p`, `--minor`/`-m` y `--major`/`-M` como equivalentes de `--bump`, `-sv` para `--set-version` (`-sv 1.3.0` o `-sv=1.3.0`) y `-l` para `--local`. Los cortos distinguen mayúsculas y van de a uno: un flag corto desconocido o agrupado (como `-lm`) corta con un aviso. Pedir dos tipos de versión distintos (también repitiendo `--bump`, como `-b p -b M`), repetir `--set-version`, `--ci-release` o `--retry-ci` con valores distintos o combinar un tipo con `--set-version` también corta con un error claro; repetir el mismo valor se acepta. En proyectos npm, la ayuda y los avisos muestran el separador que npm necesita para pasar las opciones al script (`npm run create-version -- -b M`).
+- API pública de `beez-rp/constants`: `CREATE_VERSION_FLAG` suma las propiedades `patch`, `minor` y `major` (los atajos `--patch`, `--minor` y `--major`), y se exportan `RELEASE_TYPE_SHORT_NAME` (nombre corto de cada tipo de versión: `p`, `m` y `M`), `CREATE_VERSION_SHORT_FLAG` (flag largo de cada flag corto: `b`, `sv`, `p`, `m`, `M`, `l` y `h`) y `SHORT_FLAG_TOKEN_PATTERN` (expresión regular de un flag corto con `=valor` opcional, como `-l` o `-sv=1.3.0`).
+- API pública de `beez-rp/package-manager` (y de la raíz `beez-rp`): nueva función `describeCreateVersionWithOptions(commands)`, que devuelve el comando de `create-version` listo para recibir opciones: con npm le agrega el separador `--`.
+
+### Changed
+
+- `create-version --ci` sin `ci.workflow` configurado corta con un error claro también en una terminal interactiva, en vez de preguntar si configurar CI o seguir en local.
+
+### Fixed
+
+- En proyectos npm, el comando para reenviar un release a CI que muestran los avisos de recuperación y el que recibe el workflow (`npm run create-version -- --retry-ci vX.Y.Z`) incluye el separador `--`; sin él, npm se quedaba con `--retry-ci` y el reintento no se enviaba.
 
 ## [0.8.0] - 2026-10-13
 

@@ -482,6 +482,40 @@ describe("beez-rp create-version command", () => {
     expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
+  it.each([
+    [["-l", "-m"], "0.2.0"],
+    [["--local", "--patch"], "0.1.1"],
+    [["-b", "M"], "1.0.0"],
+    [["-sv=0.2.0"], "0.2.0"],
+  ])("should release locally without asking when called with %j, tagging v%s", (argv, version) => {
+    // Arrange
+    const { repositoryRoot, remoteRoot } = createReleasedRepository();
+    pushConfiguration(repositoryRoot, ["export default { checks: false };"]);
+
+    // Act
+    const release = runCli(repositoryRoot, argv);
+
+    // Assert
+    expect(release.status, release.output).toBe(0);
+    expect(runGit(["tag", "--list"], remoteRoot)).toBe(`v${version}`);
+    expect(JSON.parse(runGit(["show", "main:package.json"], remoteRoot)).version).toBe(version);
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
+  it("should stop a release with a grouped short flag before touching the repository", () => {
+    // Arrange
+    const { repositoryRoot, remoteRoot } = createReleasedRepository();
+    const head = runGit(["rev-parse", "HEAD"], repositoryRoot);
+
+    // Act
+    const release = runCli(repositoryRoot, ["-lm"]);
+
+    // Assert
+    expect(release.status).not.toBe(0);
+    expect(flattenOutput(release.output)).toContain('Opción corta desconocida: "-lm"');
+    expect(runGit(["rev-parse", "HEAD"], repositoryRoot)).toBe(head);
+    expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
+  }, GIT_FIXTURE_TEST_TIMEOUT_MS);
+
   it("should resume a local release commit without closing its changelog again", () => {
     // Arrange
     const { repositoryRoot, remoteRoot } = createReleasedRepository();

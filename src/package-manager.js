@@ -13,11 +13,12 @@ import {
   CREATE_VERSION_SCRIPT,
   DEFAULT_PACKAGE_MANAGER,
   LOCKFILE_PACKAGE_MANAGERS,
+  PACKAGE_MANAGER,
   PACKAGE_MANAGER_FIELD,
   PACKAGE_MANAGER_FIELD_PATTERN,
   SCRIPT_RUNNER,
 } from "./constants/package-manager.js";
-import { PACKAGE_MANIFEST_FILE } from "./constants/create-version.js";
+import { CREATE_VERSION_FLAG, PACKAGE_MANIFEST_FILE } from "./constants/create-version.js";
 
 /**
  * @typedef {"pnpm" | "npm" | "yarn" | "bun"} PackageManagerName
@@ -73,6 +74,19 @@ export function describeProjectCommands(packageManager) {
     runScript: (script) => `${packageManager} run ${script}`,
     createVersion: `${scriptRunner} ${CREATE_VERSION_SCRIPT}`,
   };
+}
+
+/**
+ * Builds the command that runs `create-version` with options. npm reads every option before its
+ * `--` separator as its own configuration (`npm run create-version --retry-ci v1.2.3` forwards only
+ * `v1.2.3`), so npm projects need `npm run create-version -- <opciones>`; pnpm, bun and yarn forward
+ * them as is. Every printed or dispatched command that carries options must start with it.
+ *
+ * @param {ProjectCommands} commands - Project commands.
+ * @returns {string} Command to which the options are appended.
+ */
+export function describeCreateVersionWithOptions(commands) {
+  return commands.packageManager === PACKAGE_MANAGER.npm ? `${commands.createVersion} ${CREATE_VERSION_FLAG.endOfOptions}` : commands.createVersion;
 }
 
 /** Commands of a pnpm project: the default when a project cannot be inspected. */

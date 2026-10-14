@@ -59,9 +59,10 @@ export async function chooseReleaseExecution(config, options) {
     });
     return { execution: /** @type {"local" | "ci"} */ (execution), setup: false };
   }
+  // An explicit --ci never falls back to a question: without a workflow there is nothing to dispatch.
+  if (options.execution === RELEASE_EXECUTION.ci) throw new ReleaseStepError("No hay un workflow de release configurado para --ci.", "Ejecutá --setup-ci o configurá ci.workflow en beez-rp.config.js; también podés usar --local.");
   print("Para hacer releases en CI, beez-rp puede crear .github/workflows/release.yml y configurar ci.workflow. Usá --setup-ci para configurarlo o --local para continuar en esta máquina.");
   if (options.dryRun || !process.stdin.isTTY) {
-    if (options.execution === RELEASE_EXECUTION.ci) throw new ReleaseStepError("No hay un workflow de release configurado.", "Ejecutá --setup-ci o configurá ci.workflow; también podés usar --local.");
     return { execution: RELEASE_EXECUTION.local, setup: false };
   }
   const choice = await select({

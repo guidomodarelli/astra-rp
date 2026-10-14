@@ -27,7 +27,7 @@ export const CHANGELOG_DRAFT_EXECUTABLES = Object.freeze({ [CHANGELOG_DRAFT_PROV
 export const CHANGELOG_DRAFT_DIRECTORY_PREFIX = "beez-rp-changelog-draft-";
 
 /**
- * Directory of the workspace with the files Git tracks at `HEAD` (from `git archive`): no `.git`,
+ * Directory of the workspace with the files Git tracks at `HEAD` (from `git checkout-index`): no `.git`,
  * no untracked or ignored files, so local credentials such as an untracked `.env` or `.npmrc` stay
  * out of the agents' reach.
  */
@@ -42,14 +42,8 @@ export const CHANGELOG_DRAFT_DIFF_FILE = "changes.diff";
 /** Release context file with the `git log --stat` of the release range. */
 export const CHANGELOG_DRAFT_LOG_FILE = "commits.log";
 
-/** Temporary `git archive` output, inside the workspace, removed once extracted. */
-export const CHANGELOG_DRAFT_ARCHIVE_FILE = "snapshot.tar";
-
 /** `rmSync` retries when removing the workspace, while Windows releases the files of a stopped agent. */
 export const WORKSPACE_REMOVAL_RETRIES = Object.freeze({ maxRetries: 10, retryDelay: 100 });
-
-/** Executable that extracts the snapshot (bsdtar ships with Windows 10 and later; GNU or BSD tar elsewhere). */
-export const TAR_EXECUTABLE = "tar";
 
 /**
  * Settings file, at the workspace root, that Claude Code loads with `--settings`: its file tools
@@ -148,3 +142,15 @@ export const WINDOWS_SHELL_SCRIPT_PATTERN = /\.(?:cmd|bat)$/iu;
  * and every agent argument on a Windows shell command line are checked against it.
  */
 export const UNSAFE_SHELL_ARGUMENT_PATTERN = /["%!^&|<>]/u;
+
+/**
+ * Temporary Git index (`GIT_INDEX_FILE`), inside the workspace, that checks out the snapshot
+ * without touching the repository index; removed once the snapshot is written.
+ */
+export const CHANGELOG_DRAFT_INDEX_FILE = "snapshot.index";
+
+/**
+ * Release context file with the working tree changelog the agents will update, so they see it
+ * even when it is untracked or only changed locally.
+ */
+export const CHANGELOG_DRAFT_CURRENT_CHANGELOG_FILE = "CHANGELOG.md";

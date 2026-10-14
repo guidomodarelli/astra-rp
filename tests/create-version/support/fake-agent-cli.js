@@ -18,13 +18,16 @@ import { createTemporaryDirectory } from "./cli-harness.js";
  * @typedef {{ kind: "answer", text: string, touch?: FakeAgentTouch } | { kind: "quota" } | { kind: "sleep" }} FakeAgentBehavior
  *   `answer` returns `text` as the agent answer (after writing `touch`, when given), `quota` fails as
  *   an exhausted subscription does and `sleep` never answers.
- * @typedef {{ name: string, cwd: string, args: string[], prompt: string, files: string[], diff: string | null }} FakeAgentCall
+ * @typedef {{ name: string, cwd: string, args: string[], prompt: string, files: string[], diff: string | null, changelog: string | null }} FakeAgentCall
  *   `files` lists every file under the working directory (relative, with `/`) when the agent
- *   started, and `diff` is the release diff it found there, if any.
+ *   started, `diff` is the release diff it found there and `changelog` the current changelog, if any.
  */
 
 /** Release diff the agents find in their workspace, relative to their working directory. */
 const WORKSPACE_DIFF_PATH = "release-context/changes.diff";
+
+/** Current changelog the agents find in their workspace, relative to their working directory. */
+const WORKSPACE_CHANGELOG_PATH = "release-context/CHANGELOG.md";
 
 /** Message the fake Claude Code prints when its subscription has no quota left. */
 export const FAKE_CLAUDE_QUOTA_MESSAGE = "Claude AI usage limit reached|1760000000";
@@ -51,7 +54,8 @@ process.stdin.on("end", () => {
   const args = process.argv.slice(2);
   const files = readdirSync(".", { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => \`\${entry.parentPath}/\${entry.name}\`.replaceAll("\\\\", "/").replace(/^\\.\\//u, "")).sort();
   const diff = existsSync(${JSON.stringify(WORKSPACE_DIFF_PATH)}) ? readFileSync(${JSON.stringify(WORKSPACE_DIFF_PATH)}, "utf8") : null;
-  appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ name, cwd: process.cwd(), args, prompt, files, diff }) + "\\n");
+  const changelog = existsSync(${JSON.stringify(WORKSPACE_CHANGELOG_PATH)}) ? readFileSync(${JSON.stringify(WORKSPACE_CHANGELOG_PATH)}, "utf8") : null;
+  appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ name, cwd: process.cwd(), args, prompt, files, diff, changelog }) + "\\n");
   if (behavior.kind === "sleep") { setInterval(() => {}, 1000); return; }
   if (behavior.touch) writeFileSync(behavior.touch.filePath, behavior.touch.content);
   if (name === "claude") {

@@ -165,6 +165,38 @@ describe("drafting with agent CLIs", () => {
     expect(codexCall.diff).toContain("+# Reglas");
   });
 
+  it("should keep the files marked export-ignore in the isolated copy, without staging anything in the repository", async () => {
+    // Arrange
+    writeFileSync(path.join(repositoryRoot, ".gitattributes"), "AGENTS.md export-ignore\n");
+    runGit(["add", ".gitattributes"], repositoryRoot);
+    runGit(["commit", "--quiet", "-m", "chore: ignore rules on export"], repositoryRoot);
+    const fakeAgents = useFakeAgents({ claude: { kind: "answer", text: DRAFTED_ENTRIES } });
+
+    // Act
+    const draft = await draftChangelogEntries({ providers: ["claude"], repositoryRoot, request: releaseRequest(lastReleaseSha) });
+
+    // Assert
+    expect(draft.entries).toBe(DRAFTED_ENTRIES);
+    const [claudeCall] = fakeAgents.readCalls();
+    expect(claudeCall.files).toEqual(expect.arrayContaining(["repository/AGENTS.md", "repository/.gitattributes"]));
+    expect(runGit(["status", "--porcelain", "--untracked-files=no"], repositoryRoot)).toBe("");
+  });
+
+  it("should show the agent the changelog of the working tree, with changes not committed yet", async () => {
+    // Arrange
+    const workingChangelog = "# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- First release.\n";
+    writeFileSync(path.join(repositoryRoot, "CHANGELOG.md"), workingChangelog);
+    const fakeAgents = useFakeAgents({ codex: { kind: "answer", text: DRAFTED_ENTRIES } });
+
+    // Act
+    await draftChangelogEntries({ providers: ["codex"], repositoryRoot, request: releaseRequest(lastReleaseSha) });
+
+    // Assert
+    const [codexCall] = fakeAgents.readCalls();
+    expect(codexCall.changelog).toBe(workingChangelog);
+    expect(codexCall.prompt).toContain("release-context/CHANGELOG.md");
+  });
+
   it("should report every agent as failed, without running any, when the isolated copy cannot be created", async () => {
     // Arrange
     const fakeAgents = useFakeAgents({ claude: { kind: "answer", text: DRAFTED_ENTRIES }, codex: { kind: "answer", text: DRAFTED_ENTRIES } });

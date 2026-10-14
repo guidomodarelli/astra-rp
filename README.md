@@ -144,7 +144,7 @@ Con `--ignore-local-changes`, los cambios sin commitear (staged, sin stagear y a
 El comando sale solo desde `main`, limpio y al día con origin (solo `CHANGELOG.md` puede quedar sin commitear en un release nuevo, porque el bump lo commitea; para retomar un release ya commiteado, también tiene que estar limpio). En una rama feature explica qué falta: pushear, abrir o mergear el PR (con `gh`). La única excepción es publicar un release que falta en npm desde su tag (ver [Versiones sin publicar](#versiones-sin-publicar)).
 
 1. Si `main` está atrás de origin, lo actualiza en fast-forward y termina (código de salida 0) sin tocar la versión ni los tags: hay que volver a correr `pnpm create-version`, que en un proceso nuevo carga `beez-rp.config.(m)js`, sus módulos y el diagnóstico desde el código actualizado.
-2. Verifica que `CHANGELOG.md` exista, haya cambiado desde el último release y tenga un bloque `## [Unreleased]` con al menos una entrada (`- …`). Si falta, no fue actualizado o `[Unreleased]` no tiene entradas, corta con código de salida `1` y lo reporta antes de aplicar migraciones o cambiar la versión, también con `--dry-run` y sin que otros flags salteen la verificación. Se aceptan actualizaciones manuales ya commiteadas, staged o sin stagear. Para el primer release no se compara con un release anterior.
+2. Verifica que `CHANGELOG.md` exista, haya cambiado desde el último release y tenga un bloque `## [Unreleased]` con al menos una entrada (`- …`). Si falta, no fue actualizado o `[Unreleased]` no tiene entradas, corta con código de salida `1` y lo reporta antes de aplicar migraciones o cambiar la versión, también con `--dry-run` y sin que otros flags salteen la verificación. Se aceptan actualizaciones manuales ya commiteadas, staged o sin stagear. Para el primer release no se compara con un release anterior. Con `changelogDraft`, antes de cortar intenta redactar las entradas con un agente (ver [Redacción del CHANGELOG con un agente](#redacción-del-changelog-con-un-agente)).
 3. Aplica migraciones pendientes, si el proyecto tiene adaptador, después de pedir confirmación.
 4. Corre los `checks` (por defecto `pnpm run ci`; ver abajo).
 5. Pide la versión y crea el commit `X.Y.Z` con el tag anotado `vX.Y.Z`. En ese commit cierra la sección del CHANGELOG: el encabezado `## [Unreleased]` pasa a `## [X.Y.Z] - AAAA-MM-DD` (el día en la zona horaria IANA de `releaseTimeZone` si el proyecto la configura; si no, el día local de la máquina que crea el commit, también al preparar un release en CI) con su contenido intacto, y arriba se agrega un `## [Unreleased]` nuevo y vacío. Nunca genera entradas ni reescribe el resto del archivo. Si un check modificó el CHANGELOG antes del bump, corta sin tocar la versión; si falla la escritura o el commit, o un hook lo cambia, devuelve el CHANGELOG a su contenido y staging anteriores y no crea el tag. Al retomar un release ya commiteado no lo vuelve a cerrar.
@@ -172,8 +172,19 @@ export default {
   summary: ["Vercel buildea {version}."],       // líneas extra del resumen final
   versionFiles: ["src/cli.ts"],                 // otros archivos con la versión, en el commit de release
   releaseTimeZone: "America/Argentina/Buenos_Aires", // zona IANA de la fecha de ## [X.Y.Z] - AAAA-MM-DD; por defecto el día local
+  changelogDraft: true,                         // redacta [Unreleased] con Claude Code o Codex si falta; o ["codex", "claude"]
 };
 ```
+
+### Redacción del CHANGELOG con un agente
+
+`changelogDraft` es opcional y está apagado por defecto. Cuando un release nuevo local se cortaría solo porque `CHANGELOG.md` no tiene entradas en `## [Unreleased]` (o el archivo no existe), beez-rp las redacta con un agente CLI antes de cortar:
+
+- `true` prueba primero Claude Code (`claude`) y, si falla, Codex (`codex`). Una lista como `["codex"]` o `["codex", "claude"]` elige cuáles se prueban y en qué orden.
+- Cada agente corre en la raíz del repositorio en modo solo lectura. Claude Code usa `--permission-mode dontAsk` y solo puede leer archivos y correr `git log`, `git diff` y `git show`; Codex usa `--sandbox read-only`. El prompt incluye el rango desde el último release y sus commits, y pide respetar las reglas del proyecto sobre el CHANGELOG (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`).
+- Se pasa al siguiente agente si el actual no está instalado, no tiene cuota o sesión, falla, tarda más de 10 minutos o responde algo que no sean secciones de Keep a Changelog (`### Added`, …) con entradas `- …`.
+- La primera respuesta válida se escribe en `## [Unreleased]` sin pedir confirmación, se muestra en la terminal y el release sigue: el commit de versión la cierra como cualquier entrada manual. Si todos los agentes fallan, se muestra por qué falló cada uno y el release se corta como sin `changelogDraft`.
+- No corre con `--dry-run` (solo avisa que lo haría), en el worker de CI, en `--retry-ci` ni en modo monorepo. Tampoco reemplaza entradas que ya existen.
 
 ### Un registry por proyecto
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { fillUnreleasedFromCommits, readLatestRelease, readUnreleased, releaseUnreleased } from "../src/changelog.js";
+import { fillUnreleasedEntries, fillUnreleasedFromCommits, readLatestRelease, readUnreleased, releaseUnreleased } from "../src/changelog.js";
 
 const CHANGELOG = "# Cambios\n\n## [Unreleased]\n\n### Added\n\n- Agrega recordatorios.\n\n### Fixed\n\n- Corrige $& en títulos.\n";
 
@@ -67,6 +67,27 @@ describe("changelog", () => {
     expect(() => releaseUnreleased("# Cambios\n\n## [Unreleased]\n\n### Added\n", "0.94.0", "2026-09-26")).toThrow(/no changes/);
     expect(() => releaseUnreleased("# Cambios\n", "0.94.0", "2026-09-26")).toThrow(/\[Unreleased\]/);
     expect(() => releaseUnreleased(CHANGELOG.replace("### Fixed", "### Mejoras"), "0.94.0", "2026-09-26")).toThrow(/Mejoras/);
+  });
+
+  it.each([
+    {
+      changelogState: "an empty [Unreleased] with empty sections",
+      changelog: "# Cambios\n\n## [Unreleased]\n\n### Added\n\n## [0.1.0] - 2026-01-01\n\n- Viejo.\n",
+      expected: "# Cambios\n\n## [Unreleased]\n\n### Fixed\n\n- Nuevo.\n\n## [0.1.0] - 2026-01-01\n\n- Viejo.\n",
+    },
+    {
+      changelogState: "no [Unreleased] block",
+      changelog: "# Cambios\n\n## [0.1.0] - 2026-01-01\n\n- Viejo.\n",
+      expected: "# Cambios\n\n## [Unreleased]\n\n### Fixed\n\n- Nuevo.\n\n## [0.1.0] - 2026-01-01\n\n- Viejo.\n",
+    },
+    { changelogState: "no file yet", changelog: "", expected: "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Nuevo.\n\n" },
+    {
+      changelogState: "CRLF line breaks",
+      changelog: "# Cambios\r\n\r\n## [Unreleased]\r\n\r\n## [0.1.0] - 2026-01-01\r\n\r\n- Viejo.\r\n",
+      expected: "# Cambios\r\n\r\n## [Unreleased]\r\n\r\n### Fixed\r\n\r\n- Nuevo.\r\n\r\n## [0.1.0] - 2026-01-01\r\n\r\n- Viejo.\r\n",
+    },
+  ])("should write drafted entries into [Unreleased] when the changelog has $changelogState", ({ changelog, expected }) => {
+    expect(fillUnreleasedEntries(changelog, "### Fixed\n\n- Nuevo.\n")).toBe(expected);
   });
 
 });

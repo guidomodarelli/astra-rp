@@ -6,7 +6,7 @@
  * @module create-version/process
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 import { isRecord } from "./json.js";
 import { FIELD_SEPARATOR, PACKAGE_MANIFEST_FILE, RECORD_SEPARATOR, VERSION_FIELD_CHANGE_PATTERN } from "../constants/create-version.js";
@@ -57,6 +57,80 @@ export function runCaptured(command, commandArguments, options = {}) {
     child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
     child.on("error", (error) => resolve({ status: 1, stdout, stderr: error.message }));
     child.on("close", (status) => resolve({ status: status ?? 1, stdout: stdout.trimEnd(), stderr: stderr.trim() }));
+  });
+}
+
+/**
+ * @typedef {CommandOptions & { input: string, timeoutMs: number }} InputCommandOptions
+ * @typedef {CapturedResult & { timedOut: boolean, spawnErrorCode: string | null }} InputCommandResult
+ */
+
+/**
+ * Stops a command together with the processes it started: on Windows a shell-launched `.cmd` shim
+ * runs the real program as a grandchild that `kill` alone would leave running.
+ *
+ * @param {import("node:child_process").ChildProcess} child - Command to stop.
+ * @returns {void}
+ */
+function stopProcessTree(child) {
+  if (process.platform === "win32" && child.pid !== undefined) {
+    spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
+    return;
+  }
+  child.kill();
+}
+
+/**
+ * Runs a command that reads `input` from stdin and captures its output, stopping it after
+ * `timeoutMs`. Used for agent CLIs that receive their prompt through stdin.
+ *
+ * @param {string} command - Executable name, or a full command line when `shell` is set.
+ * @param {string[]} commandArguments - Arguments.
+ * @param {InputCommandOptions} options - Spawn options, stdin contents and time limit.
+ * @returns {Promise<InputCommandResult>} Result, whether it was stopped for taking too long and the
+ *   spawn error code (such as `ENOENT`); never rejects.
+ */
+export function runCapturedWithInput(command, commandArguments, options) {
+  return new Promise((resolve) => {
+    const child = spawn(command, commandArguments, {
+      cwd: options.cwd,
+      env: options.env,
+      shell: options.shell ?? false,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    /** @type {string | null} */
+    let spawnErrorCode = null;
+
+    child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
+    // A command that exits without reading stdin closes the pipe: its exit code tells what happened.
+    child.stdin.on("error", () => {});
+    child.stdin.end(options.input);
+    let settled = false;
+    /** @param {number} status - Exit code to report. */
+    const finish = (status) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ status, stdout: stdout.trim(), stderr: stderr.trim(), timedOut, spawnErrorCode });
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stopProcessTree(child);
+      // Grandchildren that ignore the signal keep the pipes open and would delay `close` forever.
+      finish(1);
+    }, options.timeoutMs);
+    // A command that could not start may never emit `close`.
+    child.on("error", (error) => {
+      spawnErrorCode = /** @type {NodeJS.ErrnoException} */ (error).code ?? null;
+      stderr = error.message;
+      finish(1);
+    });
+    child.on("close", (status) => finish(status ?? 1));
   });
 }
 

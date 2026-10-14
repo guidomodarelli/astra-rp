@@ -5,8 +5,9 @@
  * previous version, then moves the block under `## [X.Y.Z] - YYYY-MM-DD`.
  * Published history, including legacy unbracketed headings, is preserved.
  *
- * `beez-rp create-version` does not generate entries from commits: it requires hand-written entries
- * under `[Unreleased]` and, in the release commit, only renames that heading to
+ * `beez-rp create-version` does not generate entries from commits: it requires entries under
+ * `[Unreleased]`, written by hand or, with `changelogDraft`, drafted by an agent CLI and written with
+ * {@link fillUnreleasedEntries}, and in the release commit only renames that heading to
  * `## [X.Y.Z] - YYYY-MM-DD` and adds an empty `[Unreleased]` on top, keeping any section names.
  *
  * @module changelog
@@ -21,6 +22,8 @@ import {
   SECTION_HEADING_PATTERN,
   COMMIT_SHORT_SHA_LENGTH,
   CHANGELOG_TITLE,
+  CRLF_LINE_BREAK,
+  LF_LINE_BREAK,
   UNRELEASED_HEADING,
   UNRELEASED_LINE_PATTERN,
 } from "./constants/changelog.js";
@@ -36,8 +39,34 @@ import {
  */
 export function fillUnreleasedFromCommits(changelog, commits) {
   if (commits.length === 0) throw new Error("create-version: no commits available to generate CHANGELOG.md");
-  const body = commits.map((commit) => `- ${commit.sha.slice(0, COMMIT_SHORT_SHA_LENGTH)} ${commit.subject}`).join("\n");
-  const replacement = `${UNRELEASED_HEADING}\n\n${body}\n\n`;
+  const body = commits.map((commit) => `- ${commit.sha.slice(0, COMMIT_SHORT_SHA_LENGTH)} ${commit.subject}`).join(LF_LINE_BREAK);
+  return replaceUnreleasedBody(changelog, body, LF_LINE_BREAK);
+}
+
+/**
+ * Writes drafted entries as the body of `[Unreleased]`, replacing what the block held (an empty
+ * block, or empty section headings). Creates the block, or the document, when missing, keeps the
+ * released history and uses the line breaks of a CRLF changelog.
+ *
+ * @param {string} changelog - Existing contents, or an empty string for a new file.
+ * @param {string} entries - `### Section` headings and `- ` entries, without the `## [Unreleased]` heading.
+ * @returns {string} Changelog whose `[Unreleased]` block holds `entries`.
+ */
+export function fillUnreleasedEntries(changelog, entries) {
+  const lineBreak = changelog.includes(CRLF_LINE_BREAK) ? CRLF_LINE_BREAK : LF_LINE_BREAK;
+  return replaceUnreleasedBody(changelog, entries.trim().split(LINE_BREAK_PATTERN).join(lineBreak), lineBreak);
+}
+
+/**
+ * Replaces the `[Unreleased]` block with `body`, or inserts the block above the newest release.
+ *
+ * @param {string} changelog - Existing contents, or an empty string for a new file.
+ * @param {string} body - New block body, already using `lineBreak`.
+ * @param {string} lineBreak - Line break written around the body.
+ * @returns {string} Changelog with the new `[Unreleased]` block.
+ */
+function replaceUnreleasedBody(changelog, body, lineBreak) {
+  const replacement = `${UNRELEASED_HEADING}${lineBreak}${lineBreak}${body}${lineBreak}${lineBreak}`;
   const blocks = listBlocks(changelog);
   const unreleased = blocks.find((block) => UNRELEASED_LINE_PATTERN.test(block.heading));
   if (unreleased) {
@@ -45,7 +74,7 @@ export function fillUnreleasedFromCommits(changelog, commits) {
   }
   const insertion = blocks[0]?.start ?? changelog.length;
   const prefix = changelog.slice(0, insertion).trimEnd() || CHANGELOG_TITLE;
-  return `${prefix}\n\n${replacement}${changelog.slice(insertion)}`;
+  return `${prefix}${lineBreak}${lineBreak}${replacement}${changelog.slice(insertion)}`;
 }
 
 /**

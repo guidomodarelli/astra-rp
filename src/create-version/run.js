@@ -20,7 +20,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { CHANGELOG_FILE, CHANGELOG_UPDATE_REQUIRED_CODE } from "../constants/changelog.js";
+import { CHANGELOG_FILE, CHANGELOG_UPDATE_REQUIRED_CODE, LINE_BREAK_PATTERN } from "../constants/changelog.js";
 import {
   CREATE_VERSION_FLAG,
   FAILURE_EXIT_CODE,
@@ -74,6 +74,8 @@ import {
 } from "./artifact.js";
 import { describeReleaseTypes, loadCreateVersionConfig } from "./config.js";
 import { ciWorkflowPath } from "./ci-config.js";
+import { buildChangelogDraftPrompt, describeChangelogDraftProvider, draftChangelogEntries } from "./changelog-draft.js";
+import { fillUnreleasedEntries } from "../changelog.js";
 import { assertPreservedFilesUnchanged, assertUnreleasedEntries, describeMissingUnreleasedEntries, formatReleaseDate, prepareChangelogClosing, verifyChangelogUpdate } from "./changelog.js";
 import { ReleaseStepError, describeError } from "./errors.js";
 import { readJsonManifest } from "./json.js";
@@ -598,6 +600,79 @@ export async function applyMigrationsStep(context) {
   }
 
   print(`${ICON.success} Base de datos al día.`);
+}
+
+/**
+ * Tells whether a local run can draft the missing `[Unreleased]` entries: the project configured
+ * `changelogDraft` and the only thing stopping the new release is a changelog without entries. A
+ * changelog that already has entries but was not updated is left to the user.
+ *
+ * @param {RenderablePlan} plan - Plan built from the diagnosis.
+ * @param {ReleaseSnapshot} state - Diagnosis.
+ * @param {ResolvedCreateVersionConfig} config - Project configuration.
+ * @param {import("./plan.js").ReleaseOptions} options - Command line options.
+ * @returns {boolean} Whether to draft the entries.
+ */
+function canDraftChangelog(plan, state, config, options) {
+  return (
+    config.changelogDraft.length > 0 &&
+    !options.ciRelease &&
+    !options.retryCi &&
+    state.changelog.entryCount === 0 &&
+    plan.blockers.length > 0 &&
+    plan.blockers.every((blocker) => blocker.code === CHANGELOG_UPDATE_REQUIRED_CODE)
+  );
+}
+
+/**
+ * Drafts the `[Unreleased]` entries with the configured agent CLIs, in order, and writes the first
+ * valid answer to the changelog (creating it when missing). The entries are not confirmed: the
+ * release commits them, so they are printed for the user to see. When every agent fails, the
+ * reasons are printed and the release keeps its changelog blocker.
+ *
+ * @param {string} repositoryRoot - Repository root.
+ * @param {ResolvedCreateVersionConfig} config - Project configuration with `changelogDraft`.
+ * @param {ReleaseSnapshot} state - Diagnosis with the package, last release and unreleased commits.
+ * @returns {Promise<boolean>} Whether the changelog now holds drafted entries.
+ */
+async function draftMissingChangelog(repositoryRoot, config, state) {
+  const changelogPath = path.join(repositoryRoot, CHANGELOG_FILE);
+  let currentChangelog = "";
+  try {
+    if (existsSync(changelogPath)) currentChangelog = STRICT_UTF8_DECODER.decode(readFileSync(changelogPath));
+  } catch (error) {
+    print(`${ICON.warning} ${paint("yellow", `No se redactó ${CHANGELOG_FILE}: no se pudo leer como texto UTF-8 (${describeError(error)}).`)}`);
+    return false;
+  }
+
+  print(`${ICON.info} ${CHANGELOG_FILE} no tiene entradas en [Unreleased]: se redactan con un agente que lee el repositorio sin modificarlo.`);
+  const progress = { spinner: /** @type {ReturnType<typeof startSpinner> | null} */ (null) };
+  const draft = await draftChangelogEntries({
+    providers: config.changelogDraft,
+    repositoryRoot,
+    prompt: buildChangelogDraftPrompt({ packageName: state.packageName, changelogPath: CHANGELOG_FILE, lastReleaseSha: state.lastRelease?.sha ?? null, commits: state.unreleasedCommits }),
+    onAttempt: (provider) => {
+      progress.spinner = startSpinner(`Redactando [Unreleased] con ${describeChangelogDraftProvider(provider)}`);
+    },
+    onFailure: ({ provider, reason }) => progress.spinner?.fail(`${describeChangelogDraftProvider(provider)} no pudo redactarlo: ${reason}`),
+  });
+
+  if (draft.entries === null) {
+    const failures = draft.failures.map(({ provider, reason }) => `${ICON.failure} ${describeChangelogDraftProvider(provider)}: ${reason}`);
+    print(renderBox({ title: `${CHANGELOG_FILE} sin redactar`, lines: [...failures, `Agregá las entradas a mano bajo ## [Unreleased] y volvé a correr ${config.commands.createVersion}.`], tone: BOX_TONE.warning }));
+    return false;
+  }
+
+  const providerLabel = describeChangelogDraftProvider(draft.provider);
+  progress.spinner?.succeed(`[Unreleased] redactado con ${providerLabel}`);
+  try {
+    writeFileSync(changelogPath, fillUnreleasedEntries(currentChangelog, draft.entries));
+  } catch (error) {
+    print(`${ICON.failure} ${paint("red", `No se pudo escribir ${CHANGELOG_FILE} con las entradas de ${providerLabel} (${describeError(error)}).`)}`);
+    return false;
+  }
+  print(renderBox({ title: `${CHANGELOG_FILE} · [Unreleased] de ${providerLabel}`, lines: draft.entries.split(LINE_BREAK_PATTERN), tone: BOX_TONE.info }));
+  return true;
 }
 
 /**
@@ -1620,11 +1695,15 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
   // The worker reloads these files from the release tag: setting their changes aside would preflight another configuration.
   const ciWorkerFiles = isCiPreparation && config.ci ? [...CI_WORKER_CONFIGURATION_FILES, ciWorkflowPath(config.ci.workflow)] : [];
   const planOptions = { skipUnpublished: options.skipUnpublished, ignoreLocalChanges: options.ignoreLocalChanges, ciWorkerFiles };
-  const spinner = startSpinner("Diagnosticando el repositorio");
-  let state;
-
-  try {
-    state = await collectReleaseState({
+  /**
+   * Diagnoses the repository: once at the start and again after drafting the changelog, whose new
+   * entries can unblock steps (such as the npm credential check) the first plan did not reach.
+   *
+   * @param {ReturnType<typeof startSpinner>} spinner - Spinner that shows the progress.
+   * @returns {Promise<ReleaseSnapshot>} Snapshot.
+   */
+  const diagnose = (spinner) =>
+    collectReleaseState({
       repositoryRoot,
       // CI preparation still reads the registry: the plan must block (or require --skip-unpublished)
       // when the last release is missing, before an immutable tag is pushed for the worker.
@@ -1641,6 +1720,11 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
           buildReleasePlan(snapshot, capabilities, { ...planOptions, ignoreLocalChanges: true }).steps.some((planStep) => planStep.id === RELEASE_STEP.publishRelease)),
       onProgress: (label) => spinner.update(label),
     });
+  let state;
+  const spinner = startSpinner("Diagnosticando el repositorio");
+
+  try {
+    state = await diagnose(spinner);
     spinner.succeed("Diagnóstico completo");
   } catch (error) {
     spinner.fail("No se pudo diagnosticar el repositorio");
@@ -1690,6 +1774,23 @@ export async function runCreateVersion({ repositoryRoot, argv }) {
 
       options = { ...options, ignoreLocalChanges: true };
       plan = planIgnoringChanges;
+    }
+  }
+  if (canDraftChangelog(plan, state, config, options)) {
+    if (options.dryRun) {
+      print(`${ICON.info} --dry-run: sin --dry-run, ${CHANGELOG_FILE} se redactaría con ${config.changelogDraft.map(describeChangelogDraftProvider).join(" o ")} antes de cortar.`);
+    } else if (await draftMissingChangelog(repositoryRoot, config, state)) {
+      const rediagnosisSpinner = startSpinner(`Diagnosticando de nuevo con el ${CHANGELOG_FILE} redactado`);
+      try {
+        state = await diagnose(rediagnosisSpinner);
+        rediagnosisSpinner.succeed("Diagnóstico completo");
+      } catch (error) {
+        rediagnosisSpinner.fail("No se pudo diagnosticar el repositorio");
+        print(paint("red", describeError(error)));
+        return FAILURE_EXIT_CODE;
+      }
+      capabilities = describePlannedCapabilities(config, isCiPreparation, state.npm?.registryLabel);
+      plan = buildReleasePlan(state, capabilities, { ...planOptions, ignoreLocalChanges: Boolean(options.ignoreLocalChanges) });
     }
   }
   if (isCiPreparation) plan = appendCiDispatch(plan);

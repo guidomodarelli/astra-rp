@@ -21,6 +21,7 @@ import {
   temporaryDirectories,
 } from "./support/cli-harness.js";
 import { startFixtureNpmRegistry } from "./support/fixture-npm-registry.js";
+import { FAKE_CLAUDE_QUOTA_MESSAGE, FAKE_CODEX_QUOTA_MESSAGE, installFakeAgents, pathVariableName } from "./support/fake-agent-cli.js";
 
 /** @type {{ close: () => Promise<void> }[]} */
 const openRegistries = [];
@@ -345,6 +346,85 @@ describe("beez-rp create-version command", () => {
       expect(JSON.parse(readFileSync(path.join(repositoryRoot, "package.json"), "utf8")).version).toBe("0.1.0");
       expect(runGit(["rev-parse", "HEAD"], repositoryRoot)).toBe(head);
       expect(runGit(["status", "--porcelain"], repositoryRoot)).toBe("");
+      expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
+    },
+    GIT_FIXTURE_TEST_TIMEOUT_MS
+  );
+
+  /**
+   * Pushes a configuration with `changelogDraft: true` and an empty `[Unreleased]` block.
+   *
+   * @param {string} repositoryRoot - Checkout.
+   * @returns {string} Changelog left without entries.
+   */
+  function pushEmptyChangelogWithDrafting(repositoryRoot) {
+    const notes = "# Changelog\n\n## [Unreleased]\n\n### Added\n";
+    writeFileSync(path.join(repositoryRoot, "beez-rp.config.js"), "export default { checks: false, changelogDraft: true };\n");
+    writeFileSync(path.join(repositoryRoot, "CHANGELOG.md"), notes);
+    runGit(["add", "-A"], repositoryRoot);
+    runGit(["commit", "--quiet", "-m", "chore: draft the changelog"], repositoryRoot);
+    runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
+    return notes;
+  }
+
+  /**
+   * @param {string} binDirectory - Fake agents, put first on `PATH`.
+   * @returns {NodeJS.ProcessEnv} Environment override for the command under test.
+   */
+  function withFakeAgentsFirst(binDirectory) {
+    const pathVariable = pathVariableName();
+    return { [pathVariable]: `${binDirectory}${path.delimiter}${process.env[pathVariable] ?? ""}` };
+  }
+
+  it(
+    "should release with entries drafted by Codex when Claude Code has no quota left",
+    async () => {
+      // Arrange
+      const { repositoryRoot, remoteRoot } = createReleasedRepository();
+      pushEmptyChangelogWithDrafting(repositoryRoot);
+      const fakeAgents = installFakeAgents({ claude: { kind: "quota" }, codex: { kind: "answer", text: "### Added\n\n- Redacción automática del CHANGELOG." } });
+
+      // Act
+      const { result: release, releaseDays } = await runWithReleaseDays(() => runCliAsync(repositoryRoot, ["--bump", "minor"], withFakeAgentsFirst(fakeAgents.binDirectory)));
+
+      // Assert
+      expect(release.status, release.output).toBe(0);
+      const output = flattenOutput(release.output);
+      expect(output).toContain(`Claude Code no pudo redactarlo: falló con código 1: ${FAKE_CLAUDE_QUOTA_MESSAGE}`);
+      expect(output).toContain("[Unreleased] redactado con Codex");
+      expect(fakeAgents.readCalls().map((call) => call.name)).toEqual(["claude", "codex"]);
+      const closedNotes = releaseDays.map((releaseDay) => closedChangelog("# Changelog\n\n", "0.2.0", releaseDay, "\n\n### Added\n\n- Redacción automática del CHANGELOG."));
+      expect(closedNotes).toContain(runGit(["show", "main:CHANGELOG.md"], remoteRoot));
+      expect(runGit(["tag", "--list"], remoteRoot)).toBe("v0.2.0");
+      expect(runGit(["status", "--porcelain"], repositoryRoot)).toBe("");
+    },
+    GIT_FIXTURE_TEST_TIMEOUT_MS
+  );
+
+  it(
+    "should report why every agent failed and stop before bumping, without touching the changelog",
+    async () => {
+      // Arrange
+      const { repositoryRoot, remoteRoot } = createReleasedRepository();
+      const notes = pushEmptyChangelogWithDrafting(repositoryRoot);
+      const fakeAgents = installFakeAgents({ claude: { kind: "quota" }, codex: { kind: "quota" } });
+      const head = runGit(["rev-parse", "HEAD"], repositoryRoot);
+
+      // Act
+      const preview = await runCliAsync(repositoryRoot, ["--dry-run"], withFakeAgentsFirst(fakeAgents.binDirectory));
+      const release = await runCliAsync(repositoryRoot, ["--bump", "minor"], withFakeAgentsFirst(fakeAgents.binDirectory));
+
+      // Assert
+      expect(preview.status, preview.output).toBe(1);
+      expect(flattenOutput(preview.output)).toContain("--dry-run: sin --dry-run, CHANGELOG.md se redactaría con Claude Code o Codex antes de cortar.");
+      expect(release.status, release.output).toBe(1);
+      const output = flattenOutput(release.output);
+      expect(output).toContain(`Claude Code: falló con código 1: ${FAKE_CLAUDE_QUOTA_MESSAGE}`);
+      expect(output).toContain(`Codex: falló con código 1: ${FAKE_CODEX_QUOTA_MESSAGE}`);
+      expect(output).toContain("La sección ## [Unreleased] de CHANGELOG.md no tiene entradas");
+      expect(fakeAgents.readCalls().map((call) => call.name)).toEqual(["claude", "codex"]);
+      expect(readFileSync(path.join(repositoryRoot, "CHANGELOG.md"), "utf8")).toBe(notes);
+      expect(runGit(["rev-parse", "HEAD"], repositoryRoot)).toBe(head);
       expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
     },
     GIT_FIXTURE_TEST_TIMEOUT_MS

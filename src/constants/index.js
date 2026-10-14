@@ -6,6 +6,7 @@
 
 export * from "./build-gate.js";
 export * from "./changelog.js";
+export * from "./changelog-draft.js";
 export * from "./cli.js";
 export * from "./guard-publish.js";
 export * from "./package-manager.js";

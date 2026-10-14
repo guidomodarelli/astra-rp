@@ -6,6 +6,8 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-14
+
 ### Added
 
 - Opción `releaseTimeZone` en `beez-rp.config.js`: una zona horaria IANA (por ejemplo `"America/Argentina/Buenos_Aires"`) para la fecha de `## [X.Y.Z] - AAAA-MM-DD` al cerrar `## [Unreleased]`, en modo simple y monorepo, en local y en CI, así un release preparado de noche en un runner en UTC no queda fechado al día siguiente. Sin la opción se sigue usando el día local de la máquina que crea el commit; una zona inválida corta el comando con un aviso antes de cualquier cambio, y el mensaje del cierre del CHANGELOG nombra la zona configurada.

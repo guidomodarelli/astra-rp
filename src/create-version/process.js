@@ -66,23 +66,43 @@ export function runCaptured(command, commandArguments, options = {}) {
  */
 
 /**
- * Stops a command together with the processes it started: on Windows a shell-launched `.cmd` shim
- * runs the real program as a grandchild that `kill` alone would leave running.
+ * Whether stoppable commands run as the leader of their own process group: true outside Windows,
+ * where signaling the negative pid reaches every process the command started.
+ */
+const RUNS_COMMANDS_IN_OWN_PROCESS_GROUP = process.platform !== "win32";
+
+/**
+ * Stops a command together with every process it started, such as the shell or Git commands an
+ * agent CLI is running: on Windows `taskkill /t` ends the whole tree (a shell-launched `.cmd` shim
+ * runs the real program as a grandchild); elsewhere the command leads its own process group, which
+ * is killed as a whole. A group that already ended leaves nothing to stop; any other failure is
+ * logged so a process left running is not silent.
  *
- * @param {import("node:child_process").ChildProcess} child - Command to stop.
+ * @param {import("node:child_process").ChildProcess} child - Command to stop, spawned with `detached`
+ *   outside Windows.
+ * @param {string} command - Executable name or command line, only used to describe a failure.
  * @returns {void}
  */
-function stopProcessTree(child) {
-  if (process.platform === "win32" && child.pid !== undefined) {
+function stopProcessTree(child, command) {
+  if (child.pid === undefined) return;
+  if (!RUNS_COMMANDS_IN_OWN_PROCESS_GROUP) {
+    // A tree that already ended makes taskkill fail, which leaves nothing to stop.
     spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
     return;
   }
-  child.kill();
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code === "ESRCH") return;
+    console.error(`beez-rp create-version: stopProcessTree failed to kill the process group of "${command}" (pid ${child.pid}) after its timeout`, error);
+  }
 }
 
 /**
  * Runs a command that reads `input` from stdin and captures its output, stopping it after
- * `timeoutMs`. Used for agent CLIs that receive their prompt through stdin.
+ * `timeoutMs`. Used for agent CLIs that receive their prompt through stdin. Outside Windows the
+ * command runs in its own process group so a timeout also stops the processes it started; the
+ * promise still waits for its pipes to close when it ends normally, so no `unref` is needed.
  *
  * @param {string} command - Executable name, or a full command line when `shell` is set.
  * @param {string[]} commandArguments - Arguments.
@@ -98,6 +118,7 @@ export function runCapturedWithInput(command, commandArguments, options) {
       shell: options.shell ?? false,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      detached: RUNS_COMMANDS_IN_OWN_PROCESS_GROUP,
     });
     let stdout = "";
     let stderr = "";
@@ -120,7 +141,7 @@ export function runCapturedWithInput(command, commandArguments, options) {
     };
     const timer = setTimeout(() => {
       timedOut = true;
-      stopProcessTree(child);
+      stopProcessTree(child, command);
       // Grandchildren that ignore the signal keep the pipes open and would delay `close` forever.
       finish(1);
     }, options.timeoutMs);

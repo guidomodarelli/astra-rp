@@ -6,6 +6,7 @@
  * @module tests/create-version/support/fake-agent-cli
  */
 
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -17,8 +18,13 @@ import { createTemporaryDirectory } from "./cli-harness.js";
  * @typedef {{ kind: "answer", text: string, touch?: FakeAgentTouch } | { kind: "quota" } | { kind: "sleep" }} FakeAgentBehavior
  *   `answer` returns `text` as the agent answer (after writing `touch`, when given), `quota` fails as
  *   an exhausted subscription does and `sleep` never answers.
- * @typedef {{ name: string, cwd: string, args: string[], prompt: string }} FakeAgentCall
+ * @typedef {{ name: string, cwd: string, args: string[], prompt: string, files: string[], diff: string | null }} FakeAgentCall
+ *   `files` lists every file under the working directory (relative, with `/`) when the agent
+ *   started, and `diff` is the release diff it found there, if any.
  */
+
+/** Release diff the agents find in their workspace, relative to their working directory. */
+const WORKSPACE_DIFF_PATH = "release-context/changes.diff";
 
 /** Message the fake Claude Code prints when its subscription has no quota left. */
 export const FAKE_CLAUDE_QUOTA_MESSAGE = "Claude AI usage limit reached|1760000000";
@@ -35,7 +41,7 @@ export const FAKE_CODEX_QUOTA_MESSAGE = "ERROR: You've hit your usage limit.";
  * @returns {string} ES module source.
  */
 function fakeAgentSource(name, behavior, logPath) {
-  return `import { appendFileSync, writeFileSync } from "node:fs";
+  return `import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 const name = ${JSON.stringify(name)};
 const behavior = ${JSON.stringify(behavior)};
 let prompt = "";
@@ -43,7 +49,9 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => (prompt += chunk));
 process.stdin.on("end", () => {
   const args = process.argv.slice(2);
-  appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ name, cwd: process.cwd(), args, prompt }) + "\\n");
+  const files = readdirSync(".", { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => \`\${entry.parentPath}/\${entry.name}\`.replaceAll("\\\\", "/").replace(/^\\.\\//u, "")).sort();
+  const diff = existsSync(${JSON.stringify(WORKSPACE_DIFF_PATH)}) ? readFileSync(${JSON.stringify(WORKSPACE_DIFF_PATH)}, "utf8") : null;
+  appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ name, cwd: process.cwd(), args, prompt, files, diff }) + "\\n");
   if (behavior.kind === "sleep") { setInterval(() => {}, 1000); return; }
   if (behavior.touch) writeFileSync(behavior.touch.filePath, behavior.touch.content);
   if (name === "claude") {
@@ -102,13 +110,27 @@ export function pathVariableName() {
 }
 
 /**
- * `PATH` with only the fake agents, Node and the system commands the drafting needs (`where` on
- * Windows, `sh` elsewhere): the real agent CLIs installed on the machine cannot be found.
+ * Directory of the `git` executable the tests run, found on the current `PATH`.
+ *
+ * @returns {string} Directory that holds `git`.
+ * @throws {Error} When `git` is not on `PATH`.
+ */
+function gitDirectory() {
+  const lookup = process.platform === "win32" ? spawnSync("where", ["git"], { encoding: "utf8" }) : spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" });
+  const gitPath = lookup.status === 0 ? lookup.stdout.split(/\r?\n/u).find((line) => line.trim()) : undefined;
+  if (!gitPath) throw new Error(`fake-agent-cli:gitDirectory failed: git is not on PATH (${lookup.stderr})`);
+  return path.dirname(gitPath.trim());
+}
+
+/**
+ * `PATH` with only the fake agents, Node, Git and the system commands the drafting needs (`where`
+ * and `tar` in System32 on Windows, `sh` and `tar` elsewhere): the real agent CLIs installed on the
+ * machine cannot be found.
  *
  * @param {string} binDirectory - Directory of the fake agents.
  * @returns {string} Isolated `PATH`.
  */
 export function isolatedAgentPath(binDirectory) {
   const systemDirectories = process.platform === "win32" ? [path.join(process.env.SystemRoot ?? "C:\\Windows", "System32")] : ["/bin", "/usr/bin"];
-  return [binDirectory, path.dirname(process.execPath), ...systemDirectories].join(path.delimiter);
+  return [binDirectory, path.dirname(process.execPath), gitDirectory(), ...systemDirectories].join(path.delimiter);
 }

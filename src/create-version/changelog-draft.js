@@ -1,42 +1,46 @@
 /**
  * Drafts the `[Unreleased]` entries of a changelog with an agent CLI when a new release would stop
  * because they are missing. The agents are tried in the configured order (Claude Code, then Codex
- * by default): each one explores the repository read-only and answers the entries as Markdown,
+ * by default): each one reads an isolated, read-only copy of the repository with the release diff
+ * and log, outside the checkout, and answers the entries as Markdown,
  * which beez-rp checks before writing them. The first valid answer wins; when every agent fails,
  * the caller reports why and the release stops as it does without drafting.
  *
  * @module create-version/changelog-draft
  */
 
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import os from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { readUnreleased } from "../changelog.js";
-import { CHANGE_TYPES, LINE_BREAK_PATTERN, UNRELEASED_HEADING } from "../constants/changelog.js";
+import { CHANGE_TYPES, ENTRY_LINE_PATTERN, LINE_BREAK_PATTERN, UNRELEASED_HEADING } from "../constants/changelog.js";
 import {
-  CHANGELOG_DRAFT_DIRECTORY_PREFIX,
+  BLANK_LINE_PATTERN,
+  CHANGELOG_DRAFT_CONTEXT_DIRECTORY,
+  CHANGELOG_DRAFT_DIFF_FILE,
   CHANGELOG_DRAFT_EXECUTABLES,
   CHANGELOG_DRAFT_LINE_PATTERN,
+  CHANGELOG_DRAFT_LOG_FILE,
   CHANGELOG_DRAFT_MAX_FAILURE_CHARACTERS,
   CHANGELOG_DRAFT_PROVIDER,
   CHANGELOG_DRAFT_PROVIDER_LABELS,
+  CHANGELOG_DRAFT_SECTION_PATTERN,
+  CHANGELOG_DRAFT_SNAPSHOT_DIRECTORY,
   CHANGELOG_DRAFT_TIMEOUT_MS,
   CLAUDE_DRAFT_ARGUMENTS,
+  CLAUDE_DRAFT_SETTINGS,
+  CLAUDE_DRAFT_SETTINGS_FILE,
   CLAUDE_SUCCESS_SUBTYPE,
-  CODEX_DIRECTORY_OPTION,
   CODEX_DRAFT_ARGUMENTS,
   CODEX_LAST_MESSAGE_FILE,
-  CODEX_LAST_MESSAGE_OPTION,
-  CODEX_STDIN_PROMPT_ARGUMENT,
   MARKDOWN_FENCE_PATTERN,
   RELEASE_LEVEL_HEADING_PATTERN,
-  UNSAFE_SHELL_PATH_PATTERN,
+  UNSAFE_SHELL_ARGUMENT_PATTERN,
   WINDOWS_EXECUTABLE_LOOKUP_COMMAND,
   WINDOWS_RUNNABLE_FILE_PATTERN,
   WINDOWS_SHELL_SCRIPT_PATTERN,
 } from "../constants/changelog-draft.js";
 import { SHORT_SHA_LENGTH } from "../constants/create-version.js";
+import { createChangelogDraftWorkspace } from "./changelog-draft-workspace.js";
 import { isRecord } from "./json.js";
 import { quoteShellArguments, runCaptured, runCapturedWithInput } from "./process.js";
 
@@ -57,7 +61,7 @@ import { quoteShellArguments, runCaptured, runCapturedWithInput } from "./proces
  * @typedef {{
  *   providers: readonly ChangelogDraftProvider[],
  *   repositoryRoot: string,
- *   prompt: string,
+ *   request: ChangelogDraftRequest,
  *   timeoutMs?: number,
  *   onAttempt?: (provider: ChangelogDraftProvider) => void,
  *   onFailure?: (failure: ChangelogDraftFailure) => void,
@@ -65,8 +69,9 @@ import { quoteShellArguments, runCaptured, runCapturedWithInput } from "./proces
  */
 
 /**
- * Writes the prompt the agent receives: what to draft, where to look (read-only) and the exact
- * answer format beez-rp accepts. The project rules about the changelog win over these guidelines.
+ * Writes the prompt the agent receives: what to draft, the files of the isolated workspace it runs
+ * in (snapshot and release context) and the exact answer format beez-rp accepts. The project rules
+ * about the changelog win over these guidelines.
  *
  * @param {ChangelogDraftRequest} request - Package, changelog and commits of the release.
  * @returns {string} Prompt in Spanish.
@@ -74,10 +79,13 @@ import { quoteShellArguments, runCaptured, runCapturedWithInput } from "./proces
 export function buildChangelogDraftPrompt({ packageName, changelogPath, lastReleaseSha, commits }) {
   const range = lastReleaseSha ? `${lastReleaseSha}..HEAD` : "HEAD (todavía no hay releases: es todo el historial)";
   const commitLines = commits.map((commit) => `- ${(commit.sha ?? "").slice(0, SHORT_SHA_LENGTH)} ${commit.subject}`);
+  const snapshot = `${CHANGELOG_DRAFT_SNAPSHOT_DIRECTORY}/`;
+  const diffFile = `${CHANGELOG_DRAFT_CONTEXT_DIRECTORY}/${CHANGELOG_DRAFT_DIFF_FILE}`;
+  const logFile = `${CHANGELOG_DRAFT_CONTEXT_DIRECTORY}/${CHANGELOG_DRAFT_LOG_FILE}`;
   return [
     `Redactá las entradas de la sección ${UNRELEASED_HEADING} de ${changelogPath} del paquete ${packageName} para su próximo release.`,
     "",
-    `Los cambios a describir son los commits del rango ${range}. Explorá el repositorio en modo solo lectura: usá git log, git diff y git show sobre ese rango y leé los archivos que necesites, incluidas las reglas del proyecto sobre el CHANGELOG (AGENTS.md, CLAUDE.md, CONTRIBUTING.md), que tienen prioridad sobre estas pautas. No modifiques ningún archivo.`,
+    `Los cambios a describir son los commits del rango ${range}. Trabajás en una copia aislada y de solo lectura, sin git: ${snapshot} tiene los archivos versionados del repositorio en HEAD, ${diffFile} el diff del rango (sin ${changelogPath}) y ${logFile} su git log --stat. Leé esos archivos y las reglas del proyecto sobre el CHANGELOG (${snapshot}AGENTS.md, ${snapshot}CLAUDE.md, ${snapshot}CONTRIBUTING.md), que tienen prioridad sobre estas pautas. No leas archivos fuera de este directorio ni modifiques ninguno.`,
     "",
     "Pautas:",
     `- Formato Keep a Changelog: agrupá las entradas solo en estas secciones, en este orden y omitiendo las vacías: ${CHANGE_TYPES.map((changeType) => `### ${changeType}`).join(", ")}.`,
@@ -94,7 +102,8 @@ export function buildChangelogDraftPrompt({ packageName, changelogPath, lastRele
 
 /**
  * Checks an agent answer before it reaches the changelog: an optional Markdown fence is removed,
- * and the rest must be Keep a Changelog sections with at least one entry and nothing else.
+ * and the rest must be Keep a Changelog sections and nothing else, with the structure
+ * {@link findSectionStructureProblem} requires.
  *
  * @param {string} answer - Text the agent answered.
  * @returns {ParsedChangelogDraft} Entries to write, or why the answer cannot be used.
@@ -106,43 +115,97 @@ export function parseChangelogDraft(answer) {
   if (RELEASE_LEVEL_HEADING_PATTERN.test(entries)) {
     return { entries: null, reason: `la respuesta incluye encabezados de versión (## …); se esperaban solo secciones ### y entradas` };
   }
-  const unexpectedLine = entries.split(LINE_BREAK_PATTERN).find((line) => !CHANGELOG_DRAFT_LINE_PATTERN.test(line));
+  const lines = entries.split(LINE_BREAK_PATTERN);
+  const unexpectedLine = lines.find((line) => !CHANGELOG_DRAFT_LINE_PATTERN.test(line));
   if (unexpectedLine !== undefined) {
     return { entries: null, reason: `la respuesta incluye texto que no es una sección ni una entrada: ${truncate(unexpectedLine)}` };
   }
-  const unreleased = readUnreleased(`${UNRELEASED_HEADING}\n\n${entries}\n`);
-  if (unreleased.unknownSections.length > 0) {
-    return { entries: null, reason: `la respuesta usa secciones fuera de Keep a Changelog (${unreleased.unknownSections.join(", ")})` };
-  }
-  if (unreleased.entryCount === 0) {
-    return { entries: null, reason: `la respuesta no tiene entradas (líneas "- …")` };
-  }
-  return { entries, reason: null };
+  const structureProblem = findSectionStructureProblem(lines);
+  return structureProblem === null ? { entries, reason: null } : { entries: null, reason: structureProblem };
 }
 
 /**
- * Tries each agent CLI in order until one answers entries {@link parseChangelogDraft} accepts. An
- * agent that is not installed, has no quota left, fails, takes longer than the limit or answers in
- * another format counts as a failure, and the next one is tried.
+ * Checks the sections of a draft whose lines are already known to be headings, entries,
+ * continuations or blank: every entry (and continuation) belongs to a section, every section is
+ * one of {@link CHANGE_TYPES}, appears once, follows their order and has at least one entry.
  *
- * @param {ChangelogDraftOptions} options - Agents in order, repository, prompt and progress callbacks.
+ * @param {readonly string[]} lines - Draft lines.
+ * @returns {string | null} First problem found, in Spanish, or `null` when the structure is valid.
+ */
+function findSectionStructureProblem(lines) {
+  /** @type {{ name: string, order: number, entryCount: number } | null} */
+  let currentSection = null;
+
+  for (const line of lines) {
+    const sectionName = line.match(CHANGELOG_DRAFT_SECTION_PATTERN)?.[1];
+    if (sectionName !== undefined) {
+      if (currentSection?.entryCount === 0) return describeEmptySection(currentSection.name);
+      const order = CHANGE_TYPES.indexOf(sectionName);
+      if (order === -1) return `la respuesta usa secciones fuera de Keep a Changelog (${sectionName})`;
+      if (currentSection && order === currentSection.order) return `la respuesta repite la sección ### ${sectionName}`;
+      if (currentSection && order < currentSection.order) {
+        return `la sección ### ${sectionName} está fuera del orden de Keep a Changelog (${CHANGE_TYPES.join(", ")})`;
+      }
+      currentSection = { name: sectionName, order, entryCount: 0 };
+      continue;
+    }
+    if (BLANK_LINE_PATTERN.test(line)) continue;
+    if (currentSection === null) return `la respuesta tiene texto fuera de una sección ###: ${truncate(line)}`;
+    if (ENTRY_LINE_PATTERN.test(line)) currentSection.entryCount += 1;
+  }
+
+  if (currentSection === null) return `la respuesta no tiene entradas (líneas "- …")`;
+  return currentSection.entryCount === 0 ? describeEmptySection(currentSection.name) : null;
+}
+
+/**
+ * Explains a section of the draft without entries.
+ *
+ * @param {string} sectionName - Section name, such as `Added`.
+ * @returns {string} Reason in Spanish.
+ */
+function describeEmptySection(sectionName) {
+  return `la sección ### ${sectionName} no tiene entradas (líneas "- …")`;
+}
+
+/**
+ * Tries each agent CLI in order until one answers entries {@link parseChangelogDraft} accepts. The
+ * agents run in one isolated workspace (see {@link createChangelogDraftWorkspace}), removed at the
+ * end. An agent that is not installed, has no quota left, fails, takes longer than the limit or
+ * answers in another format counts as a failure, and the next one is tried; when the workspace
+ * cannot be created, every agent fails with that reason.
+ *
+ * @param {ChangelogDraftOptions} options - Agents in order, repository, release and progress callbacks.
  * @returns {Promise<ChangelogDraftResult>} Entries and the agent that wrote them, or every failure.
  */
-export async function draftChangelogEntries({ providers, repositoryRoot, prompt, timeoutMs = CHANGELOG_DRAFT_TIMEOUT_MS, onAttempt, onFailure }) {
+export async function draftChangelogEntries({ providers, repositoryRoot, request, timeoutMs = CHANGELOG_DRAFT_TIMEOUT_MS, onAttempt, onFailure }) {
   /** @type {ChangelogDraftFailure[]} */
   const failures = [];
 
-  for (const provider of providers) {
-    onAttempt?.(provider);
-    const result = await askAgent(provider, repositoryRoot, prompt, timeoutMs);
-    const parsed = result.answer === null ? { entries: null, reason: result.reason } : parseChangelogDraft(result.answer);
-    if (parsed.entries !== null) return { provider, entries: parsed.entries, failures };
-    const failure = { provider, reason: parsed.reason };
-    failures.push(failure);
-    onFailure?.(failure);
+  /** @type {Awaited<ReturnType<typeof createChangelogDraftWorkspace>>} */
+  let workspace;
+  try {
+    workspace = await createChangelogDraftWorkspace({ repositoryRoot, lastReleaseSha: request.lastReleaseSha, changelogPath: request.changelogPath });
+  } catch (error) {
+    const reason = `no se pudo preparar la copia aislada del repositorio: ${truncate(error instanceof Error ? error.message : String(error))}`;
+    return { provider: null, entries: null, failures: providers.map((provider) => ({ provider, reason })) };
   }
 
-  return { provider: null, entries: null, failures };
+  try {
+    const prompt = buildChangelogDraftPrompt(request);
+    for (const provider of providers) {
+      onAttempt?.(provider);
+      const result = await askAgent(provider, workspace.directory, prompt, timeoutMs);
+      const parsed = result.answer === null ? { entries: null, reason: result.reason } : parseChangelogDraft(result.answer);
+      if (parsed.entries !== null) return { provider, entries: parsed.entries, failures };
+      const failure = { provider, reason: parsed.reason };
+      failures.push(failure);
+      onFailure?.(failure);
+    }
+    return { provider: null, entries: null, failures };
+  } finally {
+    workspace.remove();
+  }
 }
 
 /**
@@ -159,31 +222,33 @@ export function describeChangelogDraftProvider(provider) {
  * Runs one agent CLI and returns its answer text.
  *
  * @param {ChangelogDraftProvider} provider - Agent CLI.
- * @param {string} repositoryRoot - Repository the agent explores.
+ * @param {string} workspaceDirectory - Isolated workspace the agent runs in.
  * @param {string} prompt - Prompt sent through stdin.
  * @param {number} timeoutMs - Time limit.
  * @returns {Promise<AgentAnswer>} Answer, or why there is none.
  */
-async function askAgent(provider, repositoryRoot, prompt, timeoutMs) {
+async function askAgent(provider, workspaceDirectory, prompt, timeoutMs) {
   const executable = CHANGELOG_DRAFT_EXECUTABLES[provider];
   const invocation = await resolveAgentInvocation(executable);
   if (!invocation) return { answer: null, reason: `${executable} no está instalado o no está en el PATH` };
 
-  return provider === CHANGELOG_DRAFT_PROVIDER.claude ? askClaude(invocation, repositoryRoot, prompt, timeoutMs) : askCodex(invocation, repositoryRoot, prompt, timeoutMs);
+  return provider === CHANGELOG_DRAFT_PROVIDER.claude ? askClaude(invocation, workspaceDirectory, prompt, timeoutMs) : askCodex(invocation, workspaceDirectory, prompt, timeoutMs);
 }
 
 /**
  * Asks Claude Code in print mode; its JSON result tells a real answer from an error such as an
- * exhausted subscription or a missing login, which also exit with a failure code.
+ * exhausted subscription or a missing login, which also exit with a failure code. The settings
+ * file its arguments name is written to the workspace first.
  *
  * @param {AgentInvocation} invocation - How to start `claude`.
- * @param {string} repositoryRoot - Repository the agent explores.
+ * @param {string} workspaceDirectory - Isolated workspace the agent runs in.
  * @param {string} prompt - Prompt sent through stdin.
  * @param {number} timeoutMs - Time limit.
  * @returns {Promise<AgentAnswer>} Answer, or why there is none.
  */
-async function askClaude(invocation, repositoryRoot, prompt, timeoutMs) {
-  const result = await runAgent(invocation, [...CLAUDE_DRAFT_ARGUMENTS], repositoryRoot, prompt, timeoutMs);
+async function askClaude(invocation, workspaceDirectory, prompt, timeoutMs) {
+  writeFileSync(path.join(workspaceDirectory, CLAUDE_DRAFT_SETTINGS_FILE), JSON.stringify(CLAUDE_DRAFT_SETTINGS));
+  const result = await runAgent(invocation, CLAUDE_DRAFT_ARGUMENTS, workspaceDirectory, prompt, timeoutMs);
   if (result.reason !== null) return { answer: null, reason: result.reason };
 
   const output = parseJsonObject(result.stdout);
@@ -195,50 +260,50 @@ async function askClaude(invocation, repositoryRoot, prompt, timeoutMs) {
 }
 
 /**
- * Asks Codex non-interactively in a read-only sandbox; its last message is read from a temporary
- * file outside the repository, since stdout also carries its progress.
+ * Asks Codex non-interactively in a read-only sandbox; its last message is read from the file it
+ * writes at the workspace root, since stdout also carries its progress.
  *
  * @param {AgentInvocation} invocation - How to start `codex`.
- * @param {string} repositoryRoot - Repository the agent explores.
+ * @param {string} workspaceDirectory - Isolated workspace the agent runs in.
  * @param {string} prompt - Prompt sent through stdin.
  * @param {number} timeoutMs - Time limit.
  * @returns {Promise<AgentAnswer>} Answer, or why there is none.
  */
-async function askCodex(invocation, repositoryRoot, prompt, timeoutMs) {
-  const temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), CHANGELOG_DRAFT_DIRECTORY_PREFIX));
-  const lastMessagePath = path.join(temporaryDirectory, CODEX_LAST_MESSAGE_FILE);
+async function askCodex(invocation, workspaceDirectory, prompt, timeoutMs) {
+  const result = await runAgent(invocation, CODEX_DRAFT_ARGUMENTS, workspaceDirectory, prompt, timeoutMs);
+  if (result.reason !== null) return { answer: null, reason: result.reason };
+  if (result.status !== 0) return { answer: null, reason: describeFailedRun(result.status, result.stderr || result.stdout) };
 
   try {
-    const commandArguments = [...CODEX_DRAFT_ARGUMENTS, CODEX_DIRECTORY_OPTION, repositoryRoot, CODEX_LAST_MESSAGE_OPTION, lastMessagePath, CODEX_STDIN_PROMPT_ARGUMENT];
-    const result = await runAgent(invocation, commandArguments, repositoryRoot, prompt, timeoutMs);
-    if (result.reason !== null) return { answer: null, reason: result.reason };
-    if (result.status !== 0) return { answer: null, reason: describeFailedRun(result.status, result.stderr || result.stdout) };
-
-    try {
-      return { answer: readFileSync(lastMessagePath, "utf8"), reason: null };
-    } catch {
-      return { answer: null, reason: "terminó sin escribir una respuesta" };
-    }
-  } finally {
-    rmSync(temporaryDirectory, { recursive: true, force: true });
+    return { answer: readFileSync(path.join(workspaceDirectory, CODEX_LAST_MESSAGE_FILE), "utf8"), reason: null };
+  } catch {
+    return { answer: null, reason: "terminó sin escribir una respuesta" };
   }
 }
 
 /**
- * Starts an agent CLI inside the repository with the prompt on stdin.
+ * Starts an agent CLI inside the workspace with the prompt on stdin. A Windows `.cmd` shim runs
+ * through `cmd.exe`, which receives one command line: the workspace goes as the working directory,
+ * never on that line, and the fixed arguments are double-quoted after checking that none holds a
+ * character `cmd.exe` would expand or interpret.
  *
  * @param {AgentInvocation} invocation - Executable and whether it needs a shell.
- * @param {string[]} commandArguments - Agent arguments.
- * @param {string} repositoryRoot - Working directory.
+ * @param {readonly string[]} commandArguments - Fixed agent arguments.
+ * @param {string} workspaceDirectory - Working directory.
  * @param {string} prompt - Prompt sent through stdin.
  * @param {number} timeoutMs - Time limit.
  * @returns {Promise<{ status: number, stdout: string, stderr: string, reason: string | null }>} Output,
  *   with a reason when the agent did not start or took too long.
  */
-async function runAgent(invocation, commandArguments, repositoryRoot, prompt, timeoutMs) {
-  // A Windows shell receives one command line: the fixed arguments and the paths are double-quoted.
-  const [command, spawnArguments] = invocation.shell ? [`${invocation.command} ${quoteShellArguments(commandArguments)}`, []] : [invocation.command, commandArguments];
-  const result = await runCapturedWithInput(command, spawnArguments, { cwd: repositoryRoot, input: prompt, timeoutMs, shell: invocation.shell });
+async function runAgent(invocation, commandArguments, workspaceDirectory, prompt, timeoutMs) {
+  if (invocation.shell) {
+    const unsafeArgument = commandArguments.find((commandArgument) => UNSAFE_SHELL_ARGUMENT_PATTERN.test(commandArgument));
+    if (unsafeArgument !== undefined) {
+      return { status: 1, stdout: "", stderr: "", reason: `no se ejecutó: el argumento ${unsafeArgument} tiene caracteres que cmd.exe interpretaría` };
+    }
+  }
+  const [command, spawnArguments] = invocation.shell ? [`${invocation.command} ${quoteShellArguments(commandArguments)}`, []] : [invocation.command, [...commandArguments]];
+  const result = await runCapturedWithInput(command, spawnArguments, { cwd: workspaceDirectory, input: prompt, timeoutMs, shell: invocation.shell });
   if (result.timedOut) return { ...result, reason: `no respondió en ${Math.round(timeoutMs / 1000)} s` };
   if (result.spawnErrorCode !== null) return { ...result, reason: `no se pudo ejecutar (${result.spawnErrorCode})` };
   return { ...result, reason: null };
@@ -261,7 +326,7 @@ export async function resolveAgentInvocation(executable) {
   const executablePath = lookup.status === 0 ? lookup.stdout.split(LINE_BREAK_PATTERN).map((line) => line.trim()).find((line) => WINDOWS_RUNNABLE_FILE_PATTERN.test(line)) : undefined;
   if (!executablePath) return null;
   if (!WINDOWS_SHELL_SCRIPT_PATTERN.test(executablePath)) return { command: executablePath, shell: false };
-  return UNSAFE_SHELL_PATH_PATTERN.test(executablePath) ? null : { command: `"${executablePath}"`, shell: true };
+  return UNSAFE_SHELL_ARGUMENT_PATTERN.test(executablePath) ? null : { command: `"${executablePath}"`, shell: true };
 }
 
 /**

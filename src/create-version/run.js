@@ -74,7 +74,7 @@ import {
 } from "./artifact.js";
 import { describeReleaseTypes, loadCreateVersionConfig } from "./config.js";
 import { ciWorkflowPath } from "./ci-config.js";
-import { buildChangelogDraftPrompt, describeChangelogDraftProvider, draftChangelogEntries } from "./changelog-draft.js";
+import { describeChangelogDraftProvider, draftChangelogEntries } from "./changelog-draft.js";
 import { fillUnreleasedEntries } from "../changelog.js";
 import { assertPreservedFilesUnchanged, assertUnreleasedEntries, describeMissingUnreleasedEntries, formatReleaseDate, prepareChangelogClosing, verifyChangelogUpdate } from "./changelog.js";
 import { ReleaseStepError, describeError } from "./errors.js";
@@ -696,7 +696,7 @@ async function draftMissingChangelog(repositoryRoot, config, state) {
   const draft = await draftChangelogEntries({
     providers: config.changelogDraft,
     repositoryRoot,
-    prompt: buildChangelogDraftPrompt({ packageName: state.packageName, changelogPath: CHANGELOG_FILE, lastReleaseSha: state.lastRelease?.sha ?? null, commits: state.unreleasedCommits }),
+    request: { packageName: state.packageName, changelogPath: CHANGELOG_FILE, lastReleaseSha: state.lastRelease?.sha ?? null, commits: state.unreleasedCommits },
     onAttempt: (provider) => {
       progress.spinner = startSpinner(`Redactando [Unreleased] con ${describeChangelogDraftProvider(provider)}`);
     },

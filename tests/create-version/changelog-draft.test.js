@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { buildChangelogDraftPrompt, draftChangelogEntries, parseChangelogDraft } from "../../src/create-version/changelog-draft.js";
+import { draftChangelogEntries, parseChangelogDraft } from "../../src/create-version/changelog-draft.js";
 import { loadCreateVersionConfig } from "../../src/create-version/config.js";
-import { cleanupTemporaryDirectories, createTemporaryDirectory } from "./support/cli-harness.js";
+import { cleanupTemporaryDirectories, commitFixtureRepository, createTemporaryDirectory, runGit } from "./support/cli-harness.js";
 import { FAKE_CLAUDE_QUOTA_MESSAGE, FAKE_CODEX_QUOTA_MESSAGE, installFakeAgents, isolatedAgentPath, pathVariableName } from "./support/fake-agent-cli.js";
 
 /** Entries a fake agent answers in the tests. */
@@ -16,11 +16,17 @@ const RELEASE_COMMITS = [
   { sha: "0f9e8d7c6b5a4f3e2d1c", subject: "fix: release date" },
 ];
 
+/** Line the release adds to the tracked source, expected in the diff the agents receive. */
+const RELEASED_SOURCE_LINE = "export const gate = true;";
+
+/** Untracked local credential the agents must never see. */
+const UNTRACKED_SECRET_FILE = ".npmrc";
+
 const pathVariable = pathVariableName();
 const originalPath = process.env[pathVariable];
 
 /**
- * Puts only the fake agents (plus Node and the system commands) on `PATH` for the code under test.
+ * Puts only the fake agents (plus Node, Git and the system commands) on `PATH` for the code under test.
  *
  * @param {Parameters<typeof installFakeAgents>[0]} agents - Agents to install.
  * @returns {ReturnType<typeof installFakeAgents>} Fake agents.
@@ -31,15 +37,40 @@ function useFakeAgents(agents) {
   return fakeAgents;
 }
 
-/** @returns {string} Prompt for {@link RELEASE_COMMITS}. */
-function releasePrompt() {
-  return buildChangelogDraftPrompt({ packageName: "fixture-app", changelogPath: "CHANGELOG.md", lastReleaseSha: "1234567890abcdef", commits: RELEASE_COMMITS });
+/**
+ * @param {string | null} [lastReleaseSha] - Commit of the last release.
+ * @returns {import("../../src/create-version/changelog-draft.js").ChangelogDraftRequest} Release of {@link RELEASE_COMMITS}.
+ */
+function releaseRequest(lastReleaseSha = "1234567890abcdef") {
+  return { packageName: "fixture-app", changelogPath: "CHANGELOG.md", lastReleaseSha, commits: RELEASE_COMMITS };
+}
+
+/**
+ * Turns a directory into a repository with a release commit and a later one that changes the
+ * tracked source and the changelog, plus an untracked credential file.
+ *
+ * @param {string} directory - Empty directory.
+ * @returns {string} SHA of the release commit.
+ */
+function createRepositoryWithRelease(directory) {
+  mkdirSync(path.join(directory, "src"));
+  writeFileSync(path.join(directory, "AGENTS.md"), "# Reglas\n");
+  writeFileSync(path.join(directory, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n");
+  writeFileSync(path.join(directory, "src", "gate.js"), "export const gate = false;\n");
+  const releaseSha = commitFixtureRepository(directory);
+  writeFileSync(path.join(directory, "src", "gate.js"), `${RELEASED_SOURCE_LINE}\n`);
+  writeFileSync(path.join(directory, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n\n### Added\n");
+  runGit(["commit", "--quiet", "-am", "feat: add gate"], directory);
+  writeFileSync(path.join(directory, UNTRACKED_SECRET_FILE), "//registry.npmjs.org/:_authToken=fixture\n");
+  return releaseSha;
 }
 
 let repositoryRoot = "";
+let lastReleaseSha = "";
 
 beforeEach(() => {
   repositoryRoot = createTemporaryDirectory("beez-rp-draft-repository-");
+  lastReleaseSha = createRepositoryWithRelease(repositoryRoot);
 });
 
 afterEach(() => {
@@ -58,7 +89,12 @@ describe("changelog draft answers", () => {
     { answer: `Acá están las entradas:\n\n${DRAFTED_ENTRIES}`, reason: "texto que no es una sección ni una entrada: Acá están las entradas:" },
     { answer: "### Docs\n\n- README nuevo.", reason: "secciones fuera de Keep a Changelog (Docs)" },
     { answer: "### Added\n", reason: "no tiene entradas" },
-  ])("should reject an answer that $reason", ({ answer, reason }) => {
+    { answer: "", reason: "la respuesta no tiene entradas" },
+    { answer: `- Entrada suelta.\n\n${DRAFTED_ENTRIES}`, reason: "texto fuera de una sección ###: - Entrada suelta." },
+    { answer: "### Added\n\n- Una.\n\n### Added\n\n- Otra.", reason: "repite la sección ### Added" },
+    { answer: "### Fixed\n\n- Una.\n\n### Added\n\n- Otra.", reason: "la sección ### Added está fuera del orden de Keep a Changelog" },
+    { answer: "### Added\n\n### Fixed\n\n- Una.", reason: "la sección ### Added no tiene entradas" },
+  ])("should reject an answer when $reason", ({ answer, reason }) => {
     const parsed = parseChangelogDraft(answer);
 
     expect(parsed.entries).toBeNull();
@@ -67,21 +103,29 @@ describe("changelog draft answers", () => {
 });
 
 describe("drafting with agent CLIs", () => {
-  it("should ask Claude Code first, inside the repository, with the release range and its commits", async () => {
+  it("should ask Claude Code first, in an isolated copy of the tracked files with the release diff, and remove it afterwards", async () => {
     // Arrange
     const fakeAgents = useFakeAgents({ claude: { kind: "answer", text: DRAFTED_ENTRIES }, codex: { kind: "answer", text: "### Added\n\n- Otra." } });
 
     // Act
-    const draft = await draftChangelogEntries({ providers: ["claude", "codex"], repositoryRoot, prompt: releasePrompt() });
+    const draft = await draftChangelogEntries({ providers: ["claude", "codex"], repositoryRoot, request: releaseRequest(lastReleaseSha) });
 
     // Assert
     expect(draft).toEqual({ provider: "claude", entries: DRAFTED_ENTRIES, failures: [] });
     const calls = fakeAgents.readCalls();
     expect(calls.map((call) => call.name)).toEqual(["claude"]);
-    expect(realpathSync(calls[0].cwd)).toBe(realpathSync(repositoryRoot));
-    expect(calls[0].prompt).toContain("1234567890abcdef..HEAD");
-    expect(calls[0].prompt).toContain("- a1b2c3d feat: add gate");
-    expect(calls[0].prompt).toContain("- 0f9e8d7 fix: release date");
+    const [claudeCall] = calls;
+    expect(path.relative(realpathSync(repositoryRoot), claudeCall.cwd).startsWith("..")).toBe(true);
+    expect(claudeCall.files).toEqual(expect.arrayContaining(["repository/AGENTS.md", "repository/CHANGELOG.md", "repository/src/gate.js", "release-context/changes.diff", "release-context/commits.log"]));
+    expect(claudeCall.files.some((file) => file.endsWith(UNTRACKED_SECRET_FILE) || file.includes(".git/"))).toBe(false);
+    expect(claudeCall.diff).toContain(`+${RELEASED_SOURCE_LINE}`);
+    expect(claudeCall.diff).not.toContain("CHANGELOG.md");
+    expect(claudeCall.args.some((commandArgument) => path.isAbsolute(commandArgument))).toBe(false);
+    expect(claudeCall.prompt).toContain(`${lastReleaseSha}..HEAD`);
+    expect(claudeCall.prompt).toContain("release-context/changes.diff");
+    expect(claudeCall.prompt).toContain("- a1b2c3d feat: add gate");
+    expect(claudeCall.prompt).toContain("- 0f9e8d7 fix: release date");
+    expect(existsSync(claudeCall.cwd)).toBe(false);
   });
 
   it("should fall back to Codex when Claude Code has no quota left, reporting why", async () => {
@@ -91,7 +135,7 @@ describe("drafting with agent CLIs", () => {
     const reported = [];
 
     // Act
-    const draft = await draftChangelogEntries({ providers: ["claude", "codex"], repositoryRoot, prompt: releasePrompt(), onFailure: ({ provider, reason }) => reported.push(`${provider}: ${reason}`) });
+    const draft = await draftChangelogEntries({ providers: ["claude", "codex"], repositoryRoot, request: releaseRequest(lastReleaseSha), onFailure: ({ provider, reason }) => reported.push(`${provider}: ${reason}`) });
 
     // Assert
     expect(draft.provider).toBe("codex");
@@ -100,6 +144,40 @@ describe("drafting with agent CLIs", () => {
     expect(reported).toEqual([`claude: falló con código 1: ${FAKE_CLAUDE_QUOTA_MESSAGE}`]);
     const codexCall = fakeAgents.readCalls().find((call) => call.name === "codex");
     expect(codexCall?.prompt).toContain("feat: add gate");
+    expect(codexCall?.diff).toContain(`+${RELEASED_SOURCE_LINE}`);
+    expect(codexCall?.args.some((commandArgument) => path.isAbsolute(commandArgument))).toBe(false);
+  });
+
+  it("should draft from the whole history before the first release, even from a repository whose path has cmd.exe metacharacters", async () => {
+    // Arrange
+    const unusualRoot = path.join(createTemporaryDirectory("beez-rp-draft-unusual-"), "repo %TEMP% ^& !x!");
+    mkdirSync(unusualRoot);
+    createRepositoryWithRelease(unusualRoot);
+    const fakeAgents = useFakeAgents({ codex: { kind: "answer", text: DRAFTED_ENTRIES } });
+
+    // Act
+    const draft = await draftChangelogEntries({ providers: ["codex"], repositoryRoot: unusualRoot, request: releaseRequest(null) });
+
+    // Assert
+    expect(draft).toEqual({ provider: "codex", entries: DRAFTED_ENTRIES, failures: [] });
+    const [codexCall] = fakeAgents.readCalls();
+    expect(codexCall.diff).toContain(`+${RELEASED_SOURCE_LINE}`);
+    expect(codexCall.diff).toContain("+# Reglas");
+  });
+
+  it("should report every agent as failed, without running any, when the isolated copy cannot be created", async () => {
+    // Arrange
+    const fakeAgents = useFakeAgents({ claude: { kind: "answer", text: DRAFTED_ENTRIES }, codex: { kind: "answer", text: DRAFTED_ENTRIES } });
+    const notARepository = createTemporaryDirectory("beez-rp-draft-not-a-repository-");
+
+    // Act
+    const draft = await draftChangelogEntries({ providers: ["claude", "codex"], repositoryRoot: notARepository, request: releaseRequest(null) });
+
+    // Assert
+    expect(draft.entries).toBeNull();
+    expect(draft.failures.map(({ provider }) => provider)).toEqual(["claude", "codex"]);
+    for (const { reason } of draft.failures) expect(reason).toContain("no se pudo preparar la copia aislada del repositorio");
+    expect(fakeAgents.readCalls()).toEqual([]);
   });
 
   it("should try the next agent when the answer is not usable or the agent takes too long", async () => {
@@ -107,7 +185,7 @@ describe("drafting with agent CLIs", () => {
     useFakeAgents({ claude: { kind: "sleep" }, codex: { kind: "answer", text: `Listo:\n${DRAFTED_ENTRIES}` } });
 
     // Act
-    const draft = await draftChangelogEntries({ providers: ["claude", "codex"], repositoryRoot, prompt: releasePrompt(), timeoutMs: 3_000 });
+    const draft = await draftChangelogEntries({ providers: ["claude", "codex"], repositoryRoot, request: releaseRequest(lastReleaseSha), timeoutMs: 3_000 });
 
     // Assert
     expect(draft.entries).toBeNull();
@@ -121,7 +199,7 @@ describe("drafting with agent CLIs", () => {
     useFakeAgents({ codex: { kind: "quota" } });
 
     // Act
-    const draft = await draftChangelogEntries({ providers: ["claude", "codex"], repositoryRoot, prompt: releasePrompt() });
+    const draft = await draftChangelogEntries({ providers: ["claude", "codex"], repositoryRoot, request: releaseRequest(lastReleaseSha) });
 
     // Assert
     expect(draft).toEqual({
@@ -139,7 +217,7 @@ describe("drafting with agent CLIs", () => {
     const fakeAgents = useFakeAgents({ claude: { kind: "answer", text: DRAFTED_ENTRIES }, codex: { kind: "answer", text: DRAFTED_ENTRIES } });
 
     // Act
-    const draft = await draftChangelogEntries({ providers: ["codex"], repositoryRoot, prompt: releasePrompt() });
+    const draft = await draftChangelogEntries({ providers: ["codex"], repositoryRoot, request: releaseRequest(lastReleaseSha) });
 
     // Assert
     expect(draft.provider).toBe("codex");

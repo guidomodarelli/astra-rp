@@ -11,8 +11,8 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - El paquete pasa a llamarse `@astra-kit/rp` y el comando, `astra-rp`: instalalo con `pnpm add -D @astra-kit/rp`, cambiá los scripts `beez-rp …` por `astra-rp …` y los imports `beez-rp/…` por `@astra-kit/rp/…`. El repositorio ahora es `guidomodarelli/astra-rp`.
 - El config se llama `astra-rp.config.js` o `astra-rp.config.mjs`; `beez-rp.config.*` ya no se lee.
 - Los marcadores de `versionFiles` pasan a ser `astra-rp-version` y `astra-rp-start-version` … `astra-rp-end` (los de release-please siguen funcionando).
-- El commit de versión creado para CI lleva el trailer `Astra-Rp-Execution`, el gate de Vercel generado vive en `.astra-rp/` y el workflow de release usa `ASTRA_RP_RELEASE_VERSION`, `ASTRA_RP_RELEASE_SHA` y el grupo de concurrencia `astra-rp-release`: corré `--setup-ci` de nuevo para regenerarlos.
-- El `.env` compartido entre proyectos pasa a `~/.config/astra-rp/.env` y la variable del token de JSR, a `ASTRA_RP_JSR_TOKEN`.
+- El commit de versión creado para CI lleva el trailer `Astra-Rp-Execution`, el gate de Vercel generado vive en `.astra-rp/` y el workflow de release usa `ASTRA_RP_RELEASE_VERSION`, `ASTRA_RP_RELEASE_SHA` y el grupo de concurrencia `astra-rp-release`: actualizá `.github/workflows/release.yml`, `vercel.json` y el gate con esos nombres, o borralos en un commit propio y regeneralos con `--setup-ci`.
+- El `.env` compartido entre proyectos pasa a `~/.config/astra-rp/.env`; las variables de los tokens (`NPM_TOKEN`, `JSR_TOKEN` y las de `tokenEnv`) no cambian.
 
 ### Removed
 

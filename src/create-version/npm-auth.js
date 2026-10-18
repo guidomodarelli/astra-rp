@@ -1,5 +1,5 @@
 /**
- * Pure explanations of the npm credential check of `beez-rp create-version`:
+ * Pure explanations of the npm credential check of `astra-rp create-version`:
  * the blocker the planner shows before anything is touched, and the error of a
  * failed `npm publish`, whose output cannot be parsed because npm inherits the
  * terminal (2FA). They name where `NPM_TOKEN` came from, never the token.
@@ -60,7 +60,7 @@ function describeCredentialProblem(npmAuth, nextAction) {
 
   switch (npmAuth.status) {
     case NPM_AUTH_STATUS.missingToken:
-      return { title: `Falta ${tokenVariable} para publicar ${npmAuth.packageName}`, reason: null, fix: `Definilo en ${tokenVariable === NPM_TOKEN_VARIABLE ? NPM_TOKEN_LOCATIONS : `la variable de entorno ${tokenVariable}, el .env del repo o ~/.config/beez-rp/.env`} y ${nextAction}.` };
+      return { title: `Falta ${tokenVariable} para publicar ${npmAuth.packageName}`, reason: null, fix: `Definilo en ${tokenVariable === NPM_TOKEN_VARIABLE ? NPM_TOKEN_LOCATIONS : `la variable de entorno ${tokenVariable}, el .env del repo o ~/.config/astra-rp/.env`} y ${nextAction}.` };
     case NPM_AUTH_STATUS.unsupportedAuth:
       return { title: npmAuth.reason ?? "La autenticación configurada no está disponible", reason: null, fix: `Corregí publication.authentication o el entorno del CI y ${nextAction}.` };
     case NPM_AUTH_STATUS.invalidToken:
@@ -79,7 +79,7 @@ function describeCredentialProblem(npmAuth, nextAction) {
       return {
         title: `El ${PROJECT_NPM_CONFIG_FILE} del proyecto define credenciales para ${npmAuth.registryUrl} que tienen prioridad sobre ${tokenVariable}`,
         reason: `${npmAuth.reason ?? `${PROJECT_NPM_CONFIG_FILE} del proyecto con credenciales`}.`,
-        fix: `Sacalas: beez-rp usa ${tokenVariable} con una config temporal. Después ${nextAction}.`,
+        fix: `Sacalas: astra-rp usa ${tokenVariable} con una config temporal. Después ${nextAction}.`,
       };
     default:
       return null;

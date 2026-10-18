@@ -4,7 +4,7 @@
  * @module constants/package-manager
  */
 
-/** Package managers beez-rp recognizes. */
+/** Package managers astra-rp recognizes. */
 export const PACKAGE_MANAGER = Object.freeze({
   pnpm: "pnpm",
   npm: "npm",
@@ -12,7 +12,7 @@ export const PACKAGE_MANAGER = Object.freeze({
   bun: "bun",
 });
 
-/** Package manager assumed when a project declares none and has no lockfile: the historical Beez default. */
+/** Package manager assumed when a project declares none and has no lockfile: the historical default. */
 export const DEFAULT_PACKAGE_MANAGER = PACKAGE_MANAGER.pnpm;
 
 /** `packageManager` field of `package.json` (Corepack format, `<name>@<version>`). */
@@ -49,8 +49,8 @@ export const SCRIPT_RUNNER = Object.freeze({
   [PACKAGE_MANAGER.bun]: "bun run",
 });
 
-/** `package.json` script projects declare to run `beez-rp create-version`. */
+/** `package.json` script projects declare to run `astra-rp create-version`. */
 export const CREATE_VERSION_SCRIPT = "create-version";
 
-/** How a pnpm project runs `beez-rp create-version`: the default quoted by messages when no project is known. */
+/** How a pnpm project runs `astra-rp create-version`: the default quoted by messages when no project is known. */
 export const DEFAULT_CREATE_VERSION_COMMAND = `${SCRIPT_RUNNER[DEFAULT_PACKAGE_MANAGER]} ${CREATE_VERSION_SCRIPT}`;

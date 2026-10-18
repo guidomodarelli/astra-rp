@@ -36,7 +36,7 @@ const temporaryDirectories = [];
 
 /** @returns {string} Empty repository root. */
 function createRoot() {
-  const root = mkdtempSync(path.join(os.tmpdir(), "beez-rp-artifact-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "astra-rp-artifact-"));
   temporaryDirectories.push(root);
   return root;
 }

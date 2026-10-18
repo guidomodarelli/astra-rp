@@ -46,7 +46,7 @@ afterEach(async () => {
  * @returns {{ root: string, remote: string, manualNotes: string }} Checkout and bare origin; `manualNotes` has one entry in `[Unreleased]`.
  */
 function createProviderProject(provider, registryUrl) {
-  const parent = createTemporaryDirectory("beez-rp-provider-flow-");
+  const parent = createTemporaryDirectory("astra-rp-provider-flow-");
   const remote = path.join(parent, "origin.git");
   const root = path.join(parent, "work");
   runGit(["init", "--quiet", "--bare", "--initial-branch=main", remote], parent);
@@ -61,7 +61,7 @@ function createProviderProject(provider, registryUrl) {
   writeFileSync(path.join(root, "index.js"), "export const value = 1;\n");
   writeFileSync(path.join(root, ".gitignore"), ".env\n");
   const publication = provider === "jsr" ? { registryUrl, tokenEnv: "PACKAGE_RELEASE_TOKEN", authentication: "token", jsrClient: "deno" } : { registryUrl, tokenEnv: "PACKAGE_RELEASE_TOKEN", access: "restricted", tag: "next" };
-  writeFileSync(path.join(root, "beez-rp.config.js"), `export default ${JSON.stringify({ checks: false, publish: provider, publication })};\n`);
+  writeFileSync(path.join(root, "astra-rp.config.js"), `export default ${JSON.stringify({ checks: false, publish: provider, publication })};\n`);
   if (provider === "jsr") writeFileSync(path.join(root, "jsr.json"), JSON.stringify({ name: "@acme/native", version: "1.0.0", license: "MIT", exports: "./index.js" }));
   runGit(["add", "-A"], root);
   runGit(["commit", "--quiet", "-m", "1.0.0"], root);
@@ -157,7 +157,7 @@ describe("single destination provider release", () => {
     const selected = await startFixtureNpmRegistry(options);
     registries.push(other, selected);
     const { root, manualNotes } = createProviderProject("github", selected.registryUrl);
-    writeFileSync(path.join(root, "beez-rp.config.js"), 'export default { checks: false, publish: "npm", publication: { tokenEnv: "PACKAGE_RELEASE_TOKEN" } };\n');
+    writeFileSync(path.join(root, "astra-rp.config.js"), 'export default { checks: false, publish: "npm", publication: { tokenEnv: "PACKAGE_RELEASE_TOKEN" } };\n');
     const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
     manifest.publishConfig = { "@acme:registry": selected.registryUrl };
     writeFileSync(path.join(root, "package.json"), JSON.stringify(manifest));
@@ -193,7 +193,7 @@ describe("single destination provider release", () => {
     await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(undefined)));
     const address = /** @type {import("node:net").AddressInfo} */ (server.address());
     const { root, remote, manualNotes } = createProviderProject("jsr", `http://127.0.0.1:${address.port}/`);
-    const bin = path.join(createTemporaryDirectory("beez-rp-jsr-client-"), "bin");
+    const bin = path.join(createTemporaryDirectory("astra-rp-jsr-client-"), "bin");
     mkdirSync(bin);
     const clientPath = path.join(bin, "fixture-deno.mjs");
     writeFileSync(clientPath, [
@@ -204,12 +204,12 @@ describe("single destination provider release", () => {
       'process.stderr.write("Client command: --token " + token.slice(0, 8));',
       'await new Promise((resolve) => setTimeout(resolve, 10));',
       'process.stderr.write(token.slice(8) + "\\n");',
-      'if (process.env.BEEZ_FIXTURE_SKIP_UPLOAD !== "1") await fetch(new URL("publish?version=" + config.version, process.env.JSR_URL), { method: "POST" });',
+      'if (process.env.ASTRA_RP_FIXTURE_SKIP_UPLOAD !== "1") await fetch(new URL("publish?version=" + config.version, process.env.JSR_URL), { method: "POST" });',
       '',
     ].join("\n"));
     if (process.platform === "win32") writeFileSync(path.join(bin, "deno.cmd"), `@"${process.execPath}" "%~dp0fixture-deno.mjs" %*\r\n`);
     else writeFileSync(path.join(bin, "deno"), `#!/bin/sh\nexec '${process.execPath}' '${clientPath}' "$@"\n`, { mode: 0o755 });
-    const environment = { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, BEEZ_FIXTURE_SKIP_UPLOAD: uploadsInitially ? "0" : "1" };
+    const environment = { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, ASTRA_RP_FIXTURE_SKIP_UPLOAD: uploadsInitially ? "0" : "1" };
     // Act
     const released = await runCliAsync(root, ["--bump", "minor"], environment);
     // Assert
@@ -221,7 +221,7 @@ describe("single destination provider release", () => {
     expect(JSON.parse(runGit(["show", "main:jsr.json"], remote)).version).toBe("1.1.0");
     expect(JSON.parse(runGit(["show", "main:package.json"], remote)).version).toBe("1.1.0");
     expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toMatch(closedNotesPattern(manualNotes, "1.1.0"));
-    const resumed = await runCliAsync(root, ["--bump", "major"], { ...environment, BEEZ_FIXTURE_SKIP_UPLOAD: "0" });
+    const resumed = await runCliAsync(root, ["--bump", "major"], { ...environment, ASTRA_RP_FIXTURE_SKIP_UPLOAD: "0" });
     expect(resumed.status, resumed.output).toBe(0);
     expect(uploads).toEqual(["1.1.0"]);
     expect(readFileSync(path.join(root, "CHANGELOG.md"), "utf8")).toMatch(closedNotesPattern(manualNotes, "1.1.0"));

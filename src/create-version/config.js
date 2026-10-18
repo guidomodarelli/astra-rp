@@ -1,11 +1,11 @@
 /**
- * Loads and validates `beez-rp.config.js`, the per-project part of
- * `beez-rp create-version`: version
+ * Loads and validates `astra-rp.config.js`, the per-project part of
+ * `astra-rp create-version`: version
  * descriptions, registry, checks, migrations, preparation and publication.
  *
- * The configuration never needs to import `beez-rp`: hooks receive every
+ * The configuration never needs to import `@astra-kit/rp`: hooks receive every
  * helper through their context, so a project can type it with
- * `@type {import("beez-rp/create-version").CreateVersionConfig}` only.
+ * `@type {import("@astra-kit/rp/create-version").CreateVersionConfig}` only.
  *
  * @module create-version/config
  */
@@ -86,8 +86,8 @@ import { CI_CONFIG_EXPORT } from "../constants/ci-release.js";
  *   runs `<package manager> run ci` (pnpm, bun, npm or yarn, detected from `packageManager` or the
  *   lockfile) when `package.json` declares a `ci` script; `false` skips the checks on purpose.
  *   `versionFiles` lists files (relative to the root) whose marked lines get the new version in the
- *   release commit: `beez-rp-version` / `x-release-please-version` lines and
- *   `beez-rp-start-version`…`beez-rp-end` blocks. Entries may use `/` or `\` and are resolved to the
+ *   release commit: `astra-rp-version` / `x-release-please-version` lines and
+ *   `astra-rp-start-version`…`astra-rp-end` blocks. Entries may use `/` or `\` and are resolved to the
  *   `/`-separated form (`.\src\cli.js` → `src/cli.js`); each must be a file tracked by Git.
  *   `packages` turns on the monorepo mode: every non-private workspace package (`"workspaces"`: the
  *   ones the root `package.json` declares; or explicit patterns such as `["packages/*"]`) gets its
@@ -180,7 +180,7 @@ export function defineCreateVersionConfig(config) {
  * @returns {Error} Error to throw.
  */
 function invalidField(field, expectation) {
-  return new Error(`beez-rp create-version: ${CREATE_VERSION_CONFIG_FILE}: ${field} must be ${expectation}`);
+  return new Error(`astra-rp create-version: ${CREATE_VERSION_CONFIG_FILE}: ${field} must be ${expectation}`);
 }
 
 /**
@@ -259,14 +259,14 @@ function resolveReleaseTimeZone(releaseTimeZone) {
 
   const correctionHint = `usá un nombre como "${RELEASE_TIME_ZONE_EXAMPLE}" (Intl.supportedValuesOf("timeZone") lista las disponibles) o quitá la opción para fechar el release con el día local`;
   if (typeof releaseTimeZone !== "string") {
-    throw new Error(`beez-rp create-version: ${CREATE_VERSION_CONFIG_FILE}: ${RELEASE_TIME_ZONE_FIELD} debe ser un string con una zona horaria IANA; ${correctionHint}.`);
+    throw new Error(`astra-rp create-version: ${CREATE_VERSION_CONFIG_FILE}: ${RELEASE_TIME_ZONE_FIELD} debe ser un string con una zona horaria IANA; ${correctionHint}.`);
   }
 
   try {
     formatReleaseDate(new Date(), releaseTimeZone);
   } catch (error) {
     if (!(error instanceof RangeError)) throw error;
-    throw new Error(`beez-rp create-version: ${CREATE_VERSION_CONFIG_FILE}: ${RELEASE_TIME_ZONE_FIELD} ${JSON.stringify(releaseTimeZone)} no es una zona horaria IANA válida; ${correctionHint}.`, { cause: error });
+    throw new Error(`astra-rp create-version: ${CREATE_VERSION_CONFIG_FILE}: ${RELEASE_TIME_ZONE_FIELD} ${JSON.stringify(releaseTimeZone)} no es una zona horaria IANA válida; ${correctionHint}.`, { cause: error });
   }
 
   return releaseTimeZone;
@@ -275,7 +275,7 @@ function resolveReleaseTimeZone(releaseTimeZone) {
 /**
  * Validates a raw configuration and fills its defaults.
  *
- * @param {unknown} rawConfig - Default export of `beez-rp.config.js`.
+ * @param {unknown} rawConfig - Default export of `astra-rp.config.js`.
  * @param {ConfigResolutionContext} [resolutionContext] - Project data the defaults depend on.
  * @returns {ResolvedCreateVersionConfig} Configuration ready for the command.
  * @throws {Error} When a field has an unsupported type or value.
@@ -432,7 +432,7 @@ function toSlashSeparatedPath(filePath) {
 }
 
 /**
- * Imports `beez-rp.config.mjs` or `beez-rp.config.js` from the repository root and validates it.
+ * Imports `astra-rp.config.mjs` or `astra-rp.config.js` from the repository root and validates it.
  * It is imported once per process: after syncing `main` the command stops and asks to run it
  * again, so a new process imports the updated file and everything it imports.
  *
@@ -445,7 +445,7 @@ export async function loadCreateVersionConfig(repositoryRoot) {
 
   if (!configPath) {
     throw new Error(
-      `beez-rp create-version: ${CREATE_VERSION_CONFIG_FILES.join(" or ")} not found in ${repositoryRoot}; create it with the release checks and publication settings`
+      `astra-rp create-version: ${CREATE_VERSION_CONFIG_FILES.join(" or ")} not found in ${repositoryRoot}; create it with the release checks and publication settings`
     );
   }
 
@@ -453,7 +453,7 @@ export async function loadCreateVersionConfig(repositoryRoot) {
   try {
     module = await import(pathToFileURL(configPath).href);
   } catch (error) {
-    throw new Error(`beez-rp create-version: could not load ${configPath}`, { cause: error });
+    throw new Error(`astra-rp create-version: could not load ${configPath}`, { cause: error });
   }
 
   const manifest = readProjectManifest(repositoryRoot);
@@ -468,7 +468,7 @@ export async function loadCreateVersionConfig(repositoryRoot) {
 
 /**
  * Reads the project `package.json`, whose scripts decide the default release checks and whose
- * `packageManager` decides the commands beez-rp runs and prints.
+ * `packageManager` decides the commands astra-rp runs and prints.
  *
  * @param {string} repositoryRoot - Repository root.
  * @returns {Record<string, unknown> | null} Manifest, or `null` without one.
@@ -484,6 +484,6 @@ function readProjectManifest(repositoryRoot) {
   try {
     return JSON.parse(readFileSync(manifestPath, "utf8"));
   } catch (error) {
-    throw new Error(`beez-rp create-version: could not read the scripts of ${manifestPath}`, { cause: error });
+    throw new Error(`astra-rp create-version: could not read the scripts of ${manifestPath}`, { cause: error });
   }
 }

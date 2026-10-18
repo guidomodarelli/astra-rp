@@ -1,5 +1,5 @@
 /**
- * Monorepo mode of `beez-rp create-version`: diagnoses every released
+ * Monorepo mode of `astra-rp create-version`: diagnoses every released
  * workspace package, shows the plan and ships one release commit with a tag
  * per package, then publishes each package in dependency order.
  *
@@ -108,7 +108,7 @@ import { discoverWorkspacePackages, formatPackageTag, resolveReleaseUnits, sortB
  */
 
 /** Prefix of the temporary checkouts a publication prepares an older release commit in. */
-const RELEASE_CHECKOUT_PREFIX = "beez-rp-release-";
+const RELEASE_CHECKOUT_PREFIX = "astra-rp-release-";
 
 /**
  * Renders the diagnosis: the repository rows plus one row per released package.
@@ -163,7 +163,7 @@ function renderMonorepoDiagnosis(state, repositoryRoot) {
 function requirePackage(context, name) {
   const packageSnapshot = context.state.packages.find((candidate) => candidate.unit.name === name);
   if (!packageSnapshot) {
-    throw new ReleaseStepError(`${name} no es un paquete publicado de este monorepo.`, "Revisá packages en beez-rp.config.(m)js.");
+    throw new ReleaseStepError(`${name} no es un paquete publicado de este monorepo.`, "Revisá packages en astra-rp.config.(m)js.");
   }
   return packageSnapshot;
 }
@@ -334,7 +334,7 @@ function groupVersionFilesByPackage(context) {
     if (filePath === owner.manifestPath || filePath.toLowerCase() === owner.changelogPath.toLowerCase()) {
       throw new ReleaseStepError(
         `${filePath} (versionFiles) es el package.json o el CHANGELOG.md de ${owner.name}: el commit de release los incluye y cierra la sección [Unreleased] del CHANGELOG.`,
-        `Sacalo de versionFiles en beez-rp.config.(m)js y volvé a correr ${context.commands.createVersion}; no se tocó la versión.`
+        `Sacalo de versionFiles en astra-rp.config.(m)js y volvé a correr ${context.commands.createVersion}; no se tocó la versión.`
       );
     }
     grouped.set(owner.name, [...(grouped.get(owner.name) ?? []), filePath]);
@@ -638,7 +638,7 @@ async function publishPackage(context, checkoutRoot, release) {
   const result = await publishRegistryRelease(selection, manifest, context.repositoryRoot, packageRoot, release.version, artifactPath);
 
   if (result.missingToken) {
-    throw new ReleaseStepError(`Falta ${registry.options.tokenEnv} para publicar ${release.name}@${release.version} en ${registry.label}.`, `Definilo en el entorno, .env del repo o ~/.config/beez-rp/.env y corré ${context.commands.createVersion}: retoma solo lo que falta publicar.`);
+    throw new ReleaseStepError(`Falta ${registry.options.tokenEnv} para publicar ${release.name}@${release.version} en ${registry.label}.`, `Definilo en el entorno, .env del repo o ~/.config/astra-rp/.env y corré ${context.commands.createVersion}: retoma solo lo que falta publicar.`);
   }
 
   if (!result.confirmed) {

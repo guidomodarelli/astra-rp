@@ -469,7 +469,7 @@ export function select({ message, options, defaultIndex = 0 }) {
 
   if (!input.isTTY) {
     if (defaultIndex === null) {
-      return Promise.reject(new Error(`beez-rp:select "${message}" needs an explicit choice and stdin is not an interactive terminal`));
+      return Promise.reject(new Error(`astra-rp:select "${message}" needs an explicit choice and stdin is not an interactive terminal`));
     }
 
     print(`${question} ${paint("gray", `→ ${options[defaultIndex].label} (sin terminal interactiva)`)}`);

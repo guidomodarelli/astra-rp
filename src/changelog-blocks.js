@@ -1,7 +1,7 @@
 /**
  * Internal helpers that split `CHANGELOG.md` into release blocks and rewrite the `[Unreleased]`
- * block. Shared by the public `beez-rp/changelog` module and by `create-version`; not part of the
- * package's public API (no `exports` entry and no reexport from `beez-rp`).
+ * block. Shared by the public `@astra-kit/rp/changelog` module and by `create-version`; not part of the
+ * package's public API (no `exports` entry and no reexport from `@astra-kit/rp`).
  *
  * @module changelog-blocks
  */

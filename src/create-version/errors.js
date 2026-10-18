@@ -1,5 +1,5 @@
 /**
- * Errors of `beez-rp create-version`.
+ * Errors of `astra-rp create-version`.
  *
  * @module create-version/errors
  */

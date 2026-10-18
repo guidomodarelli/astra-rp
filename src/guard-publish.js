@@ -1,5 +1,5 @@
 /**
- * `prepublishOnly` guard of the Beez packages: they are published with npm by
+ * `prepublishOnly` guard of the packages released with astra-rp: they are published with npm by
  * `create-version` (run through the project's package manager), which verifies the tarball against
  * `npm pack --dry-run`, so a `pnpm publish` (or yarn/bun) is blocked.
  *
@@ -47,7 +47,7 @@ export function findBlockedPublishPackageManager(userAgent) {
 export function buildBlockedPublishMessage(packageManager) {
   const { createVersion } = describeProjectCommands(/** @type {import("./package-manager.js").PackageManagerName} */ (packageManager));
   return (
-    `beez-rp guard-publish: no publiques con ${packageManager}. Los paquetes Beez se publican con \`${createVersion}\`, ` +
+    `astra-rp guard-publish: no publiques con ${packageManager}. Este paquete se publica con \`${createVersion}\`, ` +
     "que publica con npm y verifica el tarball contra `npm pack --dry-run`."
   );
 }

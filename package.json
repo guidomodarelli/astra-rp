@@ -1,6 +1,6 @@
 {
   "name": "@astra-kit/rp",
-  "version": "0.10.0",
+  "version": "1.0.0",
   "description": "Dependency-free release process: stable version rules, Vercel build gate, manual changelog checks with automatic closing of [Unreleased], and terminal UI.",
   "license": "MIT",
   "author": "Guido Modarelli",

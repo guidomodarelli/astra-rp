@@ -6,6 +6,8 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-18
+
 ### Changed
 
 - El paquete pasa a llamarse `@astra-kit/rp` y el comando, `astra-rp`: instalalo con `pnpm add -D @astra-kit/rp`, cambiá los scripts `beez-rp …` por `astra-rp …` y los imports `beez-rp/…` por `@astra-kit/rp/…`. El repositorio ahora es `guidomodarelli/astra-rp`.

@@ -1,5 +1,5 @@
 /**
- * Detects the package manager of a project and builds the commands beez-rp
+ * Detects the package manager of a project and builds the commands astra-rp
  * prints or runs for it, so a bun, npm or yarn project is told to run its own
  * commands instead of pnpm ones.
  *
@@ -28,7 +28,7 @@ import { CREATE_VERSION_FLAG, PACKAGE_MANIFEST_FILE } from "./constants/create-v
  *   createVersion: string,
  * }} ProjectCommands
  *   `runScript("ci")` is the command line that runs a `package.json` script; `createVersion` is how
- *   the project runs `beez-rp create-version` through its script.
+ *   the project runs `astra-rp create-version` through its script.
  */
 
 /**
@@ -44,7 +44,7 @@ export function parsePackageManagerField(value) {
 
 /**
  * Detects the package manager of a project: the `packageManager` field of its `package.json`,
- * else its lockfile, else pnpm (the historical default of the Beez projects).
+ * else its lockfile, else pnpm (the historical default).
  *
  * @param {string} repositoryRoot - Project root.
  * @param {Record<string, unknown>} [manifest] - Its `package.json`, when already read.

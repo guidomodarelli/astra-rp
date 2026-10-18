@@ -27,7 +27,7 @@ afterEach(() => {
  * @returns {string} Repository root.
  */
 function createMonorepo(manifests, rootManifest = { name: "root", private: true, workspaces: ["packages/*"] }) {
-  const root = mkdtempSync(path.join(os.tmpdir(), "beez-rp-workspaces-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "astra-rp-workspaces-"));
   temporaryDirectories.push(root);
   writeFileSync(path.join(root, "package.json"), JSON.stringify(rootManifest));
   for (const [directory, manifest] of Object.entries(manifests)) {

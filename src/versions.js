@@ -48,7 +48,7 @@ export function parseReleaseVersion(version) {
   const match = RELEASE_VERSION_PATTERN.exec(String(version));
 
   if (!match) {
-    throw new Error(`beez-rp:parseReleaseVersion expected X.Y.Z, received "${version}"`);
+    throw new Error(`astra-rp:parseReleaseVersion expected X.Y.Z, received "${version}"`);
   }
 
   return [Number(match[1]), Number(match[2]), Number(match[3])];
@@ -127,7 +127,7 @@ export function bumpReleaseVersion(version, releaseType) {
     case RELEASE_TYPE.patch:
       return `${major}.${minor}.${patch + 1}`;
     default:
-      throw new Error(`beez-rp:bumpReleaseVersion unknown release type "${releaseType}"`);
+      throw new Error(`astra-rp:bumpReleaseVersion unknown release type "${releaseType}"`);
   }
 }
 

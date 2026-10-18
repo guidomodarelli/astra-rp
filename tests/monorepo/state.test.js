@@ -32,7 +32,7 @@ function releaseUnit(component) {
  * @returns {string} Repository.
  */
 function createRepositoryAddingTwoPackages(subject) {
-  const repositoryRoot = createTemporaryDirectory("beez-rp-monorepo-state-");
+  const repositoryRoot = createTemporaryDirectory("astra-rp-monorepo-state-");
   runGit(["init", "--quiet", "--initial-branch=main"], repositoryRoot);
   for (const [key, value] of [["user.email", "release@example.test"], ["user.name", "Release Fixture"], ["commit.gpgsign", "false"], ["tag.gpgsign", "false"]]) {
     runGit(["config", key, value], repositoryRoot);

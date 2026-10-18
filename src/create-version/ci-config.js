@@ -27,14 +27,14 @@ export function ciWorkflowPath(workflow) {
  */
 export function resolveCiReleaseConfig(raw) {
   if (raw === undefined || raw === null) return null;
-  if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("beez-rp create-version: ci debe ser un objeto con workflow.");
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("astra-rp create-version: ci debe ser un objeto con workflow.");
   const config = /** @type {Record<string, unknown>} */ (raw);
   const workflow = typeof config.workflow === "string" ? config.workflow.replace(`${CI_WORKFLOW_DIRECTORY}/`, "") : "";
-  if (!CI_WORKFLOW_NAME_PATTERN.test(workflow)) throw new Error("beez-rp create-version: ci.workflow debe ser un nombre de archivo .yml o .yaml dentro de .github/workflows.");
+  if (!CI_WORKFLOW_NAME_PATTERN.test(workflow)) throw new Error("astra-rp create-version: ci.workflow debe ser un nombre de archivo .yml o .yaml dentro de .github/workflows.");
   const secrets = resolveEnvironmentNames(config.secrets, "secrets");
   const variables = resolveEnvironmentNames(config.variables, "variables");
-  if (secrets.some((name) => variables.includes(name))) throw new Error("beez-rp create-version: ci.secrets y ci.variables no pueden definir la misma variable.");
-  if (config.deployment !== undefined && config.deployment !== null && config.deployment !== CI_VERCEL_DEPLOYMENT) throw new Error("beez-rp create-version: ci.deployment debe ser vercel o null.");
+  if (secrets.some((name) => variables.includes(name))) throw new Error("astra-rp create-version: ci.secrets y ci.variables no pueden definir la misma variable.");
+  if (config.deployment !== undefined && config.deployment !== null && config.deployment !== CI_VERCEL_DEPLOYMENT) throw new Error("astra-rp create-version: ci.deployment debe ser vercel o null.");
   return { workflow, secrets, variables, deployment: config.deployment === CI_VERCEL_DEPLOYMENT ? CI_VERCEL_DEPLOYMENT : null };
 }
 
@@ -48,7 +48,7 @@ export function resolveCiReleaseConfig(raw) {
 function resolveEnvironmentNames(value, field) {
   if (value === undefined) return [];
   if (!Array.isArray(value) || Array.from(value).some((name) => typeof name !== "string" || !CI_ENVIRONMENT_NAME_PATTERN.test(name) || CI_RESERVED_ENVIRONMENT_NAMES.includes(name)) || new Set(value).size !== value.length) {
-    throw new Error(`beez-rp create-version: ci.${field} debe ser una lista de nombres de variables únicos (por ejemplo DATABASE_MIGRATION_URL).`);
+    throw new Error(`astra-rp create-version: ci.${field} debe ser una lista de nombres de variables únicos (por ejemplo DATABASE_MIGRATION_URL).`);
   }
   return /** @type {string[]} */ (value);
 }

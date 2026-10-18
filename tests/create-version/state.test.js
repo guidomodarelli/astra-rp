@@ -46,7 +46,7 @@ function commitVersion(repositoryRoot, version, message, manifestFields = {}) {
  * @returns {{ repositoryRoot: string, remoteRoot: string }} Clone whose `main` holds a `0.1.0` release plus one feature, pushed to a bare `origin`.
  */
 function createReleasedRepository(releaseSubject = "0.1.0", manifestFields = {}) {
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "beez-rp-create-version-"));
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "astra-rp-create-version-"));
   temporaryDirectories.push(fixtureRoot);
   const remoteRoot = path.join(fixtureRoot, "origin.git");
   const repositoryRoot = path.join(fixtureRoot, "work");
@@ -271,17 +271,17 @@ describe("create-version state", () => {
   );
 });
 
-describe("beez-rp create-version command", () => {
+describe("astra-rp create-version command", () => {
   it(
     "should explain a missing configuration and preview the plan with --dry-run",
     () => {
       const { repositoryRoot } = createReleasedRepository();
       const missing = runCli(repositoryRoot, ["--dry-run"]);
       expect(missing.status).toBe(1);
-      expect(missing.output).toContain("beez-rp.config.mjs or beez-rp.config.js not found");
+      expect(missing.output).toContain("astra-rp.config.mjs or astra-rp.config.js not found");
 
-      writeFileSync(path.join(repositoryRoot, "beez-rp.config.js"), 'export default { changelog: { audience: "equipo" }, checks: false };\n');
-      runGit(["add", "beez-rp.config.js"], repositoryRoot);
+      writeFileSync(path.join(repositoryRoot, "astra-rp.config.js"), 'export default { changelog: { audience: "equipo" }, checks: false };\n');
+      runGit(["add", "astra-rp.config.js"], repositoryRoot);
       runGit(["commit", "--quiet", "-m", "chore: configure releases"], repositoryRoot);
       runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
 
@@ -325,7 +325,7 @@ describe("beez-rp create-version command", () => {
     ({ notes, reason }) => {
       // Arrange
       const { repositoryRoot, remoteRoot } = createReleasedRepository();
-      writeFileSync(path.join(repositoryRoot, "beez-rp.config.js"), "export default { checks: false };\n");
+      writeFileSync(path.join(repositoryRoot, "astra-rp.config.js"), "export default { checks: false };\n");
       const changelogPath = path.join(repositoryRoot, "CHANGELOG.md");
       writeFileSync(changelogPath, notes);
       runGit(["add", "-A"], repositoryRoot);
@@ -360,7 +360,7 @@ describe("beez-rp create-version command", () => {
    */
   function pushEmptyChangelogWithDrafting(repositoryRoot) {
     const notes = "# Changelog\n\n## [Unreleased]\n\n### Added\n";
-    writeFileSync(path.join(repositoryRoot, "beez-rp.config.js"), "export default { checks: false, changelogDraft: true };\n");
+    writeFileSync(path.join(repositoryRoot, "astra-rp.config.js"), "export default { checks: false, changelogDraft: true };\n");
     writeFileSync(path.join(repositoryRoot, "CHANGELOG.md"), notes);
     runGit(["add", "-A"], repositoryRoot);
     runGit(["commit", "--quiet", "-m", "chore: draft the changelog"], repositoryRoot);
@@ -437,7 +437,7 @@ describe("beez-rp create-version command", () => {
       // Arrange
       const { repositoryRoot, remoteRoot } = createReleasedRepository();
       const notes = pushEmptyChangelogWithDrafting(repositoryRoot);
-      const outsideChangelogPath = path.join(createTemporaryDirectory("beez-rp-outside-changelog-"), "CHANGELOG.md");
+      const outsideChangelogPath = path.join(createTemporaryDirectory("astra-rp-outside-changelog-"), "CHANGELOG.md");
       writeFileSync(outsideChangelogPath, notes);
       const changelogPath = path.join(repositoryRoot, "CHANGELOG.md");
       rmSync(changelogPath);
@@ -634,7 +634,7 @@ describe("beez-rp create-version command", () => {
     // Arrange
     const { repositoryRoot, remoteRoot } = createReleasedRepository();
     const versionFile = path.join(repositoryRoot, "src", "cli.js");
-    const versionFileContent = 'program.version("0.1.0"); // beez-rp-version\n';
+    const versionFileContent = 'program.version("0.1.0"); // astra-rp-version\n';
     mkdirSync(path.dirname(versionFile));
     writeFileSync(versionFile, versionFileContent);
     pushConfiguration(repositoryRoot, ["export default {", "  checks: false,", '  versionFiles: ["src/cli.js"],', "};"]);
@@ -714,7 +714,7 @@ describe("beez-rp create-version command", () => {
       const { repositoryRoot, remoteRoot } = createReleasedRepository();
       const hookLog = path.join(path.dirname(repositoryRoot), "hooks.log");
       writeFileSync(
-        path.join(repositoryRoot, "beez-rp.config.js"),
+        path.join(repositoryRoot, "astra-rp.config.js"),
         [
           'import { appendFileSync } from "node:fs";',
           `const log = ${JSON.stringify(hookLog)};`,
@@ -727,7 +727,7 @@ describe("beez-rp create-version command", () => {
           "",
         ].join("\n")
       );
-      runGit(["add", "beez-rp.config.js"], repositoryRoot);
+      runGit(["add", "astra-rp.config.js"], repositoryRoot);
       runGit(["commit", "--quiet", "-m", "chore: configure releases"], repositoryRoot);
       runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
 
@@ -802,7 +802,7 @@ describe("beez-rp create-version command", () => {
       writeFileSync(path.join(repositoryRoot, "src", "cli.js"), 'program.version("0.1.0"); // x-release-please-version\nconst untouched = "0.1.0";\n');
       writeFileSync(path.join(repositoryRoot, "src", "plain.js"), 'export const VERSION = "0.1.0";\n');
       writeFileSync(
-        path.join(repositoryRoot, "beez-rp.config.js"),
+        path.join(repositoryRoot, "astra-rp.config.js"),
         ["export default {", '  changelog: { audience: "equipo" },', "  checks: false,", '  versionFiles: ["src/cli.js", "src/plain.js"],', "};", ""].join("\n")
       );
       runGit(["add", "-A"], repositoryRoot);
@@ -815,7 +815,7 @@ describe("beez-rp create-version command", () => {
       expect(runGit(["tag", "--list"], repositoryRoot)).toBe("");
       expect(JSON.parse(readFileSync(path.join(repositoryRoot, "package.json"), "utf8")).version).toBe("0.1.0");
 
-      writeFileSync(path.join(repositoryRoot, "src", "plain.js"), 'export const VERSION = "0.1.0"; // beez-rp-version\n');
+      writeFileSync(path.join(repositoryRoot, "src", "plain.js"), 'export const VERSION = "0.1.0"; // astra-rp-version\n');
       runGit(["add", "-A"], repositoryRoot);
       runGit(["commit", "--quiet", "-m", "chore: mark the version"], repositoryRoot);
       runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
@@ -825,7 +825,7 @@ describe("beez-rp create-version command", () => {
       expect(release.status, release.output).toBe(0);
       expect(runGit(["show", "--name-only", "--format=", "main"], remoteRoot).split("\n").toSorted()).toEqual(["CHANGELOG.md", "package.json", "src/cli.js", "src/plain.js"]);
       expect(runGit(["show", "main:src/cli.js"], remoteRoot)).toBe('program.version("0.2.0"); // x-release-please-version\nconst untouched = "0.1.0";');
-      expect(runGit(["show", "main:src/plain.js"], remoteRoot)).toBe('export const VERSION = "0.2.0"; // beez-rp-version');
+      expect(runGit(["show", "main:src/plain.js"], remoteRoot)).toBe('export const VERSION = "0.2.0"; // astra-rp-version');
     },
     GIT_FIXTURE_TEST_TIMEOUT_MS
   );
@@ -834,7 +834,7 @@ describe("beez-rp create-version command", () => {
     "should release the version the commits suggest with --accept-suggested, without a terminal",
     () => {
       const { repositoryRoot, remoteRoot } = createReleasedRepository();
-      writeFileSync(path.join(repositoryRoot, "beez-rp.config.js"), ["export default {", '  changelog: { audience: "equipo" },', "  checks: false,", "};", ""].join("\n"));
+      writeFileSync(path.join(repositoryRoot, "astra-rp.config.js"), ["export default {", '  changelog: { audience: "equipo" },', "  checks: false,", "};", ""].join("\n"));
       runGit(["add", "-A"], repositoryRoot);
       runGit(["commit", "--quiet", "-m", "chore: configure releases"], repositoryRoot);
       runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
@@ -927,7 +927,7 @@ describe("beez-rp create-version command", () => {
   function configureNpmPackArtifact(repositoryRoot, extraPrepare = "", { ignoreReleases = true } = {}) {
     if (ignoreReleases) writeFileSync(path.join(repositoryRoot, ".gitignore"), "releases/\n");
     writeFileSync(
-      path.join(repositoryRoot, "beez-rp.config.js"),
+      path.join(repositoryRoot, "astra-rp.config.js"),
       [
         'import { execSync } from "node:child_process";',
         'import { mkdirSync, readFileSync, writeFileSync } from "node:fs";',
@@ -989,10 +989,10 @@ describe("beez-rp create-version command", () => {
    * Commits and pushes a configuration, so a later commit on `origin/main` can replace it.
    *
    * @param {string} repositoryRoot - Checkout.
-   * @param {string[]} configLines - Lines of `beez-rp.config.js`.
+   * @param {string[]} configLines - Lines of `astra-rp.config.js`.
    */
   function pushConfiguration(repositoryRoot, configLines) {
-    writeFileSync(path.join(repositoryRoot, "beez-rp.config.js"), [...configLines, ""].join("\n"));
+    writeFileSync(path.join(repositoryRoot, "astra-rp.config.js"), [...configLines, ""].join("\n"));
     runGit(["add", "-A"], repositoryRoot);
     runGit(["commit", "--quiet", "-m", "chore: configure releases"], repositoryRoot);
     runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
@@ -1003,15 +1003,15 @@ describe("beez-rp create-version command", () => {
     () => {
       const { repositoryRoot } = createReleasedRepository();
       const installPath = path.join(repositoryRoot, "INSTALL.md");
-      const installContent = "<!-- beez-rp-start-version -->\nnpm i fixture-app@0.1.0\n<!-- beez-rp-finish -->\nRequires other-tool@0.1.0.\n";
+      const installContent = "<!-- astra-rp-start-version -->\nnpm i fixture-app@0.1.0\n<!-- astra-rp-finish -->\nRequires other-tool@0.1.0.\n";
       writeFileSync(installPath, installContent);
       pushConfiguration(repositoryRoot, ["export default {", '  changelog: { audience: "equipo" },', "  checks: false,", '  versionFiles: ["INSTALL.md"],', "};"]);
 
       const blocked = runCli(repositoryRoot, ["--bump", "minor"]);
 
       expect(blocked.status, blocked.output).toBe(1);
-      expect(flattenOutput(blocked.output)).toContain("INSTALL.md (versionFiles) abre un bloque de versión con beez-rp-start-version en la línea 1 y nunca lo cierra.");
-      expect(flattenOutput(blocked.output)).toContain("Cerralo con beez-rp-end");
+      expect(flattenOutput(blocked.output)).toContain("INSTALL.md (versionFiles) abre un bloque de versión con astra-rp-start-version en la línea 1 y nunca lo cierra.");
+      expect(flattenOutput(blocked.output)).toContain("Cerralo con astra-rp-end");
       expect(readFileSync(installPath, "utf8")).toBe(installContent);
       expect(runGit(["tag", "--list"], repositoryRoot)).toBe("");
       expect(JSON.parse(readFileSync(path.join(repositoryRoot, "package.json"), "utf8")).version).toBe("0.1.0");
@@ -1024,7 +1024,7 @@ describe("beez-rp create-version command", () => {
     () => {
       const { repositoryRoot } = createReleasedRepository();
       const generatedPath = path.join(repositoryRoot, "dist", "cli.js");
-      const generatedContent = 'program.version("0.1.0"); // beez-rp-version\n';
+      const generatedContent = 'program.version("0.1.0"); // astra-rp-version\n';
       writeFileSync(path.join(repositoryRoot, ".gitignore"), "dist/\n");
       pushConfiguration(repositoryRoot, ["export default {", '  changelog: { audience: "equipo" },', "  checks: false,", '  versionFiles: ["dist/cli.js"],', "};"]);
       mkdirSync(path.dirname(generatedPath));
@@ -1046,7 +1046,7 @@ describe("beez-rp create-version command", () => {
     (testContext) => {
       const { repositoryRoot } = createReleasedRepository();
       const targetPath = path.join(repositoryRoot, "target.js");
-      const targetContent = 'program.version("0.1.0"); // beez-rp-version\n';
+      const targetContent = 'program.version("0.1.0"); // astra-rp-version\n';
       writeFileSync(targetPath, targetContent);
       try {
         symlinkSync("target.js", path.join(repositoryRoot, "linked.js"), "file");
@@ -1071,7 +1071,7 @@ describe("beez-rp create-version command", () => {
     () => {
       const { repositoryRoot } = createReleasedRepository();
       const cliPath = path.join(repositoryRoot, "src", "cli.js");
-      const cliContent = 'program.version("0.1.0"); // beez-rp-version\n';
+      const cliContent = 'program.version("0.1.0"); // astra-rp-version\n';
       mkdirSync(path.dirname(cliPath));
       writeFileSync(cliPath, cliContent);
       // Stands in for a formatter run with --fix: the check succeeds but rewrites a versionFiles entry.
@@ -1104,14 +1104,14 @@ describe("beez-rp create-version command", () => {
       expect(blocked.status, blocked.output).toBe(1);
       expect(flattenOutput(blocked.output)).toContain("src/cli.js (versionFiles) no tiene ninguna versión marcada para actualizar.");
 
-      writeFileSync(cliPath, 'program.version("0.1.0"); // beez-rp-version\n');
+      writeFileSync(cliPath, 'program.version("0.1.0"); // astra-rp-version\n');
       runGit(["commit", "--quiet", "-am", "chore: mark the version"], repositoryRoot);
       runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
 
       const release = runCli(repositoryRoot, ["--bump", "minor"]);
 
       expect(release.status, release.output).toBe(0);
-      expect(runGit(["show", "main:src/cli.js"], remoteRoot)).toBe('program.version("0.2.0"); // beez-rp-version');
+      expect(runGit(["show", "main:src/cli.js"], remoteRoot)).toBe('program.version("0.2.0"); // astra-rp-version');
     },
     GIT_FIXTURE_TEST_TIMEOUT_MS
   );
@@ -1121,7 +1121,7 @@ describe("beez-rp create-version command", () => {
     () => {
       const { repositoryRoot } = createReleasedRepository();
       const legacyPath = path.join(repositoryRoot, "docs", "legacy.txt");
-      const latin1Content = Buffer.from("Versión 0.1.0 <!-- beez-rp-version -->\r\nÚltima línea\r\n", "latin1");
+      const latin1Content = Buffer.from("Versión 0.1.0 <!-- astra-rp-version -->\r\nÚltima línea\r\n", "latin1");
       mkdirSync(path.dirname(legacyPath));
       writeFileSync(legacyPath, latin1Content);
       pushConfiguration(repositoryRoot, ["export default {", '  changelog: { audience: "equipo" },', "  checks: false,", '  versionFiles: ["docs/legacy.txt"],', "};"]);
@@ -1136,14 +1136,14 @@ describe("beez-rp create-version command", () => {
       expect(runGit(["tag", "--list"], repositoryRoot)).toBe("");
 
       const byteOrderMark = Buffer.from([0xef, 0xbb, 0xbf]);
-      writeFileSync(legacyPath, Buffer.concat([byteOrderMark, Buffer.from("Versión 0.1.0 <!-- beez-rp-version -->\r\nÚltima línea\r\n", "utf8")]));
+      writeFileSync(legacyPath, Buffer.concat([byteOrderMark, Buffer.from("Versión 0.1.0 <!-- astra-rp-version -->\r\nÚltima línea\r\n", "utf8")]));
       runGit(["commit", "--quiet", "-am", "chore: convert to UTF-8"], repositoryRoot);
       runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
 
       const release = runCli(repositoryRoot, ["--bump", "minor"]);
 
       expect(release.status, release.output).toBe(0);
-      expect(readFileSync(legacyPath).equals(Buffer.concat([byteOrderMark, Buffer.from("Versión 0.2.0 <!-- beez-rp-version -->\r\nÚltima línea\r\n", "utf8")]))).toBe(true);
+      expect(readFileSync(legacyPath).equals(Buffer.concat([byteOrderMark, Buffer.from("Versión 0.2.0 <!-- astra-rp-version -->\r\nÚltima línea\r\n", "utf8")]))).toBe(true);
     },
     GIT_FIXTURE_TEST_TIMEOUT_MS
   );
@@ -1155,7 +1155,7 @@ describe("beez-rp create-version command", () => {
       const { repositoryRoot } = createReleasedRepository();
       const cliPath = path.join(repositoryRoot, "src", "cli.js");
       const lockedPath = path.join(repositoryRoot, "src", "locked.js");
-      const markedContent = 'program.version("0.1.0"); // beez-rp-version\n';
+      const markedContent = 'program.version("0.1.0"); // astra-rp-version\n';
       mkdirSync(path.dirname(cliPath));
       writeFileSync(cliPath, markedContent);
       writeFileSync(lockedPath, markedContent);
@@ -1191,7 +1191,7 @@ describe("beez-rp create-version command", () => {
       // Names a shell or Git would interpret: spaces, `%VAR%`, `$var`, a glob and, where the file system allows it, pathspec magic.
       const versionFiles = ["docs/my version %PATH% $HOME.txt", "docs/v[1].txt", ...(process.platform === "win32" ? [] : [":version"])];
       mkdirSync(path.join(repositoryRoot, "docs"));
-      for (const versionFile of versionFiles) writeFileSync(path.join(repositoryRoot, versionFile), "0.1.0 <!-- beez-rp-version -->\n");
+      for (const versionFile of versionFiles) writeFileSync(path.join(repositoryRoot, versionFile), "0.1.0 <!-- astra-rp-version -->\n");
       if (!changelogExists) runGit(["rm", "CHANGELOG.md"], repositoryRoot);
       pushConfiguration(repositoryRoot, ["export default {", '  changelog: { audience: "equipo" },', "  checks: false,", `  versionFiles: ${JSON.stringify(versionFiles)},`, "};"]);
       const manifest = readFileSync(path.join(repositoryRoot, "package.json"), "utf8");
@@ -1216,7 +1216,7 @@ describe("beez-rp create-version command", () => {
       const restoredChangelogPath = path.join(repositoryRoot, "CHANGELOG.md");
       const restoredChangelog = existsSync(restoredChangelogPath) ? readFileSync(restoredChangelogPath, "utf8") : null;
       expect(restoredChangelog).toBe(changelogExists ? stagedChangelog : null);
-      for (const versionFile of versionFiles) expect(readFileSync(path.join(repositoryRoot, versionFile), "utf8")).toBe("0.1.0 <!-- beez-rp-version -->\n");
+      for (const versionFile of versionFiles) expect(readFileSync(path.join(repositoryRoot, versionFile), "utf8")).toBe("0.1.0 <!-- astra-rp-version -->\n");
       expect(runGit(["status", "--porcelain"], repositoryRoot)).toBe(changelogExists ? "M  CHANGELOG.md" : "");
       expect(runGit(["log", "-1", "--format=%s", "main"], repositoryRoot)).toBe("chore: configure releases");
       expect(runGit(["tag", "--list"], repositoryRoot)).toBe("");
@@ -1228,23 +1228,23 @@ describe("beez-rp create-version command", () => {
     "should undo the release commit without tagging nor pushing it when a commit hook stages another change",
     () => {
       const { repositoryRoot, remoteRoot } = createReleasedRepository();
-      writeFileSync(path.join(repositoryRoot, "VERSION.txt"), "0.1.0 <!-- beez-rp-version -->\n");
+      writeFileSync(path.join(repositoryRoot, "VERSION.txt"), "0.1.0 <!-- astra-rp-version -->\n");
       pushConfiguration(repositoryRoot, ["export default {", '  changelog: { audience: "equipo" },', "  checks: false,", '  versionFiles: ["VERSION.txt"],', "};"]);
       const manifest = readFileSync(path.join(repositoryRoot, "package.json"), "utf8");
       const changelog = readFileSync(path.join(repositoryRoot, "CHANGELOG.md"), "utf8");
-      writeFileSync(path.join(repositoryRoot, ".git", "hooks", "pre-commit"), '#!/bin/sh\necho "// added by a hook" >> beez-rp.config.js\ngit add beez-rp.config.js\n', { mode: 0o755 });
+      writeFileSync(path.join(repositoryRoot, ".git", "hooks", "pre-commit"), '#!/bin/sh\necho "// added by a hook" >> astra-rp.config.js\ngit add astra-rp.config.js\n', { mode: 0o755 });
 
       const release = runCli(repositoryRoot, ["--bump", "minor"]);
 
       expect(release.status, release.output).toBe(1);
-      expect(flattenOutput(release.output)).toContain("El commit de versión 0.2.0 incluía cambios que beez-rp no preparó: beez-rp.config.js");
+      expect(flattenOutput(release.output)).toContain("El commit de versión 0.2.0 incluía cambios que astra-rp no preparó: astra-rp.config.js");
       expect(runGit(["log", "-1", "--format=%s", "main"], repositoryRoot)).toBe("chore: configure releases");
       expect(runGit(["tag", "--list"], repositoryRoot)).toBe("");
       expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
-      expect(runGit(["status", "--porcelain"], repositoryRoot)).toBe("M  beez-rp.config.js");
+      expect(runGit(["status", "--porcelain"], repositoryRoot)).toBe("M  astra-rp.config.js");
       expect(readFileSync(path.join(repositoryRoot, "package.json"), "utf8")).toBe(manifest);
       expect(readFileSync(path.join(repositoryRoot, "CHANGELOG.md"), "utf8")).toBe(changelog);
-      expect(readFileSync(path.join(repositoryRoot, "VERSION.txt"), "utf8")).toBe("0.1.0 <!-- beez-rp-version -->\n");
+      expect(readFileSync(path.join(repositoryRoot, "VERSION.txt"), "utf8")).toBe("0.1.0 <!-- astra-rp-version -->\n");
     },
     GIT_FIXTURE_TEST_TIMEOUT_MS
   );
@@ -1267,7 +1267,7 @@ describe("beez-rp create-version command", () => {
       const { repositoryRoot, remoteRoot } = createReleasedRepository();
       const cliPath = path.join(repositoryRoot, "src", "cli.js");
       mkdirSync(path.dirname(cliPath));
-      writeFileSync(cliPath, 'program.version("0.1.0"); // beez-rp-version\n');
+      writeFileSync(cliPath, 'program.version("0.1.0"); // astra-rp-version\n');
       pushConfiguration(repositoryRoot, ["export default {", '  changelog: { audience: "equipo" },', "  checks: false,", '  versionFiles: ["src/cli.js"],', "};"]);
       commitReleaseByHand(repositoryRoot);
 
@@ -1280,14 +1280,14 @@ describe("beez-rp create-version command", () => {
       expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
       expect(runGit(["log", "-1", "--format=%s", "main"], remoteRoot)).toBe("chore: configure releases");
 
-      writeFileSync(cliPath, 'program.version("0.2.0"); // beez-rp-version\n');
+      writeFileSync(cliPath, 'program.version("0.2.0"); // astra-rp-version\n');
       runGit(["commit", "--quiet", "--amend", "--no-edit", "-a"], repositoryRoot);
 
       const resumed = runCli(repositoryRoot, []);
 
       expect(resumed.status, resumed.output).toBe(0);
       expect(runGit(["tag", "--list"], remoteRoot)).toBe("v0.2.0");
-      expect(runGit(["show", "main:src/cli.js"], remoteRoot)).toBe('program.version("0.2.0"); // beez-rp-version');
+      expect(runGit(["show", "main:src/cli.js"], remoteRoot)).toBe('program.version("0.2.0"); // astra-rp-version');
     },
     GIT_FIXTURE_TEST_TIMEOUT_MS
   );
@@ -1296,9 +1296,9 @@ describe("beez-rp create-version command", () => {
     "should not resume a release commit with --ignore-local-changes while the configuration has uncommitted changes",
     () => {
       const { repositoryRoot, remoteRoot } = createReleasedRepository();
-      const configPath = path.join(repositoryRoot, "beez-rp.config.js");
+      const configPath = path.join(repositoryRoot, "astra-rp.config.js");
       mkdirSync(path.join(repositoryRoot, "src"));
-      writeFileSync(path.join(repositoryRoot, "src", "cli.js"), 'program.version("0.1.0"); // beez-rp-version\n');
+      writeFileSync(path.join(repositoryRoot, "src", "cli.js"), 'program.version("0.1.0"); // astra-rp-version\n');
       pushConfiguration(repositoryRoot, ["export default {", '  changelog: { audience: "equipo" },', "  checks: false,", '  versionFiles: ["src/cli.js"],', "};"]);
       commitReleaseByHand(repositoryRoot);
       // A local edit that drops the stale entry would otherwise skip its check.
@@ -1463,7 +1463,7 @@ describe("beez-rp create-version command", () => {
    * Lines of a configuration that tracks npm, publishes with `publish: "npm"` and logs `prepare`.
    *
    * @param {string} hookLog - File where `prepare` appends the version.
-   * @returns {string[]} Lines of `beez-rp.config.js`.
+   * @returns {string[]} Lines of `astra-rp.config.js`.
    */
   function npmReleaseConfiguration(hookLog) {
     return [
@@ -1480,16 +1480,16 @@ describe("beez-rp create-version command", () => {
   }
 
   /**
-   * Creates a home directory whose shared `~/.config/beez-rp/.env` holds a token.
+   * Creates a home directory whose shared `~/.config/astra-rp/.env` holds a token.
    *
    * @param {string} token - `NPM_TOKEN` value.
    * @returns {NodeJS.ProcessEnv} `HOME` and `USERPROFILE` pointing at it.
    */
   function createHomeWithSharedToken(token) {
-    const home = mkdtempSync(path.join(os.tmpdir(), "beez-rp-shared-home-"));
+    const home = mkdtempSync(path.join(os.tmpdir(), "astra-rp-shared-home-"));
     temporaryDirectories.push(home);
-    mkdirSync(path.join(home, ".config", "beez-rp"), { recursive: true });
-    writeFileSync(path.join(home, ".config", "beez-rp", ".env"), `NPM_TOKEN=${token}\n`);
+    mkdirSync(path.join(home, ".config", "astra-rp"), { recursive: true });
+    writeFileSync(path.join(home, ".config", "astra-rp", ".env"), `NPM_TOKEN=${token}\n`);
     return { HOME: home, USERPROFILE: home };
   }
 
@@ -1512,7 +1512,7 @@ describe("beez-rp create-version command", () => {
       const missing = flattenOutput((await runCliAsync(repositoryRoot, ["--bump", "minor"])).output);
 
       expect(missing).toContain("Falta NPM_TOKEN para publicar fixture-app");
-      expect(missing).toContain("~/.config/beez-rp/.env");
+      expect(missing).toContain("~/.config/astra-rp/.env");
       expect(runGit(["tag", "--list"], repositoryRoot)).toBe("");
       expect(runGit(["tag", "--list"], remoteRoot)).toBe("");
       expect(existsSync(hookLog)).toBe(false);
@@ -1663,7 +1663,7 @@ describe("beez-rp create-version command", () => {
       const output = flattenOutput(release.output);
 
       expect(release.status, release.output).toBe(1);
-      expect(output).toContain(`npm auth ${OWNER_USER} (~/.config/beez-rp/.env), dueño de fixture-app; permiso de escritura del token no verificable antes de publicar`);
+      expect(output).toContain(`npm auth ${OWNER_USER} (~/.config/astra-rp/.env), dueño de fixture-app; permiso de escritura del token no verificable antes de publicar`);
       expect(output).toContain("npm publish terminó con código");
       expect(output).toContain(`autentican como ${OWNER_USER}, dueño de fixture-app`);
       expect(output).toContain("El token puede ser read-only o granular sin permiso de escritura sobre el paquete");

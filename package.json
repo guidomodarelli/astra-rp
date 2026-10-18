@@ -1,12 +1,12 @@
 {
-  "name": "beez-rp",
+  "name": "@astra-kit/rp",
   "version": "0.10.0",
-  "description": "Dependency-free release process shared by the Beez projects: stable version rules, Vercel build gate, manual changelog checks with automatic closing of [Unreleased], and terminal UI.",
+  "description": "Dependency-free release process: stable version rules, Vercel build gate, manual changelog checks with automatic closing of [Unreleased], and terminal UI.",
   "license": "MIT",
   "author": "Guido Modarelli",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/guidomodarelli/beez-rp.git"
+    "url": "git+https://github.com/guidomodarelli/astra-rp.git"
   },
   "type": "module",
   "sideEffects": false,
@@ -15,7 +15,7 @@
   },
   "packageManager": "pnpm@12.6.0",
   "bin": {
-    "beez-rp": "./bin/beez-rp.js"
+    "astra-rp": "./bin/astra-rp.js"
   },
   "exports": {
     ".": {
@@ -78,10 +78,13 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --dir tests",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
-    "create-version": "node bin/beez-rp.js create-version",
-    "cv": "node bin/beez-rp.js create-version",
+    "create-version": "node bin/astra-rp.js create-version",
+    "cv": "node bin/astra-rp.js create-version",
     "prepack": "pnpm build:types",
-    "prepublishOnly": "node bin/beez-rp.js guard-publish"
+    "prepublishOnly": "node bin/astra-rp.js guard-publish"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "devDependencies": {
     "@types/node": "^24.13.4",

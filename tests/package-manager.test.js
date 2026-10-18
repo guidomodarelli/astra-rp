@@ -19,7 +19,7 @@ afterEach(() => {
  * @returns {string} Temporary project root holding the files.
  */
 function createProject(files) {
-  const root = mkdtempSync(path.join(os.tmpdir(), "beez-rp-package-manager-"));
+  const root = mkdtempSync(path.join(os.tmpdir(), "astra-rp-package-manager-"));
   temporaryDirectories.push(root);
   for (const [fileName, content] of Object.entries(files)) {
     writeFileSync(path.join(root, fileName), content);

@@ -1,5 +1,5 @@
 /**
- * Local changes of `beez-rp create-version --ignore-local-changes`: the
+ * Local changes of `astra-rp create-version --ignore-local-changes`: the
  * uncommitted changes (staged, unstaged and untracked) are set aside in a
  * `git stash` entry while the release runs, so checks, preparation and
  * publication only see the release commit, and are restored at the end.
@@ -34,7 +34,7 @@ import { ReleaseStepError } from "./errors.js";
 const STASH_REFERENCE_PREFIX = "stash@";
 
 /** Prefix of the temporary directory holding the patches of a restore. */
-const RESTORE_DIRECTORY_PREFIX = "beez-rp-local-changes-";
+const RESTORE_DIRECTORY_PREFIX = "astra-rp-local-changes-";
 
 /**
  * Builds the pathspec of the set-aside changes: the kept files are left out, because a stash made

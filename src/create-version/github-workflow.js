@@ -25,7 +25,7 @@ import { runCaptured } from "./process.js";
 /**
  * Builds the `run-name` the generated workflow gives a dispatched release, which identifies its runs.
  * @param {CiReleaseIdentity} release - Dispatched release.
- * @returns {string} Run title, such as `beez-rp release v1.2.4 <sha>`.
+ * @returns {string} Run title, such as `astra-rp release v1.2.4 <sha>`.
  */
 export function formatCiReleaseRunTitle(release) {
   return `${CI_RELEASE_RUN_TITLE_PREFIX} ${release.tag} ${release.sha}`;

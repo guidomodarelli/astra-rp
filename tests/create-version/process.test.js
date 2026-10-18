@@ -50,7 +50,7 @@ describe("runCapturedWithInput", () => {
   it(
     "stops every process the command started when it times out",
     async () => {
-      const workingDirectory = createTemporaryDirectory("beez-rp-process-");
+      const workingDirectory = createTemporaryDirectory("astra-rp-process-");
       const pidFile = path.join(workingDirectory, GRANDCHILD_PID_FILE);
 
       const result = await runCapturedWithInput(process.execPath, ["-e", AGENT_SCRIPT], {

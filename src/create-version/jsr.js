@@ -73,7 +73,7 @@ export async function prepareJsrVersionUpdates(context, packageRoot, options, ve
 }
 
 /**
- * Publishes with a pinned official client and a selected config; the token is never printed by beez-rp.
+ * Publishes with a pinned official client and a selected config; the token is never printed by astra-rp.
  *
  * @param {string} packageRoot - Release checkout.
  * @param {{ registryUrl: string, options: import("./registry-config.js").ResolvedPublicationOptions }} registry - Selected native registry.

@@ -288,7 +288,7 @@ export async function withArtifactOutsidePackageRoot(repositoryRoot, artifactPat
     moveFile(archivePath, heldArchivePath);
   } catch (error) {
     rmSync(holdingDirectory, { recursive: true, force: true });
-    throw new Error(`beez-rp create-version: no se pudo apartar ${artifactPath} para verificarlo`, { cause: error });
+    throw new Error(`astra-rp create-version: no se pudo apartar ${artifactPath} para verificarlo`, { cause: error });
   }
 
   /** @type {{ value: T } | { error: unknown }} */
@@ -304,7 +304,7 @@ export async function withArtifactOutsidePackageRoot(repositoryRoot, artifactPat
     moveFile(heldArchivePath, archivePath);
   } catch (error) {
     // The holding directory is kept so the archive is never lost.
-    throw new Error(`beez-rp create-version: no se pudo devolver ${artifactPath} a su lugar; quedó en ${heldArchivePath}`, { cause: error });
+    throw new Error(`astra-rp create-version: no se pudo devolver ${artifactPath} a su lugar; quedó en ${heldArchivePath}`, { cause: error });
   }
   rmSync(holdingDirectory, { recursive: true, force: true });
 

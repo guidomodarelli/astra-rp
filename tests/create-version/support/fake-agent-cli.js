@@ -78,7 +78,7 @@ process.stdin.on("end", () => {
  * @returns {{ binDirectory: string, readCalls: () => FakeAgentCall[] }} Directory and the calls the agents received.
  */
 export function installFakeAgents(agents) {
-  const binDirectory = createTemporaryDirectory("beez-rp-fake-agents-");
+  const binDirectory = createTemporaryDirectory("astra-rp-fake-agents-");
   const logPath = path.join(binDirectory, "calls.jsonl");
 
   for (const [name, behavior] of Object.entries(agents)) {

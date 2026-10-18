@@ -73,10 +73,10 @@ describe("create-version config", () => {
   });
 
   it("should detect bun from packageManager when loading the configuration", async () => {
-    const repositoryRoot = mkdtempSync(path.join(os.tmpdir(), "beez-rp-config-bun-"));
+    const repositoryRoot = mkdtempSync(path.join(os.tmpdir(), "astra-rp-config-bun-"));
     temporaryDirectories.push(repositoryRoot);
     writeFileSync(path.join(repositoryRoot, "package.json"), JSON.stringify({ name: "app", packageManager: "bun@1.3.11", scripts: { ci: "bun test" } }));
-    writeFileSync(path.join(repositoryRoot, "beez-rp.config.mjs"), 'export default { changelog: { audience: "quien usa la app" } };');
+    writeFileSync(path.join(repositoryRoot, "astra-rp.config.mjs"), 'export default { changelog: { audience: "quien usa la app" } };');
 
     const config = await loadCreateVersionConfig(repositoryRoot);
 
@@ -192,25 +192,25 @@ describe("create-version config", () => {
     expect(() => resolveCreateVersionConfig({ releaseTimeZone })).toThrow(/releaseTimeZone.*zona horaria IANA.*America\/Argentina\/Buenos_Aires/);
   });
 
-  it("should load beez-rp.config.js from the repository root and explain a missing file", async () => {
-    const repositoryRoot = mkdtempSync(path.join(os.tmpdir(), "beez-rp-config-"));
+  it("should load astra-rp.config.js from the repository root and explain a missing file", async () => {
+    const repositoryRoot = mkdtempSync(path.join(os.tmpdir(), "astra-rp-config-"));
     temporaryDirectories.push(repositoryRoot);
 
-    await expect(loadCreateVersionConfig(repositoryRoot)).rejects.toThrow(/beez-rp.config.mjs or beez-rp.config.js not found/);
+    await expect(loadCreateVersionConfig(repositoryRoot)).rejects.toThrow(/astra-rp.config.mjs or astra-rp.config.js not found/);
 
-    writeFileSync(path.join(repositoryRoot, "beez-rp.config.js"), 'export default { changelog: { audience: "equipo" }, checks: ["pnpm test"] };\n');
+    writeFileSync(path.join(repositoryRoot, "astra-rp.config.js"), 'export default { changelog: { audience: "equipo" }, checks: ["pnpm test"] };\n');
     await expect(loadCreateVersionConfig(repositoryRoot)).resolves.toMatchObject({ checks: ["pnpm test"] });
 
     // A CommonJS project keeps its config as .mjs, which wins over .js.
     writeFileSync(path.join(repositoryRoot, "package.json"), '{ "type": "commonjs" }\n');
-    writeFileSync(path.join(repositoryRoot, "beez-rp.config.mjs"), 'export default { changelog: { audience: "equipo" }, checks: ["pnpm lint"] };\n');
+    writeFileSync(path.join(repositoryRoot, "astra-rp.config.mjs"), 'export default { changelog: { audience: "equipo" }, checks: ["pnpm lint"] };\n');
     await expect(loadCreateVersionConfig(repositoryRoot)).resolves.toMatchObject({ checks: ["pnpm lint"] });
   });
 
   it("should read the ci script of package.json for the default checks and name an unreadable manifest", async () => {
-    const repositoryRoot = mkdtempSync(path.join(os.tmpdir(), "beez-rp-config-"));
+    const repositoryRoot = mkdtempSync(path.join(os.tmpdir(), "astra-rp-config-"));
     temporaryDirectories.push(repositoryRoot);
-    writeFileSync(path.join(repositoryRoot, "beez-rp.config.mjs"), 'export default { changelog: { audience: "equipo" } };\n');
+    writeFileSync(path.join(repositoryRoot, "astra-rp.config.mjs"), 'export default { changelog: { audience: "equipo" } };\n');
 
     await expect(loadCreateVersionConfig(repositoryRoot)).resolves.toMatchObject({ checks: null });
 

@@ -90,10 +90,10 @@ function readWorkspaceManifest(repositoryRoot, directory) {
   try {
     parsed = JSON.parse(readFileSync(path.join(repositoryRoot, manifestPath), "utf8"));
   } catch (error) {
-    throw new Error(`astra-rp create-version: no se pudo leer ${manifestPath}: ${describeError(error)}; corregilo o excluí ese workspace`, { cause: error });
+    throw new Error(`golfo-rp create-version: no se pudo leer ${manifestPath}: ${describeError(error)}; corregilo o excluí ese workspace`, { cause: error });
   }
   if (!isRecord(parsed)) {
-    throw new Error(`astra-rp create-version: ${manifestPath} no es un objeto JSON; corregilo o excluí ese workspace`);
+    throw new Error(`golfo-rp create-version: ${manifestPath} no es un objeto JSON; corregilo o excluí ese workspace`);
   }
   return parsed;
 }
@@ -127,13 +127,13 @@ export function expandWorkspacePatterns(repositoryRoot, patterns) {
   for (const rawPattern of patterns) {
     const isExclusion = rawPattern.startsWith(WORKSPACE_EXCLUSION_PREFIX);
     if (!isPathInsideRoot(isExclusion ? rawPattern.slice(WORKSPACE_EXCLUSION_PREFIX.length) : rawPattern)) {
-      throw new Error(`astra-rp create-version: el patrón de workspace "${rawPattern}" sale del repositorio; usá rutas relativas a la raíz, sin ".." ni rutas absolutas`);
+      throw new Error(`golfo-rp create-version: el patrón de workspace "${rawPattern}" sale del repositorio; usá rutas relativas a la raíz, sin ".." ni rutas absolutas`);
     }
     const pattern = toPosixPath(isExclusion ? rawPattern.slice(WORKSPACE_EXCLUSION_PREFIX.length) : rawPattern).replace(/^\.\//u, "");
     const base = pattern.endsWith(WORKSPACE_WILDCARD_SUFFIX) ? pattern.slice(0, -WORKSPACE_WILDCARD_SUFFIX.length) : pattern;
 
     if (/[*?{}[\]]/u.test(base)) {
-      throw new Error(`astra-rp create-version: workspace pattern "${rawPattern}" is not supported; use exact directories or a trailing /*`);
+      throw new Error(`golfo-rp create-version: workspace pattern "${rawPattern}" is not supported; use exact directories or a trailing /*`);
     }
 
     const directories = pattern.endsWith(WORKSPACE_WILDCARD_SUFFIX)
@@ -170,11 +170,11 @@ export function discoverWorkspacePackages(repositoryRoot, packages) {
       if (manifest.private === true) {
         return [];
       }
-      throw new Error(`astra-rp create-version: ${directory}/${PACKAGE_MANIFEST_FILE} no tiene "name"; agregale un "name" para publicarlo, o "private": true (o excluí ese workspace) para omitirlo`);
+      throw new Error(`golfo-rp create-version: ${directory}/${PACKAGE_MANIFEST_FILE} no tiene "name"; agregale un "name" para publicarlo, o "private": true (o excluí ese workspace) para omitirlo`);
     }
     if (manifest.private !== true && !isStableReleaseVersion(manifest.version)) {
       const currentVersion = manifest.version === undefined ? "no tiene \"version\"" : `tiene "version": ${JSON.stringify(manifest.version)}`;
-      throw new Error(`astra-rp create-version: ${directory}/${PACKAGE_MANIFEST_FILE} ${currentVersion}; un paquete publicado necesita una versión estable X.Y.Z (por ejemplo "0.1.0"), o "private": true (o excluí ese workspace) para omitirlo`);
+      throw new Error(`golfo-rp create-version: ${directory}/${PACKAGE_MANIFEST_FILE} ${currentVersion}; un paquete publicado necesita una versión estable X.Y.Z (por ejemplo "0.1.0"), o "private": true (o excluí ese workspace) para omitirlo`);
     }
     return [
       {
@@ -188,13 +188,13 @@ export function discoverWorkspacePackages(repositoryRoot, packages) {
   });
 
   if (found.length === 0) {
-    throw new Error(`astra-rp create-version: no workspace package found for packages ${JSON.stringify(packages)}`);
+    throw new Error(`golfo-rp create-version: no workspace package found for packages ${JSON.stringify(packages)}`);
   }
 
   const seen = new Map();
   for (const workspacePackage of found) {
     if (seen.has(workspacePackage.name)) {
-      throw new Error(`astra-rp create-version: ${workspacePackage.name} is declared in both ${seen.get(workspacePackage.name)} and ${workspacePackage.directory}`);
+      throw new Error(`golfo-rp create-version: ${workspacePackage.name} is declared in both ${seen.get(workspacePackage.name)} and ${workspacePackage.directory}`);
     }
     seen.set(workspacePackage.name, workspacePackage.directory);
   }

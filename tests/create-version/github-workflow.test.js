@@ -34,7 +34,7 @@ function createGithubFixture({ runStatus, conclusion = null, dispatchExit = 0, l
       // gh applies --jq per page and prints one name per line, with CRLF on Windows.
       return { status: organizationExit, stdout: organizationExit === 0 ? shared.map((name) => `${name}\r\n`).join("") : "", stderr: diagnostic };
     }
-    if (args[0] === "run") return { status: lookupExit, stdout: JSON.stringify(runStatus || (acceptedAfterDispatch && submissions > 0) ? [{ displayTitle: `astra-rp release v1.2.4 ${releaseSha}`, status: runStatus ?? "queued", conclusion, url: "https://github.com/fixture/app/actions/runs/1" }] : []), stderr: diagnostic };
+    if (args[0] === "run") return { status: lookupExit, stdout: JSON.stringify(runStatus || (acceptedAfterDispatch && submissions > 0) ? [{ displayTitle: `golfo-rp release v1.2.4 ${releaseSha}`, status: runStatus ?? "queued", conclusion, url: "https://github.com/fixture/app/actions/runs/1" }] : []), stderr: diagnostic };
     if (args[0] === "workflow") { submissions += 1; dispatched.push(args); return { status: dispatchExit, stdout: "", stderr: diagnostic }; }
     return { status: 0, stdout: "gh", stderr: "" };
   };

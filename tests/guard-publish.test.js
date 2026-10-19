@@ -13,7 +13,7 @@ import { decidePublishGuard, decidePublishGuardForEnvironment } from "../src/gua
 const NPM_FIXTURE_TEST_TIMEOUT_MS = 120_000;
 
 /** CLI declared by each project as `prepublishOnly`. */
-const CLI_PATH = fileURLToPath(new URL("../bin/astra-rp.js", import.meta.url));
+const CLI_PATH = fileURLToPath(new URL("../bin/golfo-rp.js", import.meta.url));
 
 /** User agent pnpm exports to the processes it spawns. */
 const PNPM_USER_AGENT = "pnpm/12.6.0 npm/? node/v24.21.0 win32 x64";
@@ -42,7 +42,7 @@ function createEnvironmentWithUserAgent(userAgent) {
 
 /**
  * @param {string | undefined} userAgent - User agent of the lifecycle script.
- * @returns {import("node:child_process").SpawnSyncReturns<string>} Result of `astra-rp guard-publish`.
+ * @returns {import("node:child_process").SpawnSyncReturns<string>} Result of `golfo-rp guard-publish`.
  */
 function runGuardCli(userAgent) {
   return spawnSync(process.execPath, [CLI_PATH, "guard-publish"], { encoding: "utf8", env: createEnvironmentWithUserAgent(userAgent) });
@@ -50,10 +50,10 @@ function runGuardCli(userAgent) {
 
 /** @returns {string} Package whose `prepublishOnly` runs the guard of this checkout. */
 function createGuardedPackageFixture() {
-  const packageRoot = mkdtempSync(path.join(os.tmpdir(), "astra-rp-guard-publish-"));
+  const packageRoot = mkdtempSync(path.join(os.tmpdir(), "golfo-rp-guard-publish-"));
   temporaryDirectories.push(packageRoot);
   const manifest = {
-    name: "astra-rp-guard-publish-fixture",
+    name: "golfo-rp-guard-publish-fixture",
     version: "1.0.0",
     scripts: { prepublishOnly: `node "${CLI_PATH}" guard-publish` },
   };
@@ -100,7 +100,7 @@ describe("decidePublishGuard", () => {
   });
 });
 
-describe("astra-rp guard-publish", () => {
+describe("golfo-rp guard-publish", () => {
   it("fails with the explanation on stderr under pnpm", () => {
     const result = runGuardCli(PNPM_USER_AGENT);
 

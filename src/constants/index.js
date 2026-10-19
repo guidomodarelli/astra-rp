@@ -1,5 +1,5 @@
 /**
- * Facade of every `astra-rp` constant, grouped by domain.
+ * Facade of every `golfo-rp` constant, grouped by domain.
  *
  * @module constants
  */

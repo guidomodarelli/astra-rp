@@ -1,11 +1,11 @@
 /**
- * Contract between the `astra-rp ignore-build` command and the Vercel
+ * Contract between the `golfo-rp ignore-build` command and the Vercel
  * `ignoreCommand` wrapper that reads its output.
  *
  * @module constants/build-gate
  */
 
-/** Decision printed as the last output line of `astra-rp ignore-build`. */
+/** Decision printed as the last output line of `golfo-rp ignore-build`. */
 export const BUILD_DECISION = Object.freeze({
   build: "BUILD",
   skip: "SKIP",
@@ -23,8 +23,8 @@ export const GIT_DIFF_CHANGED_STATUS = 1;
 /** Manifest that holds the version. */
 export const PACKAGE_MANIFEST_FILE = "package.json";
 
-/** Exit code of `astra-rp ignore-build` when a decision was printed. */
+/** Exit code of `golfo-rp ignore-build` when a decision was printed. */
 export const DECISION_EXIT_CODE = 0;
 
-/** Exit code of `astra-rp ignore-build` when it could not decide; wrappers must skip the build. */
+/** Exit code of `golfo-rp ignore-build` when it could not decide; wrappers must skip the build. */
 export const GATE_FAILURE_EXIT_CODE = 2;

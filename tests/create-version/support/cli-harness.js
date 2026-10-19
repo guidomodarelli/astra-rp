@@ -42,7 +42,7 @@ const ISOLATED_CI_RELEASE_VARIABLES = new Set([...Object.values(CI_RELEASE_ENVIR
 const BOX_BORDER_PATTERN = /[│╭╮╰╯─]/gu;
 
 /** Command line entrypoint exercised end to end. */
-const CLI_PATH = fileURLToPath(new URL("../../../bin/astra-rp.js", import.meta.url));
+const CLI_PATH = fileURLToPath(new URL("../../../bin/golfo-rp.js", import.meta.url));
 
 /** Directories created by the current test, removed by {@link cleanupTemporaryDirectories}. */
 export const temporaryDirectories = /** @type {string[]} */ ([]);
@@ -113,13 +113,13 @@ export function cleanEnvironment() {
 
 /**
  * Environment of the command under test: no inherited npm token, registry nor CI release identity, and a temporary home
- * (`HOME`/`USERPROFILE`) so the user's real `~/.config/astra-rp/.env` never leaks in.
+ * (`HOME`/`USERPROFILE`) so the user's real `~/.config/golfo-rp/.env` never leaks in.
  *
  * @param {NodeJS.ProcessEnv} [overrides] - Variables the test sets, such as `NPM_TOKEN`.
  * @returns {NodeJS.ProcessEnv} Environment.
  */
 export function commandEnvironment(overrides = {}) {
-  const temporaryHome = createTemporaryDirectory("astra-rp-cli-home-");
+  const temporaryHome = createTemporaryDirectory("golfo-rp-cli-home-");
   const environment = Object.fromEntries(Object.entries(cleanEnvironment()).filter(([variableName]) => !ISOLATED_NPM_VARIABLE_PATTERN.test(variableName) && !ISOLATED_CI_RELEASE_VARIABLES.has(variableName)));
   // FORCE_COLOR wins over NO_COLOR, and the ANSI codes it adds split the messages the tests match.
   delete environment.FORCE_COLOR;
@@ -231,7 +231,7 @@ export function spawnTrackedCommand(command, commandArguments, options) {
   return child;
 }
 
-/** Locale whose short date is `YYYY-MM-DD`, to compute release dates independently of astra-rp. */
+/** Locale whose short date is `YYYY-MM-DD`, to compute release dates independently of golfo-rp. */
 const ISO_DAY_LOCALE = "sv-SE";
 
 /**

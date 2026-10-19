@@ -1,5 +1,5 @@
 name: Release
-run-name: "astra-rp release ${{ inputs.tag }} ${{ inputs.sha }}"
+run-name: "golfo-rp release ${{ inputs.tag }} ${{ inputs.sha }}"
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ permissions:
 __RELEASE_PERMISSIONS__
 
 concurrency:
-  group: "astra-rp-release"
+  group: "golfo-rp-release"
   cancel-in-progress: false
 
 jobs:
@@ -45,8 +45,8 @@ __PACKAGE_SETUP__
 __DEPLOYMENT_SETUP__
       - name: Checks y publicación del release
         env:
-          ASTRA_RP_RELEASE_VERSION: ${{ inputs.version }}
-          ASTRA_RP_RELEASE_SHA: ${{ inputs.sha }}
+          GOLFO_RP_RELEASE_VERSION: ${{ inputs.version }}
+          GOLFO_RP_RELEASE_SHA: ${{ inputs.sha }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: __RELEASE_COMMAND__
 __DEPLOYMENT_STEP__

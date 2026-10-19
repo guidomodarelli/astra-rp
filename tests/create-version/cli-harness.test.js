@@ -38,7 +38,7 @@ afterEach(cleanupTemporaryDirectories);
 
 describe("cli harness cleanup", () => {
   it("terminates every process a running command started before removing its fixture", async () => {
-    const fixtureRoot = createTemporaryDirectory("astra-rp-harness-");
+    const fixtureRoot = createTemporaryDirectory("golfo-rp-harness-");
     const pidFile = path.join(fixtureRoot, "grandchild.pid");
     spawnTrackedCommand(process.execPath, ["-e", PARENT_SCRIPT], { cwd: fixtureRoot });
     await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true), { timeout: 10_000 });

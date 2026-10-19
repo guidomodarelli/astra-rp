@@ -49,14 +49,14 @@ let isolatedVariables = {};
 /** @type {Record<string, string | undefined>} */
 let originalHomeVariables = {};
 
-/** Temporary home of the running test, so the user's real ~/.config/astra-rp/.env never leaks in. */
+/** Temporary home of the running test, so the user's real ~/.config/golfo-rp/.env never leaks in. */
 let temporaryHome = "";
 
 beforeEach(() => {
   isolatedVariables = Object.fromEntries(Object.entries(process.env).filter(([variableName]) => ISOLATED_VARIABLE_PATTERN.test(variableName)));
   for (const variableName of Object.keys(isolatedVariables)) delete process.env[variableName];
   originalHomeVariables = Object.fromEntries(HOME_VARIABLES.map((variableName) => [variableName, process.env[variableName]]));
-  temporaryHome = mkdtempSync(path.join(os.tmpdir(), "astra-rp-npm-home-"));
+  temporaryHome = mkdtempSync(path.join(os.tmpdir(), "golfo-rp-npm-home-"));
   temporaryDirectories.push(temporaryHome);
   for (const variableName of HOME_VARIABLES) process.env[variableName] = temporaryHome;
 });
@@ -81,7 +81,7 @@ afterEach(() => {
  * @returns {string} Package root.
  */
 function createPackageRoot(manifest, projectNpmrc) {
-  const packageRoot = mkdtempSync(path.join(os.tmpdir(), "astra-rp-npm-registry-"));
+  const packageRoot = mkdtempSync(path.join(os.tmpdir(), "golfo-rp-npm-registry-"));
   temporaryDirectories.push(packageRoot);
   writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify(manifest));
   if (projectNpmrc !== undefined) writeFileSync(path.join(packageRoot, ".npmrc"), projectNpmrc);
@@ -205,7 +205,7 @@ describe("publish registry resolution", () => {
   });
 
   it("writes only the NPM_TOKEN reference and removes the config afterwards, even on failure", async () => {
-    const parent = mkdtempSync(path.join(os.tmpdir(), "astra-rp-npm-auth-test-"));
+    const parent = mkdtempSync(path.join(os.tmpdir(), "golfo-rp-npm-auth-test-"));
     temporaryDirectories.push(parent);
     const authConfigLine = buildNpmAuthConfigLine("https://npm.example.test/team/");
     /** @type {string[]} */
@@ -252,7 +252,7 @@ describe("npm view arguments", () => {
   });
 
   it("adds the temporary authenticated user config when there is one", () => {
-    expect(buildNpmViewArguments("pkg", "https://npm.example.test/", "/tmp/astra-rp-npm-auth-fixture/npmrc")).toEqual([
+    expect(buildNpmViewArguments("pkg", "https://npm.example.test/", "/tmp/golfo-rp-npm-auth-fixture/npmrc")).toEqual([
       "view",
       "pkg",
       "versions",
@@ -261,7 +261,7 @@ describe("npm view arguments", () => {
       "--registry",
       "https://npm.example.test/",
       "--userconfig",
-      "/tmp/astra-rp-npm-auth-fixture/npmrc",
+      "/tmp/golfo-rp-npm-auth-fixture/npmrc",
     ]);
   });
 
@@ -340,13 +340,13 @@ describe("published release summary", () => {
  * @param {string} content - File content.
  */
 function writeSharedEnvironmentFile(content) {
-  const directory = path.join(temporaryHome, ".config", "astra-rp");
+  const directory = path.join(temporaryHome, ".config", "golfo-rp");
   mkdirSync(directory, { recursive: true });
   writeFileSync(path.join(directory, ".env"), content);
 }
 
 describe("NPM_TOKEN resolution", () => {
-  it("prefers the environment, then the repository .env, then ~/.config/astra-rp/.env from os.homedir()", () => {
+  it("prefers the environment, then the repository .env, then ~/.config/golfo-rp/.env from os.homedir()", () => {
     const packageRoot = createPackageRoot({ name: "pkg" });
     expect(resolveNpmToken(packageRoot)).toEqual({ token: null, source: null });
 
@@ -447,7 +447,7 @@ describe("npm publish access check", () => {
         const problem = describeNpmAuthProblem(check);
 
         expect(check).toMatchObject({ status: NPM_AUTH_STATUS.invalidToken, source: NPM_TOKEN_SOURCE.shared, user: null });
-        expect(problem?.title).toBe("El NPM_TOKEN (~/.config/astra-rp/.env) es inválido o venció");
+        expect(problem?.title).toBe("El NPM_TOKEN (~/.config/golfo-rp/.env) es inválido o venció");
         expect(JSON.stringify(problem)).not.toContain("expired-token");
       } finally {
         await registry.close();
@@ -535,7 +535,7 @@ describe("npm publish access check", () => {
 
         expect(check).toMatchObject({ status: NPM_AUTH_STATUS.projectCredentials, user: null, source: NPM_TOKEN_SOURCE.environment });
         expect(problem?.title).toBe(`El .npmrc del proyecto define credenciales para ${registry.registryUrl} que tienen prioridad sobre NPM_TOKEN`);
-        expect(problem?.details.join(" ")).toContain("Sacalas: astra-rp usa NPM_TOKEN con una config temporal.");
+        expect(problem?.details.join(" ")).toContain("Sacalas: golfo-rp usa NPM_TOKEN con una config temporal.");
         expect(JSON.stringify(problem)).not.toContain(STRANGER_TOKEN);
 
         writeFileSync(path.join(packageRoot, ".npmrc"), `//npm.example.test/:_authToken=${STRANGER_TOKEN}\n`);
@@ -607,7 +607,7 @@ describe("npm publish access check", () => {
     const check = await checkNpmPublishAccess(PACKAGE_NAME, createPackageRoot({ name: PACKAGE_NAME }), "https://registry.npmjs.org/");
 
     expect(check.status).toBe(NPM_AUTH_STATUS.missingToken);
-    expect(describeNpmAuthProblem(check)?.details.join(" ")).toContain("~/.config/astra-rp/.env");
+    expect(describeNpmAuthProblem(check)?.details.join(" ")).toContain("~/.config/golfo-rp/.env");
   });
 });
 

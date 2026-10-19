@@ -1,5 +1,5 @@
 /**
- * Monorepo mode of `astra-rp create-version`: workspace discovery, per-package
+ * Monorepo mode of `golfo-rp create-version`: workspace discovery, per-package
  * tags and the subject of the single release commit.
  *
  * @module constants/monorepo

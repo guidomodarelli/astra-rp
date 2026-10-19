@@ -1,5 +1,5 @@
 /**
- * `astra-rp create-version`: one command that diagnoses a repository, shows
+ * `golfo-rp create-version`: one command that diagnoses a repository, shows
  * what is still missing and ships the release from `main`.
  *
  * 1. Diagnosis: fetches `origin`, reads the branch, working tree, `main`
@@ -9,7 +9,7 @@
  * 2. Plan: `plan.js` turns that snapshot into ordered steps, or into blockers
  *    that explain what to fix.
  * 3. Execution: runs each step; project-specific work (checks, migrations,
- *    preparation, publication) comes from `astra-rp.config.js`.
+ *    preparation, publication) comes from `golfo-rp.config.js`.
  *
  * Every step is derived from the current state, so running the command again
  * after a failure resumes from the first missing step.
@@ -480,7 +480,7 @@ export async function createAnnotatedTag(context, tag, annotation, hint, target 
  * Runs configured command lines in order, stopping at the first failure.
  *
  * @param {StepContext} context - Release context.
- * @param {string[]} commandLines - Commands from `astra-rp.config.js`.
+ * @param {string[]} commandLines - Commands from `golfo-rp.config.js`.
  * @param {string} hint - Spanish next action when one fails.
  * @returns {Promise<void>}
  */
@@ -531,7 +531,7 @@ export function describeReleaseCapabilities(config, registryLabel) {
 
 /**
  * Fast-forwards local `main` to `origin/main`. When that brings new commits the release stops
- * before touching the version: the diagnosis, the plan and `astra-rp.config.(m)js` (imported with
+ * before touching the version: the diagnosis, the plan and `golfo-rp.config.(m)js` (imported with
  * its modules at startup) come from the previous `main`, so the command must run again in a new
  * process to diagnose with the new code and configuration.
  *
@@ -906,7 +906,7 @@ function rewriteMarkedVersions(context, filePath, content, version, untouchedNot
   if (update.replacements === 0) {
     throw new ReleaseStepError(
       `${filePath} (versionFiles) no tiene ninguna versión marcada para actualizar.`,
-      `Marcá la línea con un comentario astra-rp-version (o x-release-please-version), o el bloque con astra-rp-start-version … astra-rp-end, y volvé a correr ${context.commands.createVersion}; ${untouchedNote}.`
+      `Marcá la línea con un comentario golfo-rp-version (o x-release-please-version), o el bloque con golfo-rp-start-version … golfo-rp-end, y volvé a correr ${context.commands.createVersion}; ${untouchedNote}.`
     );
   }
 
@@ -930,13 +930,13 @@ export async function prepareVersionFileUpdates(context, versionFiles, version) 
 
   for (const filePath of versionFiles) {
     if (!existsSync(path.join(context.repositoryRoot, filePath))) {
-      throw new ReleaseStepError(`${filePath} (versionFiles) no existe.`, `Corregí versionFiles en astra-rp.config.(m)js y volvé a correr ${context.commands.createVersion}; ${untouchedNote}.`);
+      throw new ReleaseStepError(`${filePath} (versionFiles) no existe.`, `Corregí versionFiles en golfo-rp.config.(m)js y volvé a correr ${context.commands.createVersion}; ${untouchedNote}.`);
     }
     // lstat does not follow links: writing through a symlink would change a file outside versionFiles.
     if (!lstatSync(path.join(context.repositoryRoot, filePath)).isFile()) {
       throw new ReleaseStepError(
         `${filePath} (versionFiles) no es un archivo regular (es un symlink o un directorio).`,
-        `Apuntá versionFiles al archivo real en astra-rp.config.(m)js y volvé a correr ${context.commands.createVersion}; ${untouchedNote}.`
+        `Apuntá versionFiles al archivo real en golfo-rp.config.(m)js y volvé a correr ${context.commands.createVersion}; ${untouchedNote}.`
       );
     }
   }
@@ -947,7 +947,7 @@ export async function prepareVersionFileUpdates(context, versionFiles, version) 
   if (untrackedPath !== undefined) {
     throw new ReleaseStepError(
       `${untrackedPath} (versionFiles) no está trackeado en Git (lo ignora .gitignore o nunca se commiteó): el commit de release no podría incluirlo.`,
-      `Commitealo (si está ignorado, con git add -f) o sacalo de versionFiles en astra-rp.config.(m)js, y volvé a correr ${context.commands.createVersion}; ${untouchedNote}.`
+      `Commitealo (si está ignorado, con git add -f) o sacalo de versionFiles en golfo-rp.config.(m)js, y volvé a correr ${context.commands.createVersion}; ${untouchedNote}.`
     );
   }
 
@@ -1022,7 +1022,7 @@ async function verifyReleasedVersionFiles(context, version) {
     if (content === null) {
       throw new ReleaseStepError(
         `${filePath} (versionFiles) no existe en el commit de release ${version} (HEAD).`,
-        `Agregalo al commit de release con sus líneas marcadas en ${version}, o corregí versionFiles en astra-rp.config.(m)js, y volvé a correr ${context.commands.createVersion}; ${untouchedNote}.`
+        `Agregalo al commit de release con sus líneas marcadas en ${version}, o corregí versionFiles en golfo-rp.config.(m)js, y volvé a correr ${context.commands.createVersion}; ${untouchedNote}.`
       );
     }
 
@@ -1106,7 +1106,7 @@ export async function commitReleaseFiles(context, releaseFiles, subject, closedC
   if ((await context.reader.git(["rev-parse", "HEAD^{tree}"])) !== preparedTree) {
     const unpreparedPaths = await context.reader.git(["diff", "--name-only", preparedTree, "HEAD"]);
     failure = new ReleaseStepError(
-      `El commit de versión ${subject} incluía cambios que astra-rp no preparó: ${unpreparedPaths.split("\n").slice(0, MAX_LISTED_ITEMS).join(", ")} (por ejemplo, de un hook). Se deshizo el commit y no se creó el tag.`,
+      `El commit de versión ${subject} incluía cambios que golfo-rp no preparó: ${unpreparedPaths.split("\n").slice(0, MAX_LISTED_ITEMS).join(", ")} (por ejemplo, de un hook). Se deshizo el commit y no se creó el tag.`,
       "Revisá el hook y esos cambios."
     );
   } else {
@@ -1324,7 +1324,7 @@ async function resolvePublishedArtifact(context, version, workingManifest) {
 
   if (pnpmRewrites.length > 0) {
     throw new ReleaseStepError(
-      `Este paquete depende de reescrituras de pnpm al empaquetar y astra-rp publica con npm: ${pnpmRewrites.slice(0, MAX_LISTED_ITEMS).join("; ")}.`,
+      `Este paquete depende de reescrituras de pnpm al empaquetar y golfo-rp publica con npm: ${pnpmRewrites.slice(0, MAX_LISTED_ITEMS).join("; ")}.`,
       "No se publicó nada. Reemplazá los especificadores workspace:/catalog:/jsr: por rangos de versión y sacá de publishConfig los campos del manifest que solo pnpm aplica al empaquetar (exports, main, bin, types...): declaralos en la raíz de package.json."
     );
   }
@@ -1409,7 +1409,7 @@ async function publishReleaseStep(context) {
     if (result.missingToken) {
       throw new ReleaseStepError(
         `Falta ${registry.options.tokenEnv} para publicar ${version} en ${registry.label}.`,
-        `Definilo en el entorno, .env del repo o ~/.config/astra-rp/.env y corré ${context.commands.createVersion}: retoma solo la publicación.`
+        `Definilo en el entorno, .env del repo o ~/.config/golfo-rp/.env y corré ${context.commands.createVersion}: retoma solo la publicación.`
       );
     }
 

@@ -1,10 +1,19 @@
 # Changelog
 
-Todos los cambios relevantes de `@astra-kit/rp` (antes `beez-rp`) se documentan en este archivo.
+Todos los cambios relevantes de `@golfo/rp` (antes `@astra-kit/rp` y `beez-rp`) se documentan en este archivo.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y el proyecto usa [Semantic Versioning](https://semver.org/lang/es/).
 
 ## [Unreleased]
+
+### Changed
+
+- Cambio incompatible: el paquete pasa a llamarse `@golfo/rp` y el comando, `golfo-rp`: instalalo con `pnpm add -D @golfo/rp`, cambiá los scripts `astra-rp …` por `golfo-rp …` y los imports `@astra-kit/rp/…` por `@golfo/rp/…`. El repositorio ahora es `guidomodarelli/golfo-rp`.
+- El config se llama `golfo-rp.config.js` o `golfo-rp.config.mjs`; `astra-rp.config.*` ya no se lee.
+- Los marcadores de `versionFiles` pasan a ser `golfo-rp-version` y `golfo-rp-start-version` … `golfo-rp-end` (los de release-please siguen funcionando).
+- El commit de versión creado para CI lleva el trailer `Golfo-Rp-Execution`, el gate de Vercel generado vive en `.golfo-rp/` y el workflow de release usa `GOLFO_RP_RELEASE_VERSION`, `GOLFO_RP_RELEASE_SHA` y el grupo de concurrencia `golfo-rp-release`: actualizá `.github/workflows/release.yml`, `vercel.json` y el gate con esos nombres, o borralos en un commit propio y regeneralos con `--setup-ci`.
+- El `.env` compartido entre proyectos pasa a `~/.config/golfo-rp/.env`; las variables de los tokens (`NPM_TOKEN`, `JSR_TOKEN` y las de `tokenEnv`) no cambian.
+- No se aceptan los nombres anteriores (`@astra-kit/rp`, `astra-rp`, `astra-rp.config.*`, `astra-rp-version`, `astra-rp-start-version`, `astra-rp-end`, `Astra-Rp-Execution`, `.astra-rp/`, `ASTRA_RP_*` ni `~/.config/astra-rp/.env`): hay que migrar todo de una vez.
 
 ## [1.0.0] - 2026-10-18
 

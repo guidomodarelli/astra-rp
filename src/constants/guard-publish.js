@@ -1,5 +1,5 @@
 /**
- * Contract of `astra-rp guard-publish`, the `prepublishOnly` guard that keeps
+ * Contract of `golfo-rp guard-publish`, the `prepublishOnly` guard that keeps
  * packages from being published by a package manager other than npm.
  *
  * @module constants/guard-publish
@@ -22,7 +22,7 @@ export const BLOCKED_PUBLISH_PACKAGE_MANAGERS = Object.freeze({
   "bun/": "bun",
 });
 
-/** Exit codes of `astra-rp guard-publish`. */
+/** Exit codes of `golfo-rp guard-publish`. */
 export const GUARD_PUBLISH_EXIT_CODE = Object.freeze({
   allowed: 0,
   blocked: 1,

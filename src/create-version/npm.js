@@ -1,8 +1,8 @@
 /**
- * npm adapter of `astra-rp create-version`: resolves the registry a package is
+ * npm adapter of `golfo-rp create-version`: resolves the registry a package is
  * published to (`publishConfig`, else npm's own config), resolves `NPM_TOKEN`
  * with a single ordered lookup (environment, repository `.env`, shared
- * `~/.config/astra-rp/.env`), checks that the token can publish the package
+ * `~/.config/golfo-rp/.env`), checks that the token can publish the package
  * (`npm whoami` + `npm owner ls`), lists the versions published there
  * (authenticated with `NPM_TOKEN` when available), reads the integrity npm
  * would pack from the release checkout, and publishes the working tree or a
@@ -98,7 +98,7 @@ import { USES_SHELL_FOR_PACKAGE_MANAGERS, quoteShellArguments, runCaptured, runI
 export function runNpmCaptured(npmArguments, repositoryRoot, environment = process.env) {
   const unsafeArgument = npmArguments.find((npmArgument) => UNSAFE_QUOTED_PATH_PATTERN.test(npmArgument));
   if (unsafeArgument !== undefined) {
-    throw new Error(`astra-rp create-version: argumento de npm no permitido en la línea de comandos: ${unsafeArgument}`);
+    throw new Error(`golfo-rp create-version: argumento de npm no permitido en la línea de comandos: ${unsafeArgument}`);
   }
 
   return USES_SHELL_FOR_PACKAGE_MANAGERS
@@ -132,7 +132,7 @@ export function buildNpmViewArguments(packageName, registryUrl, userConfigPath =
  */
 function buildScopedRegistryOptions(packageName, registryUrl) {
   if (!packageName) return [];
-  if (!NPM_PACKAGE_NAME_PATTERN.test(packageName)) throw new Error("astra-rp create-version: nombre de paquete inválido al fijar el registry del scope");
+  if (!NPM_PACKAGE_NAME_PATTERN.test(packageName)) throw new Error("golfo-rp create-version: nombre de paquete inválido al fijar el registry del scope");
   const scope = readPackageScope(packageName);
   return scope ? [`--${scopedRegistryKey(scope)}=${parseRegistryUrl(registryUrl).href}`] : [];
 }
@@ -163,7 +163,7 @@ function scopedRegistryKey(scope) {
 function buildRegistryOptions(registryUrl, userConfigPath, commandName, scopedPackageName = null) {
   const { href } = parseRegistryUrl(registryUrl);
   if (!SHELL_SAFE_REGISTRY_URL_PATTERN.test(href)) {
-    throw new Error(`astra-rp create-version: el registry "${registryUrl}" tiene caracteres no permitidos en la línea de comandos de ${commandName}`);
+    throw new Error(`golfo-rp create-version: el registry "${registryUrl}" tiene caracteres no permitidos en la línea de comandos de ${commandName}`);
   }
   const userConfig = userConfigPath ? [NPM_USER_CONFIG_OPTION, userConfigPath] : [];
   return [NPM_REGISTRY_OPTION, href, ...userConfig, ...buildScopedRegistryOptions(scopedPackageName, registryUrl)];
@@ -212,7 +212,7 @@ function readCredentialFile(filePath, purpose) {
   try {
     return readFileSync(filePath, "utf8");
   } catch (error) {
-    throw new Error(`astra-rp create-version: no se pudo leer ${filePath} para ${purpose}`, { cause: error });
+    throw new Error(`golfo-rp create-version: no se pudo leer ${filePath} para ${purpose}`, { cause: error });
   }
 }
 
@@ -232,7 +232,7 @@ function readTokenFromEnvironmentFile(environmentFilePath, tokenVariable) {
 /**
  * Resolves `NPM_TOKEN` with the single lookup shared by the diagnosis, `npm view` and the
  * publication: the `NPM_TOKEN` environment variable, else the repository `.env` (ignored by Git),
- * else the file shared by every project, `~/.config/astra-rp/.env`. The token is only returned:
+ * else the file shared by every project, `~/.config/golfo-rp/.env`. The token is only returned:
  * it is never written to disk nor loaded into `process.env`.
  *
  * @param {string} repositoryRoot - Repository root holding the optional `.env`.
@@ -526,11 +526,11 @@ function parseRegistryUrl(registryUrl) {
   try {
     registry = new URL(registryUrl);
   } catch (error) {
-    throw new Error(`astra-rp create-version: el registry de publicación "${registryUrl}" no es una URL válida`, { cause: error });
+    throw new Error(`golfo-rp create-version: el registry de publicación "${registryUrl}" no es una URL válida`, { cause: error });
   }
 
   if (!isPlainHttpUrl(registry)) {
-    throw new Error(`astra-rp create-version: el registry de publicación "${registryUrl}" tiene que ser una URL http(s) sin credenciales, query ni fragmento`);
+    throw new Error(`golfo-rp create-version: el registry de publicación "${registryUrl}" tiene que ser una URL http(s) sin credenciales, query ni fragmento`);
   }
 
   return registry;
@@ -577,7 +577,7 @@ function readPublishConfigRegistry(manifest) {
 async function readNpmConfigRegistry(manifest, repositoryRoot) {
   const packageName = String(manifest.name);
   if (!NPM_PACKAGE_NAME_PATTERN.test(packageName)) {
-    throw new Error(`astra-rp create-version: nombre de paquete inválido: ${packageName}`);
+    throw new Error(`golfo-rp create-version: nombre de paquete inválido: ${packageName}`);
   }
 
   // The scope comes from a name that matches the npm name pattern, so the key keeps a fixed shape.
@@ -593,7 +593,7 @@ async function readNpmConfigRegistry(manifest, repositoryRoot) {
       );
 
       if (result.status !== 0) {
-        throw new Error(`astra-rp create-version: npm config get ${configKey} salió con código ${result.status}: ${firstStderrLine(result, "sin detalle")}`);
+        throw new Error(`golfo-rp create-version: npm config get ${configKey} salió con código ${result.status}: ${firstStderrLine(result, "sin detalle")}`);
       }
 
       const value = result.stdout.trim();
@@ -756,7 +756,7 @@ export function buildNpmPublishArguments(artifactPath = null, registryUrl = null
  * Builds the environment of `npm publish` without the inherited package
  * manager user agent. npm reads `npm_config_user_agent` as its `user-agent`
  * config, so under `pnpm create-version` its lifecycle scripts would report
- * pnpm and `astra-rp guard-publish` would block its own npm publication.
+ * pnpm and `golfo-rp guard-publish` would block its own npm publication.
  * Without it npm reports its own user agent (`npm/…`). npm reads its config
  * variables in any case (`NPM_CONFIG_USER_AGENT` too), so every casing is dropped.
  *
@@ -794,7 +794,7 @@ export async function publishToNpm(repositoryRoot, { authConfigLine, artifactPat
 
   const exitCode = await withNpmAuthConfig(authConfigLine, async (userConfigPath) => {
     if (UNSAFE_QUOTED_PATH_PATTERN.test(userConfigPath)) {
-      throw new Error(`astra-rp create-version: unsafe temporary npm config path ${userConfigPath}`);
+      throw new Error(`golfo-rp create-version: unsafe temporary npm config path ${userConfigPath}`);
     }
 
     // The command line is constant apart from validated paths; the token only travels through the environment.

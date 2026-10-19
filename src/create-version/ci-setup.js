@@ -685,12 +685,12 @@ export async function renderCiReleaseWorkflow(repositoryRoot, config, { validate
 export async function prepareCiSetupFiles(repositoryRoot, config, writeConfiguration = true) {
   const workflowPath = ciWorkflowPath(config.ci?.workflow ?? DEFAULT_CI_WORKFLOW);
   assertSafeCiPath(repositoryRoot, workflowPath);
-  if (existsSync(path.join(repositoryRoot, workflowPath))) throw new ReleaseStepError(`${workflowPath} ya existe; no se reemplazó.`, "Configurá ci.workflow en astra-rp.config.(m)js y verificá que reciba version, tag y sha y ejecute --ci-release.");
+  if (existsSync(path.join(repositoryRoot, workflowPath))) throw new ReleaseStepError(`${workflowPath} ya existe; no se reemplazó.`, "Configurá ci.workflow en golfo-rp.config.(m)js y verificá que reciba version, tag y sha y ejecute --ci-release.");
   const configFile = CREATE_VERSION_CONFIG_FILES.find((fileName) => existsSync(path.join(repositoryRoot, fileName)));
-  if (!configFile || !lstatSync(path.join(repositoryRoot, configFile)).isFile()) throw new ReleaseStepError("No se pudo encontrar una configuración regular para agregar CI.", "Configurá ci.workflow manualmente en astra-rp.config.(m)js.");
+  if (!configFile || !lstatSync(path.join(repositoryRoot, configFile)).isFile()) throw new ReleaseStepError("No se pudo encontrar una configuración regular para agregar CI.", "Configurá ci.workflow manualmente en golfo-rp.config.(m)js.");
   const originalBytes = readFileSync(path.join(repositoryRoot, configFile));
   const content = `${originalBytes.toString("utf8").trimEnd()}\n\n/** GitHub Actions workflow used by create-version. */\nexport const ${CI_CONFIG_EXPORT} = ${JSON.stringify(config.ci)};\n`;
-  const temporaryDirectory = mkdtempSync(path.join(tmpdir(), "astra-rp-ci-config-"));
+  const temporaryDirectory = mkdtempSync(path.join(tmpdir(), "golfo-rp-ci-config-"));
   try {
     const candidate = path.join(temporaryDirectory, "config.mjs");
     writeFileSync(candidate, content);

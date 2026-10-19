@@ -60,8 +60,8 @@ export async function chooseReleaseExecution(config, options) {
     return { execution: /** @type {"local" | "ci"} */ (execution), setup: false };
   }
   // An explicit --ci never falls back to a question: without a workflow there is nothing to dispatch.
-  if (options.execution === RELEASE_EXECUTION.ci) throw new ReleaseStepError("No hay un workflow de release configurado para --ci.", "Ejecutá --setup-ci o configurá ci.workflow en astra-rp.config.js; también podés usar --local.");
-  print("Para hacer releases en CI, astra-rp puede crear .github/workflows/release.yml y configurar ci.workflow. Usá --setup-ci para configurarlo o --local para continuar en esta máquina.");
+  if (options.execution === RELEASE_EXECUTION.ci) throw new ReleaseStepError("No hay un workflow de release configurado para --ci.", "Ejecutá --setup-ci o configurá ci.workflow en golfo-rp.config.js; también podés usar --local.");
+  print("Para hacer releases en CI, golfo-rp puede crear .github/workflows/release.yml y configurar ci.workflow. Usá --setup-ci para configurarlo o --local para continuar en esta máquina.");
   if (options.dryRun || !process.stdin.isTTY) {
     return { execution: RELEASE_EXECUTION.local, setup: false };
   }
@@ -400,7 +400,7 @@ export async function isCommittedCiWorkflowGenerated(repositoryRoot, config) {
   if (!haveSameWorkflowLines(committedLines, renderedLines)) {
     if (!lacksOnlyGithubPackagesAuthentication(committedLines, renderedLines)) return false;
     throw new ReleaseStepError(
-      `${workflowPath} se generó antes de que astra-rp autenticara GitHub Packages: le falta el paso "${CI_GITHUB_PACKAGES_AUTHENTICATION_STEP}" o su permiso packages, que el proyecto necesita para instalar dependencias; el worker fallaría con 401 después de subir el tag.`,
+      `${workflowPath} se generó antes de que golfo-rp autenticara GitHub Packages: le falta el paso "${CI_GITHUB_PACKAGES_AUTHENTICATION_STEP}" o su permiso packages, que el proyecto necesita para instalar dependencias; el worker fallaría con 401 después de subir el tag.`,
       buildRegenerateCiWorkflowHint(),
     );
   }

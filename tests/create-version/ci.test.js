@@ -74,19 +74,19 @@ function renderWorkflowInChildProcess(root, configExpression) {
  * @returns {{ root: string, remote: string, originalSha: string }} Isolated release repository.
  */
 function createCiProject({ configured = true, failChecks = false, updateChangelog = true, declaredNullCi = false } = {}) {
-  const fixture = createTemporaryDirectory("astra-rp-ci-");
+  const fixture = createTemporaryDirectory("golfo-rp-ci-");
   const root = path.join(fixture, "work");
   const remote = path.join(fixture, "origin.git");
   runGit(["init", "--quiet", "--bare", "--initial-branch=main", remote], fixture);
   runGit(["clone", "--quiet", remote, root], fixture);
   for (const [name, value] of [["user.name", "Release Fixture"], ["user.email", "release@example.test"], ["commit.gpgsign", "false"], ["tag.gpgsign", "false"], ["core.autocrlf", "false"]]) runGit(["config", name, value], root);
-  writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-ci-app", version: "1.2.3", type: "module", packageManager: "npm@11.11.1", scripts: { "create-version": "astra-rp create-version" } }));
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-ci-app", version: "1.2.3", type: "module", packageManager: "npm@11.11.1", scripts: { "create-version": "golfo-rp create-version" } }));
   // The generated workflow installs with `npm ci`, which needs this lockfile committed.
   writeFileSync(path.join(root, "package-lock.json"), JSON.stringify({ name: "fixture-ci-app", version: "1.2.3", lockfileVersion: 3, requires: true, packages: { "": { name: "fixture-ci-app", version: "1.2.3" } } }));
   writeFileSync(path.join(root, ".gitignore"), "*.log\nnode_modules\n");
   writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n\n## [1.2.3] - 2026-01-01\n\n- Primera versión.\n");
   writeFileSync(path.join(root, "checks.mjs"), `import { appendFileSync } from 'node:fs'; appendFileSync('release.log', 'checks\\n'); ${failChecks ? "process.exitCode = 1;" : ""}\n`);
-  writeFileSync(path.join(root, "astra-rp.config.mjs"), [
+  writeFileSync(path.join(root, "golfo-rp.config.mjs"), [
     "import { appendFileSync } from 'node:fs'; import { join } from 'node:path';",
     "export default {",
     "  checks: ['node checks.mjs'],",
@@ -170,7 +170,7 @@ function isolateGithub() {
  * @returns {import("node:child_process").SpawnSyncReturns<string>} Exit status 0 skips the build; any other status builds.
  */
 function runVercelGate(checkout) {
-  return spawnSync(process.execPath, [".astra-rp/vercel-ignore-build.mjs"], { cwd: checkout, encoding: "utf8", env: commandEnvironment() });
+  return spawnSync(process.execPath, [".golfo-rp/vercel-ignore-build.mjs"], { cwd: checkout, encoding: "utf8", env: commandEnvironment() });
 }
 
 beforeEach(() => {
@@ -198,7 +198,7 @@ describe("release location and configuration", () => {
 
   it("should bind Vercel credentials only to the Vercel steps while preflight still requires them", async () => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-vercel-scope-");
+    const root = createTemporaryDirectory("golfo-rp-ci-vercel-scope-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-vercel-app", version: "1.0.0", packageManager: "npm@11.11.1" }));
     const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", deployment: "vercel", secrets: ["DATABASE_URL"] } });
     commitFixtureRepository(root);
@@ -219,7 +219,7 @@ describe("release location and configuration", () => {
 
   it("should pull the Vercel production environment only after release checks and right before the production build", async () => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-vercel-order-");
+    const root = createTemporaryDirectory("golfo-rp-ci-vercel-order-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-vercel-app", version: "1.0.0", packageManager: "npm@11.11.1" }));
     const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", deployment: "vercel" } });
     commitFixtureRepository(root);
@@ -235,7 +235,7 @@ describe("release location and configuration", () => {
 
   it("should keep explicitly declared Vercel credentials step-scoped and deduplicated", async () => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-vercel-declared-");
+    const root = createTemporaryDirectory("golfo-rp-ci-vercel-declared-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-vercel-app", version: "1.0.0", packageManager: "npm@11.11.1" }));
     const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", deployment: "vercel", secrets: ["VERCEL_TOKEN", "DATABASE_URL", "VERCEL_PROJECT_ID"] } });
     commitFixtureRepository(root);
@@ -260,7 +260,7 @@ describe("release location and configuration", () => {
     { publisher: "a registry", publish: "npm", deployment: null, readsHistory: false },
   ])("should let the worker read its Actions history only when $publisher publishes, with deployment $deployment", async ({ publish, deployment, readsHistory }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-publication-history-");
+    const root = createTemporaryDirectory("golfo-rp-ci-publication-history-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-history-app", version: "1.0.0", packageManager: "npm@11.11.1" }));
     const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], publish, publication: { authentication: "token" }, ci: { workflow: "release.yml", deployment } });
     commitFixtureRepository(root);
@@ -309,8 +309,8 @@ describe("release location and configuration", () => {
     { source: "a GitHub Packages token on a CR-only line", npmrc: "registry=https://registry.npmjs.org/\r//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}\r", secrets: [], authenticates: true, tokenBindings: ["GITHUB_TOKEN"] },
   ])("should authenticate dependency installs against GitHub Packages when the project uses $source: $authenticates", async ({ npmrc, committed = true, secrets, authenticates, tokenBindings }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-github-packages-");
-    const runnerHome = createTemporaryDirectory("astra-rp-ci-runner-home-");
+    const root = createTemporaryDirectory("golfo-rp-ci-github-packages-");
+    const runnerHome = createTemporaryDirectory("golfo-rp-ci-runner-home-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
     if (npmrc !== null && committed) writeFileSync(path.join(root, ".npmrc"), npmrc);
     const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", deployment: "vercel", secrets } });
@@ -348,8 +348,8 @@ describe("release location and configuration", () => {
     { source: "a secret declared in ci.secrets", npmrc: "@fixture-scope:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=${MY_PKG_TOKEN}\n", secrets: ["MY_PKG_TOKEN"], expression: "secrets.MY_PKG_TOKEN", writtenToken: "fixture-package-secret" },
   ])("should store the token the committed .npmrc expands in the runner user config when it expands $source", async ({ npmrc, secrets, expression, writtenToken }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-github-packages-token-");
-    const runnerHome = createTemporaryDirectory("astra-rp-ci-runner-home-");
+    const root = createTemporaryDirectory("golfo-rp-ci-github-packages-token-");
+    const runnerHome = createTemporaryDirectory("golfo-rp-ci-runner-home-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
     writeFileSync(path.join(root, ".npmrc"), npmrc);
     const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", secrets } });
@@ -465,7 +465,7 @@ describe("release location and configuration", () => {
     { source: "a declared GITHUB_TOKEN while ci.secrets sets the npm log level", npmrc: "registry=https://registry.npmjs.org/\n", secrets: ["GITHUB_TOKEN", "NPM_CONFIG_LOGLEVEL"], message: /NPM_CONFIG_LOGLEVEL.*~\/\.npmrc/u, hint: /NPM_CONFIG_LOGLEVEL/u },
   ]))("should reject the CI workflow before the bump when the committed .npmrc uses $source", async ({ npmrc, deployment = null, secrets = [], variables = [], publish = undefined, publication = undefined, message, hint }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-github-packages-rejected-");
+    const root = createTemporaryDirectory("golfo-rp-ci-github-packages-rejected-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "npm@11.11.1" }));
     writeFileSync(path.join(root, ".npmrc"), npmrc);
     const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], publish, publication, ci: { workflow: "release.yml", deployment, secrets, variables } });
@@ -482,7 +482,7 @@ describe("release location and configuration", () => {
 
   it("should reject the CI workflow before the bump when the committed .npmrc is a symlink the worker would follow", async () => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-npmrc-symlink-");
+    const root = createTemporaryDirectory("golfo-rp-ci-npmrc-symlink-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
     commitFixtureRepository(root);
     // The index entry commits a symlink without depending on file-system symlink support (Windows).
@@ -512,7 +512,7 @@ describe("release location and configuration", () => {
     { source: "Bun declares GITHUB_TOKEN", packageManager: "bun", pin: "bun@1.3.11", secrets: ["GITHUB_TOKEN"] },
   ])("should reject the CI workflow before the bump when $source", async ({ packageManager, pin, files = {}, secrets = [], variables = [] }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-github-packages-unsupported-manager-");
+    const root = createTemporaryDirectory("golfo-rp-ci-github-packages-unsupported-manager-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: pin }));
     for (const [fileName, content] of Object.entries(files)) writeFileSync(path.join(root, fileName), content);
     const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml", secrets, variables } }, { commands: describeProjectCommands(/** @type {import("../../src/package-manager.js").PackageManagerName} */ (packageManager)) });
@@ -531,7 +531,7 @@ describe("release location and configuration", () => {
     { source: "a Bun project whose bunfig.toml mentions GitHub Packages only in a comment", packageManager: "bun", pin: "bun@1.3.11", files: { "bunfig.toml": "  # fixture-scope = \"https://npm.pkg.github.com\"\n[install]\nexact = true\n" } },
   ])("should render the CI workflow without GitHub Packages authentication for $source", async ({ packageManager, pin, files }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-github-packages-unsupported-manager-accepted-");
+    const root = createTemporaryDirectory("golfo-rp-ci-github-packages-unsupported-manager-accepted-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: pin }));
     for (const [fileName, content] of Object.entries(files)) writeFileSync(path.join(root, fileName), content);
     const config = resolveCreateVersionConfig({ checks: ["node checks.mjs"], ci: { workflow: "release.yml" } }, { commands: describeProjectCommands(/** @type {import("../../src/package-manager.js").PackageManagerName} */ (packageManager)) });
@@ -560,7 +560,7 @@ describe("release location and configuration", () => {
     { source: "NODE_TLS_REJECT_UNAUTHORIZED in ci.secrets with a declared GITHUB_TOKEN", secrets: ["GITHUB_TOKEN", "NODE_TLS_REJECT_UNAUTHORIZED"], message: /NODE_TLS_REJECT_UNAUTHORIZED.*TLS/u, hint: /NODE_TLS_REJECT_UNAUTHORIZED/u },
   ])("should reject the CI workflow before the bump when the project has $source", async ({ npmrc = null, files = {}, secrets = [], variables = [], message, hint }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-github-packages-files-rejected-");
+    const root = createTemporaryDirectory("golfo-rp-ci-github-packages-files-rejected-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
     if (npmrc !== null) writeFileSync(path.join(root, ".npmrc"), npmrc);
     for (const [fileName, content] of Object.entries(files)) writeFileSync(path.join(root, fileName), content);
@@ -577,7 +577,7 @@ describe("release location and configuration", () => {
 
   it.each(["pnpm-workspace.yaml", "pnpm-lock.yaml"])("should reject the CI workflow before the bump when GitHub Packages is authenticated and the committed %s is not a regular file", async (fileName) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-github-packages-file-symlink-");
+    const root = createTemporaryDirectory("golfo-rp-ci-github-packages-file-symlink-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: "pnpm@12.6.0" }));
     writeFileSync(path.join(root, ".npmrc"), GITHUB_PACKAGES_NPMRC);
     commitFixtureRepository(root);
@@ -605,7 +605,7 @@ describe("release location and configuration", () => {
     { source: "HTTP lockfile URLs, strict-ssl disabled and NODE_TLS_REJECT_UNAUTHORIZED without GitHub Packages", npmrc: "registry=https://registry.npmjs.org/\nstrict-ssl=false\n", files: { "pnpm-lock.yaml": "resolution: {tarball: http://npm.pkg.github.com/download/@fixture-scope/ui/1.0.0/fixture}\n", "pnpm-workspace.yaml": "strictSsl: false\n" }, variables: ["NODE_TLS_REJECT_UNAUTHORIZED"], authenticates: false },
   ])("should render the CI workflow when the project has $source", async ({ packageManager = "pnpm", pin = "pnpm@12.6.0", npmrc, files, variables, authenticates }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-github-packages-files-accepted-");
+    const root = createTemporaryDirectory("golfo-rp-ci-github-packages-files-accepted-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-private-dependencies", version: "1.0.0", packageManager: pin }));
     writeFileSync(path.join(root, ".npmrc"), npmrc);
     for (const [fileName, content] of Object.entries(files)) writeFileSync(path.join(root, fileName), content);
@@ -685,14 +685,14 @@ describe("local CI preparation with real Git", () => {
     const github = isolateGithub();
     vi.mocked(github.preflight).mockImplementation(async () => {
       // Simulate an editor saving the config while the asynchronous preflight is in progress.
-      writeFileSync(path.join(root, "astra-rp.config.mjs"), "export default { checks: false, projectName: 'New editor choice' };\n");
+      writeFileSync(path.join(root, "golfo-rp.config.mjs"), "export default { checks: false, projectName: 'New editor choice' };\n");
     });
     // Act
     const status = await runCreateVersion({ repositoryRoot: root, argv: ["--setup-ci", "--bump", "patch"] });
     // Assert
     expect(status).toBe(1);
     expect(runGit(["rev-parse", "HEAD"], root)).toBe(originalSha);
-    expect(runGit(["diff", "--name-only", "HEAD"], root)).toBe("astra-rp.config.mjs");
+    expect(runGit(["diff", "--name-only", "HEAD"], root)).toBe("golfo-rp.config.mjs");
     expect(existsSync(path.join(root, ".github/workflows/release.yml"))).toBe(false);
     expect(github.dispatch).not.toHaveBeenCalled();
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
@@ -718,8 +718,8 @@ describe("local CI preparation with real Git", () => {
     // Arrange
     const { root, remote } = createCiProject({ configured: false });
     writeFileSync(path.join(root, "vercel.json"), JSON.stringify({ ignoreCommand: "node -e \"process.exit(1)\"" }));
-    writeFileSync(path.join(root, "astra-rp.config.mjs"), "export default { checks: ['node checks.mjs'] };\n");
-    runGit(["add", "vercel.json", "astra-rp.config.mjs"], root);
+    writeFileSync(path.join(root, "golfo-rp.config.mjs"), "export default { checks: ['node checks.mjs'] };\n");
+    runGit(["add", "vercel.json", "golfo-rp.config.mjs"], root);
     runGit(["commit", "--quiet", "-m", "chore: configure deployment"], root);
     runGit(["push", "--quiet", "origin", "main"], root);
     const originalSha = runGit(["rev-parse", "HEAD"], root);
@@ -741,21 +741,21 @@ describe("local CI preparation with real Git", () => {
     // Arrange
     const { root, remote } = createCiProject({ configured: false });
     writeFileSync(path.join(root, "vercel.json"), JSON.stringify({ ignoreCommand: "node -e \"process.exit(1)\"" }));
-    writeFileSync(path.join(root, "astra-rp.config.mjs"), "export default { checks: ['node checks.mjs'] };\n");
-    runGit(["add", "vercel.json", "astra-rp.config.mjs"], root);
+    writeFileSync(path.join(root, "golfo-rp.config.mjs"), "export default { checks: ['node checks.mjs'] };\n");
+    runGit(["add", "vercel.json", "golfo-rp.config.mjs"], root);
     runGit(["commit", "--quiet", "-m", "chore: configure deployment"], root);
     runGit(["push", "--quiet", "origin", "main"], root);
     const github = isolateGithub();
     // Act
     const status = await runCreateVersion({ repositoryRoot: root, argv: ["--setup-ci", "--bump", "patch"] });
-    const ciGate = spawnSync(process.execPath, [".astra-rp/vercel-ignore-build.mjs"], { cwd: root, encoding: "utf8", env: commandEnvironment() });
-    writeFileSync(path.join(root, ".astra-rp/release.json"), JSON.stringify({ version: "1.2.4", execution: "local" }));
-    const localGate = spawnSync(process.execPath, [".astra-rp/vercel-ignore-build.mjs"], { cwd: root, encoding: "utf8", env: commandEnvironment() });
+    const ciGate = spawnSync(process.execPath, [".golfo-rp/vercel-ignore-build.mjs"], { cwd: root, encoding: "utf8", env: commandEnvironment() });
+    writeFileSync(path.join(root, ".golfo-rp/release.json"), JSON.stringify({ version: "1.2.4", execution: "local" }));
+    const localGate = spawnSync(process.execPath, [".golfo-rp/vercel-ignore-build.mjs"], { cwd: root, encoding: "utf8", env: commandEnvironment() });
     // Assert
     expect(status).toBe(0);
     expect(ciGate.status, ciGate.stderr).toBe(0);
     expect(localGate.status, localGate.stderr).toBe(1);
-    expect(JSON.parse(runGit(["show", "main:.astra-rp/release.json"], remote))).toEqual({ version: "1.2.4", execution: "ci" });
+    expect(JSON.parse(runGit(["show", "main:.golfo-rp/release.json"], remote))).toEqual({ version: "1.2.4", execution: "ci" });
     expect(github.preflight).toHaveBeenCalledWith("release.yml", ["VERCEL_TOKEN", "VERCEL_ORG_ID", "VERCEL_PROJECT_ID"], []);
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
@@ -766,13 +766,13 @@ describe("local CI preparation with real Git", () => {
     // Arrange
     const { root, remote } = createCiProject({ configured: false });
     writeFileSync(path.join(root, "vercel.json"), JSON.stringify(vercelConfig));
-    writeFileSync(path.join(root, "astra-rp.config.mjs"), "export default { checks: ['node checks.mjs'] };\n");
-    runGit(["add", "vercel.json", "astra-rp.config.mjs"], root);
+    writeFileSync(path.join(root, "golfo-rp.config.mjs"), "export default { checks: ['node checks.mjs'] };\n");
+    runGit(["add", "vercel.json", "golfo-rp.config.mjs"], root);
     runGit(["commit", "--quiet", "-m", "chore: configure deployment"], root);
     runGit(["push", "--quiet", "origin", "main"], root);
     isolateGithub();
     const status = await runCreateVersion({ repositoryRoot: root, argv: ["--setup-ci", "--bump", "patch"] });
-    const shallowReleaseCheckout = path.join(createTemporaryDirectory("astra-rp-vercel-shallow-"), "checkout");
+    const shallowReleaseCheckout = path.join(createTemporaryDirectory("golfo-rp-vercel-shallow-"), "checkout");
     runGit(["clone", "--quiet", "--depth", "1", pathToFileURL(remote).href, shallowReleaseCheckout], root);
     // Act
     const releaseGate = runVercelGate(root);
@@ -780,7 +780,7 @@ describe("local CI preparation with real Git", () => {
     writeFileSync(path.join(root, "feature.txt"), "Follow-up change without a version bump\n");
     runGit(["commit", "--quiet", "-am", "fix: follow-up change"], root);
     runGit(["push", "--quiet", "origin", "main"], root);
-    const shallowLaterCheckout = path.join(createTemporaryDirectory("astra-rp-vercel-shallow-later-"), "checkout");
+    const shallowLaterCheckout = path.join(createTemporaryDirectory("golfo-rp-vercel-shallow-later-"), "checkout");
     runGit(["clone", "--quiet", "--depth", "1", pathToFileURL(remote).href, shallowLaterCheckout], root);
     const laterCommitGate = runVercelGate(root);
     const shallowLaterCommitGate = runVercelGate(shallowLaterCheckout);
@@ -788,9 +788,9 @@ describe("local CI preparation with real Git", () => {
     expect(status).toBe(0);
     expect(releaseGate.status, releaseGate.stderr).toBe(0);
     expect(shallowReleaseGate.status, shallowReleaseGate.stderr).toBe(0);
-    expect(runGit(["log", "-1", "--format=%(trailers:key=Astra-Rp-Execution,valueonly=true)"], shallowReleaseCheckout)).toBe("ci");
+    expect(runGit(["log", "-1", "--format=%(trailers:key=Golfo-Rp-Execution,valueonly=true)"], shallowReleaseCheckout)).toBe("ci");
     expect(shallowLaterCommitGate.status, shallowLaterCommitGate.stderr).toBe(laterCommitStatus);
-    expect(JSON.parse(runGit(["show", "HEAD:.astra-rp/release.json"], root))).toEqual({ version: "1.2.4", execution: "ci" });
+    expect(JSON.parse(runGit(["show", "HEAD:.golfo-rp/release.json"], root))).toEqual({ version: "1.2.4", execution: "ci" });
     expect(JSON.parse(runGit(["show", "HEAD:package.json"], root)).version).toBe("1.2.4");
     expect(laterCommitGate.status, laterCommitGate.stderr).toBe(laterCommitStatus);
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
@@ -799,10 +799,10 @@ describe("local CI preparation with real Git", () => {
     // Arrange
     const { root, remote } = createCiProject({ configured: false });
     writeFileSync(path.join(root, "vercel.json"), JSON.stringify({ ignoreCommand: "node -e \"process.exit(1)\"" }));
-    writeFileSync(path.join(root, "astra-rp.config.mjs"), "export default { checks: ['node checks.mjs'] };\n");
+    writeFileSync(path.join(root, "golfo-rp.config.mjs"), "export default { checks: ['node checks.mjs'] };\n");
     mkdirSync(path.dirname(path.join(root, trackedPath)), { recursive: true });
     writeFileSync(path.join(root, trackedPath), "PUBLIC_FLAG=committed\n");
-    runGit(["add", "vercel.json", "astra-rp.config.mjs", trackedPath], root);
+    runGit(["add", "vercel.json", "golfo-rp.config.mjs", trackedPath], root);
     runGit(["commit", "--quiet", "-m", "chore: configure deployment"], root);
     runGit(["push", "--quiet", "origin", "main"], root);
     const originalSha = runGit(["rev-parse", "HEAD"], root);
@@ -911,7 +911,7 @@ describe("local CI preparation with real Git", () => {
     // Arrange
     const { root, remote } = createCiProject();
     commitGeneratedWorkflow(root);
-    writeFileSync(path.join(root, "astra-rp.config.mjs"), `export default { checks: ['node checks.mjs'], ${configEntries} };\n`);
+    writeFileSync(path.join(root, "golfo-rp.config.mjs"), `export default { checks: ['node checks.mjs'], ${configEntries} };\n`);
     runGit(["commit", "--quiet", "-am", "chore: change release configuration"], root);
     runGit(["push", "--quiet", "origin", "main"], root);
     const configuredSha = runGit(["rev-parse", "HEAD"], root);
@@ -1034,7 +1034,7 @@ describe("local CI preparation with real Git", () => {
     { scenario: "absent", nvmrcState: "absent", followsPinFile: false, accepted: true },
   ])("should pin the generated workflow to .nvmrc only when it is $scenario and accept it for setup: $accepted", async ({ nvmrcState, followsPinFile, accepted }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-node-file-");
+    const root = createTemporaryDirectory("golfo-rp-ci-node-file-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-node-file", version: "1.0.0", packageManager: "npm@11.11.1" }));
     if (nvmrcState === "ignored") writeFileSync(path.join(root, ".gitignore"), ".nvmrc\n");
     if (nvmrcState === "committed") writeFileSync(path.join(root, ".nvmrc"), "v24.1.0\n");
@@ -1112,7 +1112,7 @@ describe("local CI preparation with real Git", () => {
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
   it.each([
-    ["the configuration disables the npm publication the committed release performs", "astra-rp.config.mjs", "export default { checks: ['node checks.mjs'], publish: null, ci: { workflow: 'release.yml' } };\n"],
+    ["the configuration disables the npm publication the committed release performs", "golfo-rp.config.mjs", "export default { checks: ['node checks.mjs'], publish: null, ci: { workflow: 'release.yml' } };\n"],
     ["the committed lockfile is edited", "package-lock.json", "{}\n"],
     ["another package manager's lockfile is added", "yarn.lock", "# yarn lockfile v1\n"],
     ["an uncommitted Node.js pin is added", ".nvmrc", "24\n"],
@@ -1294,13 +1294,13 @@ describe("pinned CI worker through the real CLI", () => {
   it("should stop publication when migration application cannot be confirmed by its recheck", async () => {
     // Arrange
     const { root } = createCiProject();
-    writeFileSync(path.join(root, "astra-rp.config.mjs"), [
+    writeFileSync(path.join(root, "golfo-rp.config.mjs"), [
       "import { appendFileSync } from 'node:fs'; import { join } from 'node:path'; let checks = 0;",
       "export default { checks: ['node checks.mjs'], ci: { workflow: 'release.yml' },",
       "migrations: { check: () => ({ status: ++checks === 1 ? 'pending' : 'unknown', pending: ['001'], target: 'fixture', reason: 'Database unavailable' }), apply: ({ repositoryRoot, version }) => appendFileSync(join(repositoryRoot, 'release.log'), `migrate:${version}\\n`) },",
       "publish: ({ repositoryRoot }) => appendFileSync(join(repositoryRoot, 'release.log'), 'published\\n') };", "",
     ].join("\n"));
-    runGit(["add", "astra-rp.config.mjs"], root);
+    runGit(["add", "golfo-rp.config.mjs"], root);
     runGit(["commit", "--quiet", "-m", "chore: configure migrations"], root);
     runGit(["push", "--quiet", "origin", "main"], root);
     isolateGithub();
@@ -1321,8 +1321,8 @@ describe("pinned CI worker through the real CLI", () => {
   it("should stop the worker before publication when migration state cannot be determined", async () => {
     // Arrange
     const { root } = createCiProject();
-    writeFileSync(path.join(root, "astra-rp.config.mjs"), "export default { checks: ['node checks.mjs'], ci: { workflow: 'release.yml' }, migrations: { check: () => ({ status: 'unknown', pending: [], target: null, reason: 'Database unavailable' }), apply: () => { throw new Error('must not migrate'); } }, publish: () => { throw new Error('must not publish'); } };\n");
-    runGit(["add", "astra-rp.config.mjs"], root);
+    writeFileSync(path.join(root, "golfo-rp.config.mjs"), "export default { checks: ['node checks.mjs'], ci: { workflow: 'release.yml' }, migrations: { check: () => ({ status: 'unknown', pending: [], target: null, reason: 'Database unavailable' }), apply: () => { throw new Error('must not migrate'); } }, publish: () => { throw new Error('must not publish'); } };\n");
+    runGit(["add", "golfo-rp.config.mjs"], root);
     runGit(["commit", "--quiet", "-m", "chore: configure migrations"], root);
     runGit(["push", "--quiet", "origin", "main"], root);
     isolateGithub();
@@ -1347,7 +1347,7 @@ describe("pinned CI worker through the real CLI", () => {
       const { root } = createCiProject();
       const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
       writeFileSync(path.join(root, "package.json"), JSON.stringify({ ...manifest, publishConfig: { registry: registry.registryUrl } }));
-      writeFileSync(path.join(root, "astra-rp.config.mjs"), "export default { checks: ['node checks.mjs'], publish: 'npm', ci: { workflow: 'release.yml' } };\n");
+      writeFileSync(path.join(root, "golfo-rp.config.mjs"), "export default { checks: ['node checks.mjs'], publish: 'npm', ci: { workflow: 'release.yml' } };\n");
       runGit(["add", "-A"], root);
       runGit(["commit", "--quiet", "-m", "chore: configure publication"], root);
       runGit(["push", "--quiet", "origin", "main"], root);
@@ -1358,7 +1358,7 @@ describe("pinned CI worker through the real CLI", () => {
       const sha = runGit(["rev-parse", "HEAD"], root);
       const closedNotes = readFileSync(path.join(root, "CHANGELOG.md"));
       runGit(["switch", "--quiet", "--detach", "v1.2.4"], root);
-      const environment = { CI: "true", NPM_TOKEN: "fixture-owner-token", ASTRA_RP_RELEASE_VERSION: "1.2.4", ASTRA_RP_RELEASE_SHA: sha };
+      const environment = { CI: "true", NPM_TOKEN: "fixture-owner-token", GOLFO_RP_RELEASE_VERSION: "1.2.4", GOLFO_RP_RELEASE_SHA: sha };
       const released = await runCliAsync(root, ["--ci-release", "v1.2.4"], environment);
       const repeated = await runCliAsync(root, ["--ci-release", "v1.2.4"], environment);
       // Assert
@@ -1396,7 +1396,7 @@ describe("pinned CI worker through the real CLI", () => {
       expect(await runCreateVersion({ repositoryRoot: root, argv: ["--bump", "patch"] })).toBe(0);
       const sha = runGit(["rev-parse", "HEAD"], root);
       runGit(["switch", "--quiet", "--detach", "v1.2.4"], root);
-      const environment = { CI: "true", NPM_TOKEN: "fixture-owner-token", ASTRA_RP_RELEASE_VERSION: "1.2.4", ASTRA_RP_RELEASE_SHA: sha };
+      const environment = { CI: "true", NPM_TOKEN: "fixture-owner-token", GOLFO_RP_RELEASE_VERSION: "1.2.4", GOLFO_RP_RELEASE_SHA: sha };
       const released = await runCliAsync(root, ["--ci-release", "v1.2.4"], environment);
       writeFileSync(path.join(root, "release.log"), "");
       // Act
@@ -1427,14 +1427,14 @@ describe("pinned CI worker through the real CLI", () => {
     expect(await runCreateVersion({ repositoryRoot: root, argv: ["--bump", "patch"] })).toBe(0);
     const sha = runGit(["rev-parse", "HEAD"], root);
     runGit(["switch", "--quiet", "--detach", "v1.2.4"], root);
-    const otherRelease = { id: 7, title: `astra-rp release v1.2.3 ${"0".repeat(40)}`, headSha: "0".repeat(40), releaseStepConclusions: ["success"] };
-    const releaseRuns = conclusions.map((releaseStepConclusions, index) => ({ id: index + 10, title: `astra-rp release v1.2.4 ${sha}`, headSha: sha, releaseStepConclusions }));
+    const otherRelease = { id: 7, title: `golfo-rp release v1.2.3 ${"0".repeat(40)}`, headSha: "0".repeat(40), releaseStepConclusions: ["success"] };
+    const releaseRuns = conclusions.map((releaseStepConclusions, index) => ({ id: index + 10, title: `golfo-rp release v1.2.4 ${sha}`, headSha: sha, releaseStepConclusions }));
     // The worker runs as the last attempt of the last listed run, as GitHub lists the running attempt too.
     const currentRun = releaseRuns.at(-1);
     const actionsApi = await startFixtureGithubActionsApi({ workflow: "release.yml", runs: [otherRelease, ...releaseRuns] });
     try {
       // Act
-      const worker = await runCliAsync(root, ["--ci-release", "v1.2.4"], { CI: "true", ASTRA_RP_RELEASE_VERSION: "1.2.4", ASTRA_RP_RELEASE_SHA: sha, ...describeActionsHistoryEnvironment(actionsApi), GITHUB_RUN_ID: String(currentRun?.id), GITHUB_RUN_ATTEMPT: String(currentRun?.releaseStepConclusions.length) });
+      const worker = await runCliAsync(root, ["--ci-release", "v1.2.4"], { CI: "true", GOLFO_RP_RELEASE_VERSION: "1.2.4", GOLFO_RP_RELEASE_SHA: sha, ...describeActionsHistoryEnvironment(actionsApi), GITHUB_RUN_ID: String(currentRun?.id), GITHUB_RUN_ATTEMPT: String(currentRun?.releaseStepConclusions.length) });
       // Assert
       expect(worker.status, worker.output).toBe(0);
       expect(readFileSync(path.join(root, "release.log"), "utf8").split("\n").filter(Boolean)).toEqual(expectedLog);
@@ -1460,7 +1460,7 @@ describe("pinned CI worker through the real CLI", () => {
     const actionsApi = await startFixtureGithubActionsApi({ workflow: "release.yml", failureStatus });
     try {
       // Act
-      const worker = await runCliAsync(root, ["--ci-release", "v1.2.4"], { CI: "true", ASTRA_RP_RELEASE_VERSION: "1.2.4", ASTRA_RP_RELEASE_SHA: sha, ...describeActionsHistoryEnvironment(actionsApi), GITHUB_TOKEN: token });
+      const worker = await runCliAsync(root, ["--ci-release", "v1.2.4"], { CI: "true", GOLFO_RP_RELEASE_VERSION: "1.2.4", GOLFO_RP_RELEASE_SHA: sha, ...describeActionsHistoryEnvironment(actionsApi), GITHUB_TOKEN: token });
       // Assert
       expect(worker.status, worker.output).toBe(1);
       expect(flattenOutput(worker.output)).toContain('permissions "actions: read"');
@@ -1480,7 +1480,7 @@ describe("pinned CI worker through the real CLI", () => {
     const actionsApi = await startFixtureGithubActionsApi({ workflow: "release.yml" });
     try {
       // Act
-      const worker = await runCliAsync(root, ["--ci-release", "v1.2.4"], { CI: "true", ASTRA_RP_RELEASE_VERSION: "1.2.4", ASTRA_RP_RELEASE_SHA: releaseSha, ...describeActionsHistoryEnvironment(actionsApi) });
+      const worker = await runCliAsync(root, ["--ci-release", "v1.2.4"], { CI: "true", GOLFO_RP_RELEASE_VERSION: "1.2.4", GOLFO_RP_RELEASE_SHA: releaseSha, ...describeActionsHistoryEnvironment(actionsApi) });
       // Assert
       expect(worker.status, worker.output).toBe(failChecks ? 1 : 0);
       expect(readFileSync(path.join(root, "release.log"), "utf8").split("\n").filter(Boolean)).toEqual(failChecks ? ["checks"] : ["checks", "prepare:1.2.4", "publish:1.2.4"]);
@@ -1497,7 +1497,7 @@ describe("pinned CI worker through the real CLI", () => {
     isolateGithub();
     expect(await runCreateVersion({ repositoryRoot: root, argv: ["--bump", "patch"] })).toBe(0);
     // Act
-    const worker = await runCliAsync(root, ["--ci-release", "v1.2.4"], { CI: "true", ASTRA_RP_RELEASE_SHA: "0".repeat(40) });
+    const worker = await runCliAsync(root, ["--ci-release", "v1.2.4"], { CI: "true", GOLFO_RP_RELEASE_SHA: "0".repeat(40) });
     // Assert
     expect(worker.status, worker.output).toBe(1);
     expect(existsSync(path.join(root, "release.log"))).toBe(false);
@@ -1507,12 +1507,12 @@ describe("pinned CI worker through the real CLI", () => {
 /**
  * Commits and pushes a new project configuration on top of the fixture's main.
  * @param {string} root - Fixture checkout.
- * @param {string} configSource - Content of astra-rp.config.mjs.
+ * @param {string} configSource - Content of golfo-rp.config.mjs.
  * @param {Record<string, string>} [extraFiles] - Additional files to commit, relative to the root.
  * @returns {string} SHA of the pushed configuration commit.
  */
 function commitProjectConfig(root, configSource, extraFiles = {}) {
-  writeFileSync(path.join(root, "astra-rp.config.mjs"), configSource);
+  writeFileSync(path.join(root, "golfo-rp.config.mjs"), configSource);
   for (const [relativePath, content] of Object.entries(extraFiles)) writeFileSync(path.join(root, relativePath), content);
   runGit(["add", "-A"], root);
   runGit(["commit", "--quiet", "-m", "chore: configure release"], root);
@@ -1568,13 +1568,13 @@ describe("CI preparation invariants shared with local releases", () => {
     const resumed = await runCreateVersion({ repositoryRoot: root, argv: matchingResume });
     // Assert
     expect(created).toBe(1);
-    expect(JSON.parse(runGit(["show", "HEAD:.astra-rp/release.json"], root))).toEqual({ version: "1.2.4", execution: committedExecution });
+    expect(JSON.parse(runGit(["show", "HEAD:.golfo-rp/release.json"], root))).toEqual({ version: "1.2.4", execution: committedExecution });
     expect(mismatched).toBe(1);
     expect(remoteAfterMismatch).toBe(configuredSha);
     expect(dispatchesAfterMismatch).toBe(0);
     expect(resumed).toBe(0);
     expect(runGit(["rev-parse", "main"], remote)).toBe(releaseSha);
-    expect(JSON.parse(runGit(["show", "main:.astra-rp/release.json"], remote))).toEqual({ version: "1.2.4", execution: committedExecution });
+    expect(JSON.parse(runGit(["show", "main:.golfo-rp/release.json"], remote))).toEqual({ version: "1.2.4", execution: committedExecution });
     expect(github.dispatch).toHaveBeenCalledTimes(committedExecution === "ci" ? 1 : 0);
   }, GIT_FIXTURE_TEST_TIMEOUT_MS);
 
@@ -1597,8 +1597,8 @@ describe("CI preparation invariants shared with local releases", () => {
     const resumed = await runCreateVersion({ repositoryRoot: root, argv: matchingResume });
     // Assert
     expect(created).toBe(1);
-    expect(runGit(["log", "-1", "--format=%(trailers:key=Astra-Rp-Execution,valueonly=true)", releaseSha], root)).toBe(committedExecution);
-    expect(existsSync(path.join(root, ".astra-rp/release.json"))).toBe(false);
+    expect(runGit(["log", "-1", "--format=%(trailers:key=Golfo-Rp-Execution,valueonly=true)", releaseSha], root)).toBe(committedExecution);
+    expect(existsSync(path.join(root, ".golfo-rp/release.json"))).toBe(false);
     expect(mismatched).toBe(1);
     expect(remoteAfterMismatch).toBe(configuredSha);
     expect(dispatchesAfterMismatch).toBe(0);
@@ -1610,9 +1610,9 @@ describe("CI preparation invariants shared with local releases", () => {
 
   it.each([
     { label: "no trailer", message: ["-m", "1.2.4"], resumeExecution: "local", expectedOutcome: "accepted" },
-    { label: "ci trailer", message: ["-m", "1.2.4", "-m", "Astra-Rp-Execution: ci"], resumeExecution: "local", expectedOutcome: "--ci" },
-    { label: "local trailer", message: ["-m", "1.2.4", "-m", "Astra-Rp-Execution: local"], resumeExecution: "ci", expectedOutcome: "--local" },
-    { label: "unknown trailer", message: ["-m", "1.2.4", "-m", "Astra-Rp-Execution: remote"], resumeExecution: "local", expectedOutcome: "Astra-Rp-Execution: remote" },
+    { label: "ci trailer", message: ["-m", "1.2.4", "-m", "Golfo-Rp-Execution: ci"], resumeExecution: "local", expectedOutcome: "--ci" },
+    { label: "local trailer", message: ["-m", "1.2.4", "-m", "Golfo-Rp-Execution: local"], resumeExecution: "ci", expectedOutcome: "--local" },
+    { label: "unknown trailer", message: ["-m", "1.2.4", "-m", "Golfo-Rp-Execution: remote"], resumeExecution: "local", expectedOutcome: "Golfo-Rp-Execution: remote" },
   ])("should resolve a pending release commit with $label against a $resumeExecution resume", async ({ message, resumeExecution, expectedOutcome }) => {
     // Arrange
     const { root } = createCiProject();
@@ -1649,7 +1649,7 @@ describe("CI preparation invariants shared with local releases", () => {
     const oidcJsr = resolveCreateVersionConfig({ publish: "jsr", publication: { authentication: "oidc" } });
     const tokenJsr = resolveCreateVersionConfig({ publish: "jsr", publication: { authentication: "token" } });
     // Act and Assert
-    const root = createTemporaryDirectory("astra-rp-ci-auth-");
+    const root = createTemporaryDirectory("golfo-rp-ci-auth-");
     // Act and Assert
     await expect(assertCiCompatiblePublication(browserJsr, root)).rejects.toThrow(/no puede publicar desde GitHub Actions/);
     await expect(assertCiCompatiblePublication(oidcJsr, root)).resolves.toBeUndefined();
@@ -1671,9 +1671,9 @@ describe("CI preparation invariants shared with local releases", () => {
     { packageManager: "npm@10.9.0", authentication: "token", accepted: true },
   ])("should accept the worker's pinned $packageManager with $authentication npm publication only when it can publish: $accepted", async ({ packageManager, authentication, accepted }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-npm-pin-");
+    const root = createTemporaryDirectory("golfo-rp-ci-npm-pin-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-npm-pin", version: "1.0.0", packageManager }));
-    writeFileSync(path.join(root, "astra-rp.config.mjs"), `export default { publish: 'npm', publication: { authentication: '${authentication}' } };\n`);
+    writeFileSync(path.join(root, "golfo-rp.config.mjs"), `export default { publish: 'npm', publication: { authentication: '${authentication}' } };\n`);
     const config = await loadCreateVersionConfig(root);
     commitFixtureRepository(root);
     // Act
@@ -1704,10 +1704,10 @@ describe("CI preparation invariants shared with local releases", () => {
     { packageManager: "pnpm@10.12.1", nvmrc: "22.13", authentication: "token", accepted: true },
   ])("should accept the worker's Node $nvmrc with $packageManager and $authentication npm publication only when it can publish: $accepted", async ({ packageManager, nvmrc, authentication, accepted }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-node-pin-");
+    const root = createTemporaryDirectory("golfo-rp-ci-node-pin-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-node-pin", version: "1.0.0", packageManager }));
     if (nvmrc !== null) writeFileSync(path.join(root, ".nvmrc"), nvmrc);
-    writeFileSync(path.join(root, "astra-rp.config.mjs"), `export default { publish: 'npm', publication: { authentication: '${authentication}' } };\n`);
+    writeFileSync(path.join(root, "golfo-rp.config.mjs"), `export default { publish: 'npm', publication: { authentication: '${authentication}' } };\n`);
     const config = await loadCreateVersionConfig(root);
     commitFixtureRepository(root);
     // Act
@@ -1732,10 +1732,10 @@ describe("CI preparation invariants shared with local releases", () => {
     { scenario: "publishConfig.registry on a private host", packageName: "fixture-npm-registry", publishConfig: { registry: "https://npm.example.test/" }, publication: {}, npmrc: null, authentication: "token", accepted: true },
   ])("should accept $authentication npm publication to $scenario before creating the CI release only when trusted publishing can reach it: $accepted", async ({ packageName, publishConfig, publication, npmrc, authentication, accepted }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-npm-registry-");
+    const root = createTemporaryDirectory("golfo-rp-ci-npm-registry-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: packageName, version: "1.0.0", packageManager: "npm@11.5.1", ...(publishConfig ? { publishConfig } : {}) }));
     if (npmrc !== null) writeFileSync(path.join(root, ".npmrc"), npmrc);
-    writeFileSync(path.join(root, "astra-rp.config.mjs"), `export default { publish: 'npm', publication: ${JSON.stringify({ ...publication, authentication })} };\n`);
+    writeFileSync(path.join(root, "golfo-rp.config.mjs"), `export default { publish: 'npm', publication: ${JSON.stringify({ ...publication, authentication })} };\n`);
     const config = await loadCreateVersionConfig(root);
     commitFixtureRepository(root);
     // Act
@@ -1760,10 +1760,10 @@ describe("CI preparation invariants shared with local releases", () => {
     { scenario: "the default npm registry with GITHUB_TOKEN only for private dependencies", publish: "npm", packageName: "fixture-github-token", publishConfig: null, publication: {}, ciSecrets: ["GITHUB_TOKEN"], extraFiles: {}, rejectedRegistryLabel: null },
   ])("should reject the built-in GITHUB_TOKEN as the publication token of $scenario before creating the CI release unless GitHub Packages receives it", async ({ publish, packageName, publishConfig, publication, ciSecrets, extraFiles, rejectedRegistryLabel }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-github-token-");
+    const root = createTemporaryDirectory("golfo-rp-ci-github-token-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: packageName, version: "1.0.0", packageManager: "npm@11.5.1", ...(publishConfig ? { publishConfig } : {}) }));
     for (const [relativePath, content] of Object.entries(extraFiles)) writeFileSync(path.join(root, relativePath), content);
-    writeFileSync(path.join(root, "astra-rp.config.mjs"), `export default { publish: '${publish}', publication: ${JSON.stringify(publication)}, ci: ${JSON.stringify({ workflow: "release.yml", secrets: ciSecrets })} };\n`);
+    writeFileSync(path.join(root, "golfo-rp.config.mjs"), `export default { publish: '${publish}', publication: ${JSON.stringify(publication)}, ci: ${JSON.stringify({ workflow: "release.yml", secrets: ciSecrets })} };\n`);
     const config = await loadCreateVersionConfig(root);
     commitFixtureRepository(root);
     // Act
@@ -1803,9 +1803,9 @@ describe("CI preparation invariants shared with local releases", () => {
     { packageManager: "pnpm@10.12.1", authentication: "token", installsNpmClient: false },
   ])("should install the npm trusted publishing client after Node.js for $packageManager with $authentication npm publication: $installsNpmClient", async ({ packageManager, authentication, installsNpmClient }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-npm-client-");
+    const root = createTemporaryDirectory("golfo-rp-ci-npm-client-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-npm-client", version: "1.0.0", packageManager }));
-    writeFileSync(path.join(root, "astra-rp.config.mjs"), `export default { publish: 'npm', publication: { authentication: '${authentication}' }, ci: { workflow: 'release.yml' } };\n`);
+    writeFileSync(path.join(root, "golfo-rp.config.mjs"), `export default { publish: 'npm', publication: { authentication: '${authentication}' }, ci: { workflow: 'release.yml' } };\n`);
     const config = await loadCreateVersionConfig(root);
     commitFixtureRepository(root);
     // Act
@@ -1822,10 +1822,10 @@ describe("CI preparation invariants shared with local releases", () => {
     { authentication: "token", installsNpmClient: false },
   ])("should install the npm trusted publishing client after npm ci for an unpinned package-lock.json project with $authentication npm publication: $installsNpmClient", async ({ authentication, installsNpmClient }) => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-npm-unpinned-");
+    const root = createTemporaryDirectory("golfo-rp-ci-npm-unpinned-");
     writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture-npm-unpinned", version: "1.0.0" }));
     writeFileSync(path.join(root, "package-lock.json"), JSON.stringify({ name: "fixture-npm-unpinned", version: "1.0.0", lockfileVersion: 3, requires: true, packages: {} }));
-    writeFileSync(path.join(root, "astra-rp.config.mjs"), `export default { publish: 'npm', publication: { authentication: '${authentication}' }, ci: { workflow: 'release.yml' } };\n`);
+    writeFileSync(path.join(root, "golfo-rp.config.mjs"), `export default { publish: 'npm', publication: { authentication: '${authentication}' }, ci: { workflow: 'release.yml' } };\n`);
     const config = await loadCreateVersionConfig(root);
     commitFixtureRepository(root);
     // Act
@@ -1950,12 +1950,12 @@ describe("CI preparation invariants shared with local releases", () => {
 function pushReleaseThenChangeCiConfig(root, { releaseConfig, laterConfig, laterWorkflow }) {
   const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ ...manifest, version: "1.2.4" }));
-  writeFileSync(path.join(root, "astra-rp.config.mjs"), releaseConfig);
+  writeFileSync(path.join(root, "golfo-rp.config.mjs"), releaseConfig);
   runGit(["add", "-A"], root);
   runGit(["commit", "--quiet", "-m", "1.2.4"], root);
   runGit(["tag", "-a", "v1.2.4", "-m", "1.2.4"], root);
   const releaseSha = runGit(["rev-parse", "HEAD"], root);
-  writeFileSync(path.join(root, "astra-rp.config.mjs"), laterConfig);
+  writeFileSync(path.join(root, "golfo-rp.config.mjs"), laterConfig);
   if (laterWorkflow) runGit(["mv", ".github/workflows/release.yml", `.github/workflows/${laterWorkflow}`], root);
   runGit(["add", "-A"], root);
   runGit(["commit", "--quiet", "-m", "ci: change the release workflow"], root);
@@ -1969,7 +1969,7 @@ function pushReleaseThenChangeCiConfig(root, { releaseConfig, laterConfig, later
  * @returns {string[]} Leftover directory names; empty when every retry cleaned up.
  */
 function listLeftoverReleaseTagCheckouts(root) {
-  return readdirSync(path.join(root, ".git")).filter((entryName) => entryName.startsWith("astra-rp-release-tag-config-"));
+  return readdirSync(path.join(root, ".git")).filter((entryName) => entryName.startsWith("golfo-rp-release-tag-config-"));
 }
 
 describe("CI retry resolves the configuration stored in the release tag", () => {

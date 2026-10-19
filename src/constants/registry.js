@@ -62,8 +62,8 @@ export const JSR_PACKAGE_NAME_PATTERN = /^@[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]
 export const JSR_NPM_CLIENT_SPEC = "jsr@0.14.3";
 /** JSR client choices. */
 export const JSR_CLIENTS = Object.freeze(["npx", "deno"]);
-/** Child-only JSR token variable expanded by the command shell, never logged by astra-rp. */
-export const JSR_CHILD_TOKEN_VARIABLE = "ASTRA_RP_JSR_TOKEN";
+/** Child-only JSR token variable expanded by the command shell, never logged by golfo-rp. */
+export const JSR_CHILD_TOKEN_VARIABLE = "GOLFO_RP_JSR_TOKEN";
 /** Opaque JSR tokens safe to substitute as one shell-quoted operand. */
 export const JSR_SHELL_SAFE_TOKEN_PATTERN = /^[A-Za-z0-9._~+/=-]+$/u;
 /** Minimum npm CLI version that implements trusted publishing. */

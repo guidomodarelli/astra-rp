@@ -24,7 +24,7 @@ export const CHANGELOG_DRAFT_EXECUTABLES = Object.freeze({ [CHANGELOG_DRAFT_PROV
  * Prefix of the isolated workspace the agents run in: a temporary directory outside the repository,
  * removed when the drafting ends.
  */
-export const CHANGELOG_DRAFT_DIRECTORY_PREFIX = "astra-rp-changelog-draft-";
+export const CHANGELOG_DRAFT_DIRECTORY_PREFIX = "golfo-rp-changelog-draft-";
 
 /**
  * Directory of the workspace with the files Git tracks at `HEAD` (from `git checkout-index`): no `.git`,
@@ -33,7 +33,7 @@ export const CHANGELOG_DRAFT_DIRECTORY_PREFIX = "astra-rp-changelog-draft-";
  */
 export const CHANGELOG_DRAFT_SNAPSHOT_DIRECTORY = "repository";
 
-/** Directory of the workspace with the release context astra-rp writes for the agents. */
+/** Directory of the workspace with the release context golfo-rp writes for the agents. */
 export const CHANGELOG_DRAFT_CONTEXT_DIRECTORY = "release-context";
 
 /** Release context file with the diff of the release range, without the changelog itself. */

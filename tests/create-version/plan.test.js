@@ -251,7 +251,7 @@ describe("create-version plan", () => {
   it("should block resuming a release commit while the configuration has uncommitted changes, a rename included", () => {
     const npm = { status: NPM_LOOKUP_STATUS.ok, publishedVersions: ["0.1.0"], reason: null };
 
-    for (const change of [" M astra-rp.config.js", "R  astra-rp.config.js -> astra-rp.config.mjs"]) {
+    for (const change of [" M golfo-rp.config.js", "R  golfo-rp.config.js -> golfo-rp.config.mjs"]) {
       const plan = buildReleasePlan(createMainState({ headVersion: "0.2.0", headSubject: "0.2.0", npm, workingTreeChanges: [change] }), NPM_PACKAGE, { ignoreLocalChanges: true });
 
       expect(plan.mode).toBe(RELEASE_MODE.blocked);
@@ -667,7 +667,7 @@ describe("parseReleaseArguments release type and execution shortcuts", () => {
     expect(parseReleaseArguments(["--ci", "-M"])).toMatchObject({ bump: "major", execution: "ci" });
   });
 
-  it("should keep the public helpShort flag of @astra-kit/rp/constants opening the help", () => {
+  it("should keep the public helpShort flag of @golfo/rp/constants opening the help", () => {
     expect(parseReleaseArguments([`-${PUBLIC_CREATE_VERSION_FLAG.helpShort}`]).help).toBe(true);
   });
 

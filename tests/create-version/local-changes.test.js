@@ -51,7 +51,7 @@ function writeFiles(repositoryRoot, files) {
 
 /** @returns {string} Repository with a released `package.json`, `CHANGELOG.md` and two source files. */
 function createRepository() {
-  const repositoryRoot = mkdtempSync(path.join(os.tmpdir(), "astra-rp-local-changes-test-"));
+  const repositoryRoot = mkdtempSync(path.join(os.tmpdir(), "golfo-rp-local-changes-test-"));
   temporaryDirectories.push(repositoryRoot);
   runGit(["init", "--quiet", "--initial-branch=main"], repositoryRoot);
   runGit(["config", "user.email", "release@example.test"], repositoryRoot);

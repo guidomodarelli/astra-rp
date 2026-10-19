@@ -64,7 +64,7 @@ function readStep(workflow, stepName) {
  * @returns {ReleaseOrigin} Worker checkout and commit identities.
  */
 function createReleaseOrigin() {
-  const fixture = createTemporaryDirectory("astra-rp-ci-identity-");
+  const fixture = createTemporaryDirectory("golfo-rp-ci-identity-");
   const remote = path.join(fixture, "origin.git");
   const author = path.join(fixture, "author");
   runGit(["init", "--quiet", "--bare", "--initial-branch=main", remote], fixture);
@@ -99,7 +99,7 @@ function runIdentityScript(worker, script, checkoutRef, inputs) {
   runGit(["checkout", "--quiet", "--detach", checkoutRef], worker);
   const scriptPath = path.join(worker, "..", "identity.sh");
   writeFileSync(scriptPath, `${script}\n`);
-  return spawnSync(resolveBashExecutable(), [scriptPath], { cwd: worker, encoding: "utf8", env: commandEnvironment({ ASTRA_RP_RELEASE_VERSION: inputs.version, ASTRA_RP_RELEASE_SHA: inputs.sha, RELEASE_TAG: inputs.tag }) });
+  return spawnSync(resolveBashExecutable(), [scriptPath], { cwd: worker, encoding: "utf8", env: commandEnvironment({ GOLFO_RP_RELEASE_VERSION: inputs.version, GOLFO_RP_RELEASE_SHA: inputs.sha, RELEASE_TAG: inputs.tag }) });
 }
 
 afterEach(() => {
@@ -109,7 +109,7 @@ afterEach(() => {
 describe("generated release identity step", () => {
   it("should authenticate the release right after checkout and before any toolchain or dependency setup, without secrets", async () => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-ci-identity-order-");
+    const root = createTemporaryDirectory("golfo-rp-ci-identity-order-");
     // Act
     const workflow = await renderFixtureWorkflow(root);
     const stepNames = readStepNames(workflow);
@@ -117,14 +117,14 @@ describe("generated release identity step", () => {
     expect(stepNames.indexOf(CI_RELEASE_IDENTITY_STEP_NAME)).toBe(stepNames.indexOf("Checkout del release") + 1);
     expect(stepNames.indexOf(CI_RELEASE_IDENTITY_STEP_NAME)).toBeLessThan(stepNames.indexOf("Configurar Node.js"));
     expect(stepNames.indexOf(CI_RELEASE_IDENTITY_STEP_NAME)).toBeLessThan(stepNames.indexOf("Instalar dependencias"));
-    expect(readStep(workflow, CI_RELEASE_IDENTITY_STEP_NAME).environmentNames.toSorted()).toEqual(["ASTRA_RP_RELEASE_SHA", "ASTRA_RP_RELEASE_VERSION", "RELEASE_TAG"]);
+    expect(readStep(workflow, CI_RELEASE_IDENTITY_STEP_NAME).environmentNames.toSorted()).toEqual(["GOLFO_RP_RELEASE_SHA", "GOLFO_RP_RELEASE_VERSION", "RELEASE_TAG"]);
     expect(workflow).toContain("ref: refs/tags/${{ inputs.tag }}");
   });
 
   it("should accept a stable tag that resolves to the dispatched commit already merged into origin/main", async () => {
     // Arrange
     const { worker, releaseSha } = createReleaseOrigin();
-    const { script } = readStep(await renderFixtureWorkflow(createTemporaryDirectory("astra-rp-ci-identity-render-")), CI_RELEASE_IDENTITY_STEP_NAME);
+    const { script } = readStep(await renderFixtureWorkflow(createTemporaryDirectory("golfo-rp-ci-identity-render-")), CI_RELEASE_IDENTITY_STEP_NAME);
     // Act
     const result = runIdentityScript(worker, script, "refs/tags/v1.2.3", { version: "1.2.3", tag: "v1.2.3", sha: releaseSha });
     // Assert
@@ -143,7 +143,7 @@ describe("generated release identity step", () => {
   ])("should stop before installing dependencies when dispatched with $scenario", async ({ checkoutRef, inputs, message }) => {
     // Arrange
     const origin = createReleaseOrigin();
-    const { script } = readStep(await renderFixtureWorkflow(createTemporaryDirectory("astra-rp-ci-identity-render-")), CI_RELEASE_IDENTITY_STEP_NAME);
+    const { script } = readStep(await renderFixtureWorkflow(createTemporaryDirectory("golfo-rp-ci-identity-render-")), CI_RELEASE_IDENTITY_STEP_NAME);
     // Act
     const result = runIdentityScript(origin.worker, script, checkoutRef, inputs(origin));
     // Assert

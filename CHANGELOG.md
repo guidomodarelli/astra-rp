@@ -6,6 +6,8 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-19
+
 ### Changed
 
 - Cambio incompatible: el paquete pasa a llamarse `@golfo/rp` y el comando, `golfo-rp`: instalalo con `pnpm add -D @golfo/rp`, cambiá los scripts `astra-rp …` por `golfo-rp …` y los imports `@astra-kit/rp/…` por `@golfo/rp/…`. El repositorio ahora es `guidomodarelli/golfo-rp`.

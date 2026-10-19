@@ -114,7 +114,7 @@ export function fillUnreleasedEntries(changelog, entries) {
  * @returns {string} Actionable hint in Spanish.
  */
 export function describeUnreleasedEntriesHint(filePath, createVersionCommand) {
-  return `Agregá las entradas del release (líneas "- …") bajo ${UNRELEASED_HEADING} en ${filePath}, sin versión ni fecha, y volvé a correr ${createVersionCommand}; astra-rp renombra esa sección a ## [X.Y.Z] - AAAA-MM-DD en el commit de versión.`;
+  return `Agregá las entradas del release (líneas "- …") bajo ${UNRELEASED_HEADING} en ${filePath}, sin versión ni fecha, y volvé a correr ${createVersionCommand}; golfo-rp renombra esa sección a ## [X.Y.Z] - AAAA-MM-DD en el commit de versión.`;
 }
 
 /**

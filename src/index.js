@@ -1,17 +1,17 @@
 /**
- * `@astra-kit/rp`: dependency-free release process.
+ * `@golfo/rp`: dependency-free release process.
  *
- * - `@astra-kit/rp/versions`: stable `X.Y.Z` rules; only the next patch, minor or major is allowed.
- * - `@astra-kit/rp/build-gate`: Vercel `ignoreCommand` decision built on those rules.
- * - `@astra-kit/rp/changelog`: release history generated from Git commits.
- * - `@astra-kit/rp/guard-publish`: `prepublishOnly` guard that blocks pnpm, yarn and bun publications.
- * - `@astra-kit/rp/package-manager`: detection of pnpm, bun, npm or yarn and the commands each one runs.
- * - `@astra-kit/rp/version-files`: rewrites the marked version lines of `versionFiles`.
- * - `@astra-kit/rp/terminal-ui`: boxes, spinners and prompts for release commands.
- * - `@astra-kit/rp/testing`: shared version bump fixtures for consumer test suites.
- * - `@astra-kit/rp/constants`: every constant above, grouped by domain.
+ * - `@golfo/rp/versions`: stable `X.Y.Z` rules; only the next patch, minor or major is allowed.
+ * - `@golfo/rp/build-gate`: Vercel `ignoreCommand` decision built on those rules.
+ * - `@golfo/rp/changelog`: release history generated from Git commits.
+ * - `@golfo/rp/guard-publish`: `prepublishOnly` guard that blocks pnpm, yarn and bun publications.
+ * - `@golfo/rp/package-manager`: detection of pnpm, bun, npm or yarn and the commands each one runs.
+ * - `@golfo/rp/version-files`: rewrites the marked version lines of `versionFiles`.
+ * - `@golfo/rp/terminal-ui`: boxes, spinners and prompts for release commands.
+ * - `@golfo/rp/testing`: shared version bump fixtures for consumer test suites.
+ * - `@golfo/rp/constants`: every constant above, grouped by domain.
  *
- * @module @astra-kit/rp
+ * @module @golfo/rp
  */
 
 export * from "./build-gate.js";

@@ -32,7 +32,7 @@ export const CI_ENVIRONMENT_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/u;
 export const CI_COMMIT_SHA_PATTERN = /^[a-f0-9]{40,64}$/u;
 
 /** Worker inputs exposed through environment variables instead of shell interpolation. */
-export const CI_RELEASE_ENVIRONMENT = Object.freeze({ version: "ASTRA_RP_RELEASE_VERSION", sha: "ASTRA_RP_RELEASE_SHA" });
+export const CI_RELEASE_ENVIRONMENT = Object.freeze({ version: "GOLFO_RP_RELEASE_VERSION", sha: "GOLFO_RP_RELEASE_SHA" });
 
 /** Environment variable carrying the dispatched release tag into generated workflow steps. */
 export const CI_RELEASE_TAG_ENVIRONMENT = "RELEASE_TAG";
@@ -115,16 +115,16 @@ export const CI_DISPATCH_STATUS = Object.freeze({ submitted: "submitted", existi
  * checks out the release tag to load the configuration stored in it; living under the checkout lets the
  * tagged configuration resolve the project's installed dependencies while staying outside the working tree.
  */
-export const CI_RELEASE_TAG_CONFIG_DIRECTORY_PREFIX = "astra-rp-release-tag-config-";
+export const CI_RELEASE_TAG_CONFIG_DIRECTORY_PREFIX = "golfo-rp-release-tag-config-";
 
 /** Early-build metadata; its version and the commit that changes it scope the decision to exactly one release commit. */
-export const CI_RELEASE_METADATA_FILE = ".astra-rp/release.json";
+export const CI_RELEASE_METADATA_FILE = ".golfo-rp/release.json";
 
 /**
  * Git trailer of the release commit naming where it was prepared (`local` or `ci`), so a resume after a
  * failed push keeps that location for every release, not only those whose Vercel metadata records it.
  */
-export const RELEASE_EXECUTION_TRAILER = "Astra-Rp-Execution";
+export const RELEASE_EXECUTION_TRAILER = "Golfo-Rp-Execution";
 
 /** Vercel project configuration used to offer deployment setup for applications. */
 export const CI_VERCEL_CONFIG_FILE = "vercel.json";
@@ -293,7 +293,7 @@ export const CI_MIGRATION_ENVIRONMENT_PATTERN = /\b[A-Z][A-Z0-9_]*(?:URL|TOKEN|K
 export const CI_RESERVED_ENVIRONMENT_NAMES = Object.freeze([CI_RELEASE_TAG_ENVIRONMENT, "HUSKY", ...Object.values(CI_RELEASE_ENVIRONMENT)]);
 
 /** Generated Vercel gate; it runs before dependencies are installed. */
-export const CI_VERCEL_GATE_FILE = ".astra-rp/vercel-ignore-build.mjs";
+export const CI_VERCEL_GATE_FILE = ".golfo-rp/vercel-ignore-build.mjs";
 
 /** Relative template path for the dependency-free Vercel gate. */
 export const CI_VERCEL_GATE_TEMPLATE = "./templates/vercel-ignore-build.mjs";
@@ -319,7 +319,7 @@ export const CI_WORKER_CONFIGURATION_FILES = Object.freeze([
 ]);
 
 /** Prefix of the `run-name` the generated workflow gives each dispatched release, followed by its tag and commit. */
-export const CI_RELEASE_RUN_TITLE_PREFIX = "astra-rp release";
+export const CI_RELEASE_RUN_TITLE_PREFIX = "golfo-rp release";
 
 /** Generated workflow step that runs `--ci-release`; its success proves checks, preparation and publication finished. */
 export const CI_RELEASE_WORKER_STEP_NAME = "Checks y publicación del release";

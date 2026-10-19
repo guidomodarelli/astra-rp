@@ -1,9 +1,9 @@
 /**
- * `astra-rp create-version` configuration of astra-rp itself: validate with
+ * `golfo-rp create-version` configuration of golfo-rp itself: validate with
  * `pnpm check`, then publish to npm from the `release.yml` workflow through npm
  * trusted publishing (OIDC), so no npm token is stored in the repository.
  *
- * @module astra-rp.config
+ * @module golfo-rp.config
  */
 
 /** @type {import("./src/create-version/config.js").CreateVersionConfig} */
@@ -16,7 +16,7 @@ export default {
   checks: ["pnpm check"],
   publish: "npm",
   publication: { authentication: "oidc" },
-  summary: ["Consumidores: pnpm add -D @astra-kit/rp@^{version}"],
+  summary: ["Consumidores: pnpm add -D @golfo/rp@^{version}"],
 };
 
 /** GitHub Actions workflow used by create-version. */

@@ -1,8 +1,8 @@
 /**
- * `@astra-kit/rp/create-version`: shared release command.
+ * `@golfo/rp/create-version`: shared release command.
  *
- * Projects run it as `astra-rp create-version` and describe their differences
- * in `astra-rp.config.js` (checks, migrations,
+ * Projects run it as `golfo-rp create-version` and describe their differences
+ * in `golfo-rp.config.js` (checks, migrations,
  * preparation, publication). The pure planner and the state reader are
  * exported for project tests and custom tooling.
  *

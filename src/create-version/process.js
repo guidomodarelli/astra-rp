@@ -1,5 +1,5 @@
 /**
- * Process and Git helpers of `astra-rp create-version`: captured and inherited
+ * Process and Git helpers of `golfo-rp create-version`: captured and inherited
  * commands that never reject, a Git reader bound to a repository, commit
  * listing and manifest reads at any revision.
  *
@@ -94,7 +94,7 @@ function stopProcessTree(child, command) {
     process.kill(-child.pid, "SIGKILL");
   } catch (error) {
     if (/** @type {NodeJS.ErrnoException} */ (error).code === "ESRCH") return;
-    console.error(`astra-rp create-version: stopProcessTree failed to kill the process group of "${command}" (pid ${child.pid}) after its timeout`, error);
+    console.error(`golfo-rp create-version: stopProcessTree failed to kill the process group of "${command}" (pid ${child.pid}) after its timeout`, error);
   }
 }
 
@@ -243,7 +243,7 @@ export function createGitReader(repositoryRoot) {
     const result = await runCaptured("git", gitArguments, { cwd: repositoryRoot });
 
     if (result.status !== 0) {
-      throw new Error(`astra-rp create-version: git ${gitArguments.join(" ")} failed in ${repositoryRoot}: ${result.stderr}`);
+      throw new Error(`golfo-rp create-version: git ${gitArguments.join(" ")} failed in ${repositoryRoot}: ${result.stderr}`);
     }
 
     return result.stdout;

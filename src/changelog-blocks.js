@@ -1,7 +1,7 @@
 /**
  * Internal helpers that split `CHANGELOG.md` into release blocks and rewrite the `[Unreleased]`
- * block. Shared by the public `@astra-kit/rp/changelog` module and by `create-version`; not part of the
- * package's public API (no `exports` entry and no reexport from `@astra-kit/rp`).
+ * block. Shared by the public `@golfo/rp/changelog` module and by `create-version`; not part of the
+ * package's public API (no `exports` entry and no reexport from `@golfo/rp`).
  *
  * @module changelog-blocks
  */

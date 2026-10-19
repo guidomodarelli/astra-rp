@@ -33,7 +33,7 @@ afterEach(cleanupTemporaryDirectories);
  * @returns {{ repositoryRoot: string, releaseRevision: string, changelogPath: string, context: import("../../src/create-version/changelog.js").ChangelogContext }} Fixture and read-only release context.
  */
 function createChangelogRepository() {
-  const repositoryRoot = createTemporaryDirectory("astra-rp-manual-changelog-");
+  const repositoryRoot = createTemporaryDirectory("golfo-rp-manual-changelog-");
   runGit(["init", "--quiet", "--initial-branch=main"], repositoryRoot);
   runGit(["config", "user.email", "release@example.test"], repositoryRoot);
   runGit(["config", "user.name", "Release Fixture"], repositoryRoot);

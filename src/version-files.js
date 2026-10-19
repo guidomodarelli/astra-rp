@@ -3,8 +3,8 @@
  * `--version`, a user agent, a constant) and are rewritten in the release
  * commit. Only marked lines change:
  *
- * - a line with `astra-rp-version` (or release-please's `x-release-please-version`);
- * - every line between `astra-rp-start-version` and `astra-rp-end` (or
+ * - a line with `golfo-rp-version` (or release-please's `x-release-please-version`);
+ * - every line between `golfo-rp-start-version` and `golfo-rp-end` (or
  *   `x-release-please-start-version` / `x-release-please-end`).
  *
  * @module version-files
@@ -40,7 +40,7 @@ export class VersionBlockError extends Error {
    *   `openingMarker` the start marker of the block still open, when there is one.
    */
   constructor({ problem, lineNumber, marker, openingLineNumber, openingMarker }) {
-    super(`astra-rp:updateVersionMarkers ${problem} version block: ${marker} at line ${lineNumber}`);
+    super(`golfo-rp:updateVersionMarkers ${problem} version block: ${marker} at line ${lineNumber}`);
     this.name = "VersionBlockError";
     this.problem = problem;
     this.lineNumber = lineNumber;

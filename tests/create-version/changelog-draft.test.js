@@ -69,7 +69,7 @@ let repositoryRoot = "";
 let lastReleaseSha = "";
 
 beforeEach(() => {
-  repositoryRoot = createTemporaryDirectory("astra-rp-draft-repository-");
+  repositoryRoot = createTemporaryDirectory("golfo-rp-draft-repository-");
   lastReleaseSha = createRepositoryWithRelease(repositoryRoot);
 });
 
@@ -152,7 +152,7 @@ describe("drafting with agent CLIs", () => {
 
   it("should draft from the whole history before the first release, even from a repository whose path has cmd.exe metacharacters", async () => {
     // Arrange
-    const unusualRoot = path.join(createTemporaryDirectory("astra-rp-draft-unusual-"), "repo %TEMP% ^& !x!");
+    const unusualRoot = path.join(createTemporaryDirectory("golfo-rp-draft-unusual-"), "repo %TEMP% ^& !x!");
     mkdirSync(unusualRoot);
     createRepositoryWithRelease(unusualRoot);
     const fakeAgents = useFakeAgents({ codex: { kind: "answer", text: DRAFTED_ENTRIES } });
@@ -202,7 +202,7 @@ describe("drafting with agent CLIs", () => {
   it("should report every agent as failed, without running any, when the isolated copy cannot be created", async () => {
     // Arrange
     const fakeAgents = useFakeAgents({ claude: { kind: "answer", text: DRAFTED_ENTRIES }, codex: { kind: "answer", text: DRAFTED_ENTRIES } });
-    const notARepository = createTemporaryDirectory("astra-rp-draft-not-a-repository-");
+    const notARepository = createTemporaryDirectory("golfo-rp-draft-not-a-repository-");
 
     // Act
     const draft = await draftChangelogEntries({ providers: ["claude", "codex"], repositoryRoot: notARepository, request: releaseRequest(null) });
@@ -278,7 +278,7 @@ describe("changelogDraft configuration", () => {
    */
   function loadWithChangelogDraft(value) {
     writeFileSync(path.join(repositoryRoot, "package.json"), JSON.stringify({ name: "fixture-app", version: "0.1.0" }));
-    writeFileSync(path.join(repositoryRoot, "astra-rp.config.js"), `export default { checks: false, changelogDraft: ${value} };\n`);
+    writeFileSync(path.join(repositoryRoot, "golfo-rp.config.js"), `export default { checks: false, changelogDraft: ${value} };\n`);
     return loadCreateVersionConfig(repositoryRoot);
   }
 

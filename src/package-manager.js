@@ -1,5 +1,5 @@
 /**
- * Detects the package manager of a project and builds the commands astra-rp
+ * Detects the package manager of a project and builds the commands golfo-rp
  * prints or runs for it, so a bun, npm or yarn project is told to run its own
  * commands instead of pnpm ones.
  *
@@ -28,7 +28,7 @@ import { CREATE_VERSION_FLAG, PACKAGE_MANIFEST_FILE } from "./constants/create-v
  *   createVersion: string,
  * }} ProjectCommands
  *   `runScript("ci")` is the command line that runs a `package.json` script; `createVersion` is how
- *   the project runs `astra-rp create-version` through its script.
+ *   the project runs `golfo-rp create-version` through its script.
  */
 
 /**

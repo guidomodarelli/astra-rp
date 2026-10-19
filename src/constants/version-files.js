@@ -12,13 +12,13 @@ import { CHANGELOG_FILE } from "./changelog.js";
  * Comment marking a single line whose version is rewritten. The release-please marker is also
  * accepted, so a project moving from release-please keeps its files untouched.
  */
-export const VERSION_LINE_MARKERS = Object.freeze(["astra-rp-version", "x-release-please-version"]);
+export const VERSION_LINE_MARKERS = Object.freeze(["golfo-rp-version", "x-release-please-version"]);
 
 /** Comments opening a block whose every version is rewritten, paired by index with {@link VERSION_BLOCK_END_MARKERS}. */
-export const VERSION_BLOCK_START_MARKERS = Object.freeze(["astra-rp-start-version", "x-release-please-start-version"]);
+export const VERSION_BLOCK_START_MARKERS = Object.freeze(["golfo-rp-start-version", "x-release-please-start-version"]);
 
 /** Comments closing a version block, paired by index with {@link VERSION_BLOCK_START_MARKERS}. */
-export const VERSION_BLOCK_END_MARKERS = Object.freeze(["astra-rp-end", "x-release-please-end"]);
+export const VERSION_BLOCK_END_MARKERS = Object.freeze(["golfo-rp-end", "x-release-please-end"]);
 
 /**
  * Ways a file can pair its version block markers wrongly. Any of them stops the rewrite, since
@@ -27,7 +27,7 @@ export const VERSION_BLOCK_END_MARKERS = Object.freeze(["astra-rp-end", "x-relea
  * - `unterminated`: a start marker without its end marker before the end of the file.
  * - `unopened`: an end marker outside any block.
  * - `nested`: a start marker inside a block that is still open.
- * - `mismatched`: an end marker of the other tool (`x-release-please-end` closing `astra-rp-start-version`, or the reverse).
+ * - `mismatched`: an end marker of the other tool (`x-release-please-end` closing `golfo-rp-start-version`, or the reverse).
  */
 export const VERSION_BLOCK_PROBLEM = Object.freeze({
   unterminated: "unterminated",

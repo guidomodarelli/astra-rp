@@ -60,7 +60,7 @@ describe("one-registry configuration", () => {
     // Assert
     expect(invalid?.title).toContain("NPM_PUBLISH_TOKEN");
     expect(shadowed?.title).toContain("NPM_PUBLISH_TOKEN");
-    expect(shadowed?.details.join(" ")).toContain("astra-rp usa NPM_PUBLISH_TOKEN");
+    expect(shadowed?.details.join(" ")).toContain("golfo-rp usa NPM_PUBLISH_TOKEN");
   });
 
   it.each(["npm", "github", "gitlab", "jsr"])("should select %s as the only monitored and published registry", (provider) => {
@@ -93,12 +93,12 @@ describe("one-registry configuration", () => {
     { publish: "npm", publication: { tag: "latest;command" } },
   ])("should reject incompatible or unsafe configuration: %j", (config) => {
     // Act and Assert
-    expect(() => resolveCreateVersionConfig(config)).toThrow(/astra-rp create-version/u);
+    expect(() => resolveCreateVersionConfig(config)).toThrow(/golfo-rp create-version/u);
   });
 
   it("should require a GitHub scope and a GitLab project publishing endpoint", async () => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-registry-config-");
+    const root = createTemporaryDirectory("golfo-rp-registry-config-");
     // Act and Assert
     await expect(resolveRegistry(selection("github"), { name: "unscoped" }, root)).rejects.toThrow("requiere name con scope");
     await expect(resolveRegistry(selection("gitlab", { registryUrl: "https://gitlab.example.test/api/v4/packages/npm/" }), { name: "@acme/pkg" }, root)).rejects.toThrow("endpoint /api/v4/projects");
@@ -109,14 +109,14 @@ describe("direct registry metadata and permissions", () => {
   it.each([true, false])("should classify a GitLab 404 safely when the lookup is authenticated: %j", async (authenticated) => {
     // Arrange
     const origin = await startRegistry((_request, response) => { response.writeHead(404); response.end(); });
-    const root = createTemporaryDirectory("astra-rp-gitlab-private-");
-    if (authenticated) writeFileSync(path.join(root, ".env"), "ASTRA_RP_FIXTURE_READ_TOKEN=fixture-read-token\n");
+    const root = createTemporaryDirectory("golfo-rp-gitlab-private-");
+    if (authenticated) writeFileSync(path.join(root, ".env"), "GOLFO_RP_FIXTURE_READ_TOKEN=fixture-read-token\n");
     // Act
-    const lookup = await lookupRegistryVersions(selection("gitlab", { registryUrl: `${origin}api/v4/projects/123/packages/npm/`, tokenEnv: "ASTRA_RP_FIXTURE_READ_TOKEN" }), { name: "@acme/pkg" }, root);
+    const lookup = await lookupRegistryVersions(selection("gitlab", { registryUrl: `${origin}api/v4/projects/123/packages/npm/`, tokenEnv: "GOLFO_RP_FIXTURE_READ_TOKEN" }), { name: "@acme/pkg" }, root);
     // Assert
     expect(lookup.status).toBe(authenticated ? "ok" : "failed");
     expect(lookup.publishedVersions).toEqual([]);
-    expect(lookup.reason).toBe(authenticated ? null : "GitLab: HTTP 404 sin ASTRA_RP_FIXTURE_READ_TOKEN; no se puede distinguir un paquete ausente de un proyecto privado. Definí la credencial antes de diagnosticar.");
+    expect(lookup.reason).toBe(authenticated ? null : "GitLab: HTTP 404 sin GOLFO_RP_FIXTURE_READ_TOKEN; no se puede distinguir un paquete ausente de un proyecto privado. Definí la credencial antes de diagnosticar.");
   });
 
   it("should query the GitLab project with its configured token and leave write access unverified", async () => {
@@ -127,7 +127,7 @@ describe("direct registry metadata and permissions", () => {
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify({ versions: { "1.0.0": {}, "1.1.0": {} }, "dist-tags": { next: "1.1.0", latest: "1.0.0" } }));
     });
-    const root = createTemporaryDirectory("astra-rp-gitlab-metadata-");
+    const root = createTemporaryDirectory("golfo-rp-gitlab-metadata-");
     writeFileSync(path.join(root, ".env"), "CI_JOB_TOKEN=fixture-job-token\n");
     const registry = selection("gitlab", { registryUrl: `${origin}api/v4/projects/123/packages/npm/`, tokenEnv: "CI_JOB_TOKEN", tag: "next" });
     // Act
@@ -148,7 +148,7 @@ describe("direct registry metadata and permissions", () => {
       response.writeHead(302, { Location: "https://registry.npmjs.org/@acme/pkg" });
       response.end();
     });
-    const root = createTemporaryDirectory("astra-rp-gitlab-forwarding-");
+    const root = createTemporaryDirectory("golfo-rp-gitlab-forwarding-");
     // Act
     const lookup = await lookupRegistryVersions(selection("gitlab", { registryUrl: `${origin}api/v4/projects/123/packages/npm/` }), { name: "@acme/pkg" }, root);
     // Assert
@@ -162,7 +162,7 @@ describe("direct registry metadata and permissions", () => {
       response.writeHead(403, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ token: "fixture-secret", stack: "upstream-stack", error: "timeout" }));
     });
-    const root = createTemporaryDirectory("astra-rp-registry-rejection-");
+    const root = createTemporaryDirectory("golfo-rp-registry-rejection-");
     // Act
     const lookup = await lookupRegistryVersions(selection("gitlab", { registryUrl: `${origin}api/v4/projects/123/packages/npm/` }), { name: "@acme/pkg" }, root);
     // Assert
@@ -179,7 +179,7 @@ describe("direct registry metadata and permissions", () => {
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify({ versions: { "1.0.0": {}, "1.1.0": {} } }));
     });
-    const root = createTemporaryDirectory("astra-rp-jsr-metadata-");
+    const root = createTemporaryDirectory("golfo-rp-jsr-metadata-");
     writeFileSync(path.join(root, "jsr.json"), JSON.stringify({ name: "@acme/native", version: "1.0.0", exports: "./mod.ts" }));
     // Act
     const lookup = await lookupRegistryVersions(selection("jsr", { registryUrl: origin }), { name: "node-package" }, root);
@@ -192,7 +192,7 @@ describe("direct registry metadata and permissions", () => {
 describe("native JSR version files", () => {
   it("should prepare a version-only JSONC edit while preserving comments, Unicode, URLs and original files", async () => {
     // Arrange
-    const root = createTemporaryDirectory("astra-rp-jsr-version-");
+    const root = createTemporaryDirectory("golfo-rp-jsr-version-");
     runGit(["init", "--quiet", "--initial-branch=main"], root);
     runGit(["config", "user.email", "fixture@example.test"], root);
     runGit(["config", "user.name", "Fixture"], root);

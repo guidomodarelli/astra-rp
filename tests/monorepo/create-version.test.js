@@ -53,7 +53,7 @@ function commitAll(root, message) {
  * @returns {{ repositoryRoot: string, remoteRoot: string }} Clone and bare `origin`.
  */
 function createReleasedMonorepo() {
-  const fixtureRoot = createTemporaryDirectory("astra-rp-monorepo-");
+  const fixtureRoot = createTemporaryDirectory("golfo-rp-monorepo-");
   const remoteRoot = path.join(fixtureRoot, "origin.git");
   const repositoryRoot = path.join(fixtureRoot, "work");
   runGit(["init", "--quiet", "--bare", "--initial-branch=main", remoteRoot], fixtureRoot);
@@ -71,7 +71,7 @@ function createReleasedMonorepo() {
     writeFileSync(path.join(repositoryRoot, "packages", component, "CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n");
   }
   writeFileSync(
-    path.join(repositoryRoot, "astra-rp.config.js"),
+    path.join(repositoryRoot, "golfo-rp.config.js"),
     ['export default {', '  changelog: { audience: "quien usa {name}" },', '  packages: "workspaces",', "  preMajorShift: true,", "  checks: false,", '  publish: "npm",', '  summary: ["Deploy de {name} {version}.", "Revisá el deploy."],', "};", ""].join("\n")
   );
   commitAll(repositoryRoot, "release: @acme/widget@1.0.0, @acme/adapter@0.3.0");
@@ -126,7 +126,7 @@ describe("create-version in monorepo mode", () => {
     const changelogPath = path.join(repositoryRoot, "packages/widget/CHANGELOG.md");
     const previousNotes = readFileSync(changelogPath);
     pushCoreFeature(repositoryRoot);
-    writeFileSync(path.join(repositoryRoot, "astra-rp.config.js"), 'export default { packages: "workspaces", checks: false };\n');
+    writeFileSync(path.join(repositoryRoot, "golfo-rp.config.js"), 'export default { packages: "workspaces", checks: false };\n');
     commitAll(repositoryRoot, "chore: configure manual release checks");
     runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
     writeFileSync(changelogPath, previousNotes);
@@ -157,7 +157,7 @@ describe("create-version in monorepo mode", () => {
     const changelogPath = path.join(repositoryRoot, "packages/widget/CHANGELOG.md");
     const releasedNotes = readFileSync(changelogPath);
     pushCoreFeature(repositoryRoot);
-    writeFileSync(path.join(repositoryRoot, "astra-rp.config.js"), 'export default { packages: "workspaces", checks: false };\n');
+    writeFileSync(path.join(repositoryRoot, "golfo-rp.config.js"), 'export default { packages: "workspaces", checks: false };\n');
     commitAll(repositoryRoot, "chore: configure manual release checks");
     runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
     if (!updated) {
@@ -330,8 +330,8 @@ describe("create-version in monorepo mode", () => {
       expect(runGit(["status", "--porcelain"], repositoryRoot)).toBe("");
 
       runGit(["tag", "-d", "widget-v1.1.0"], repositoryRoot);
-      const config = readFileSync(path.join(repositoryRoot, "astra-rp.config.js"), "utf8");
-      writeFileSync(path.join(repositoryRoot, "astra-rp.config.js"), config.replace('packages: "workspaces",', 'packages: "workspaces",\n  tagFormat: "{component}~v{version}",'));
+      const config = readFileSync(path.join(repositoryRoot, "golfo-rp.config.js"), "utf8");
+      writeFileSync(path.join(repositoryRoot, "golfo-rp.config.js"), config.replace('packages: "workspaces",', 'packages: "workspaces",\n  tagFormat: "{component}~v{version}",'));
       commitAll(repositoryRoot, "chore: use an invalid tag format");
       runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
       const configSha = runGit(["rev-parse", "HEAD"], repositoryRoot);
@@ -355,8 +355,8 @@ describe("create-version in monorepo mode", () => {
       const { repositoryRoot, remoteRoot } = createReleasedMonorepo();
       pushCoreFeature(repositoryRoot);
       writeFileSync(path.join(repositoryRoot, "packages/widget/CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n\n### Nope\n\n- Respuesta nueva.\n");
-      const config = readFileSync(path.join(repositoryRoot, "astra-rp.config.js"), "utf8");
-      writeFileSync(path.join(repositoryRoot, "astra-rp.config.js"), config.replace('packages: "workspaces",', `packages: "workspaces",\n  releaseTimeZone: ${JSON.stringify(releaseTimeZone)},`));
+      const config = readFileSync(path.join(repositoryRoot, "golfo-rp.config.js"), "utf8");
+      writeFileSync(path.join(repositoryRoot, "golfo-rp.config.js"), config.replace('packages: "workspaces",', `packages: "workspaces",\n  releaseTimeZone: ${JSON.stringify(releaseTimeZone)},`));
       commitAll(repositoryRoot, "docs(widget): use an unknown changelog section");
       runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
       const registry = await startRegistry();
@@ -493,7 +493,7 @@ describe("create-version in monorepo mode", () => {
       const { repositoryRoot, remoteRoot } = createReleasedMonorepo();
       const appliedMarker = path.join(path.dirname(repositoryRoot), "migrations-applied");
       writeFileSync(
-        path.join(repositoryRoot, "astra-rp.config.js"),
+        path.join(repositoryRoot, "golfo-rp.config.js"),
         [
           'import { existsSync, writeFileSync } from "node:fs";',
           `const appliedMarker = ${JSON.stringify(appliedMarker)};`,
@@ -534,7 +534,7 @@ describe("create-version in monorepo mode", () => {
       const appliedMarker = path.join(path.dirname(repositoryRoot), "migrations-applied");
       writeFileSync(path.join(repositoryRoot, "packages/widget/version.js"), 'export const VERSION = "1.0.0";\n');
       writeFileSync(
-        path.join(repositoryRoot, "astra-rp.config.js"),
+        path.join(repositoryRoot, "golfo-rp.config.js"),
         [
           'import { existsSync, writeFileSync } from "node:fs";',
           `const appliedMarker = ${JSON.stringify(appliedMarker)};`,
@@ -574,10 +574,10 @@ describe("create-version in monorepo mode", () => {
       const { repositoryRoot, remoteRoot } = createReleasedMonorepo();
       writeJson(repositoryRoot, "package.json", { name: "acme-monorepo", private: true, type: "module", workspaces: ["packages/*", "packages/widget/plugin"] });
       writeJson(repositoryRoot, "packages/widget/plugin/package.json", { name: "@acme/plugin", version: "0.1.0" });
-      writeFileSync(path.join(repositoryRoot, "packages/widget/plugin/version.js"), 'export const VERSION = "0.1.0"; // astra-rp-version\n');
+      writeFileSync(path.join(repositoryRoot, "packages/widget/plugin/version.js"), 'export const VERSION = "0.1.0"; // golfo-rp-version\n');
       writeFileSync(path.join(repositoryRoot, "packages/widget/plugin/CHANGELOG.md"), "# Changelog\n\n## [Unreleased]\n");
       writeFileSync(
-        path.join(repositoryRoot, "astra-rp.config.js"),
+        path.join(repositoryRoot, "golfo-rp.config.js"),
         ['export default {', '  changelog: { audience: "quien usa {name}" },', '  packages: "workspaces",', "  checks: false,", '  publish: "npm",', '  versionFiles: ["packages/widget/plugin/version.js"],', "};", ""].join("\n")
       );
       commitAll(repositoryRoot, "chore: add the plugin");
@@ -594,7 +594,7 @@ describe("create-version in monorepo mode", () => {
       const release = await runCliAsync(repositoryRoot, ["--accept-suggested"], npmEnvironment(registry.registryUrl));
 
       expect(release.status, release.output).toBe(0);
-      expect(runGit(["show", "main:packages/widget/plugin/version.js"], remoteRoot)).toBe('export const VERSION = "0.2.0"; // astra-rp-version');
+      expect(runGit(["show", "main:packages/widget/plugin/version.js"], remoteRoot)).toBe('export const VERSION = "0.2.0"; // golfo-rp-version');
     },
     GIT_FIXTURE_TEST_TIMEOUT_MS
   );
@@ -609,7 +609,7 @@ describe("create-version in monorepo mode", () => {
         'import { appendFileSync } from "node:fs";\nappendFileSync("packages/core/index.js", "// formatted\\n");\n'
       );
       writeFileSync(
-        path.join(repositoryRoot, "astra-rp.config.js"),
+        path.join(repositoryRoot, "golfo-rp.config.js"),
         ['export default {', '  changelog: { audience: "quien usa {name}" },', '  packages: "workspaces",', '  checks: ["node scripts/format.mjs"],', '  publish: "npm",', "};", ""].join("\n")
       );
       commitAll(repositoryRoot, "chore: format check");
@@ -646,7 +646,7 @@ describe("create-version in monorepo mode", () => {
       );
       writeFileSync(path.join(repositoryRoot, ".gitignore"), "dist/\n");
       writeFileSync(
-        path.join(repositoryRoot, "astra-rp.config.js"),
+        path.join(repositoryRoot, "golfo-rp.config.js"),
         ['export default {', '  changelog: { audience: "quien usa {name}" },', '  packages: "workspaces",', '  checks: ["node scripts/generate.mjs"],', '  publish: "npm",', "};", ""].join("\n")
       );
       commitAll(repositoryRoot, "chore: generate check");
@@ -673,7 +673,7 @@ describe("create-version in monorepo mode", () => {
     async () => {
       const { repositoryRoot } = createReleasedMonorepo();
       writeFileSync(
-        path.join(repositoryRoot, "astra-rp.config.js"),
+        path.join(repositoryRoot, "golfo-rp.config.js"),
         [
           'import { appendFileSync } from "node:fs";',
           'import path from "node:path";',
@@ -751,7 +751,7 @@ describe("create-version in monorepo mode", () => {
       runGit(["push", "--quiet", "origin", "main"], repositoryRoot);
       pushCoreFeature(repositoryRoot);
       // Any registry npm reads outside the project .npmrc is unreachable.
-      const globalConfigPath = path.join(createTemporaryDirectory("astra-rp-npm-global-"), "npmrc");
+      const globalConfigPath = path.join(createTemporaryDirectory("golfo-rp-npm-global-"), "npmrc");
       writeFileSync(globalConfigPath, "registry=http://127.0.0.1:9/\n");
       /** @param {string} registryUrl - Registry of the project .npmrc. @returns {NodeJS.ProcessEnv} Command environment. */
       const projectNpmrcEnvironment = (registryUrl) => {
@@ -781,7 +781,7 @@ describe("create-version in monorepo mode", () => {
     async () => {
       const { repositoryRoot, remoteRoot } = createReleasedMonorepo();
       writeFileSync(
-        path.join(repositoryRoot, "astra-rp.config.js"),
+        path.join(repositoryRoot, "golfo-rp.config.js"),
         ['export default {', '  changelog: { audience: "quien usa {name}" },', '  packages: "workspaces",', "  checks: false,", '  publish: "npm",', '  versionFiles: ["packages/widget/CHANGELOG.md"],', "};", ""].join("\n")
       );
       commitAll(repositoryRoot, "chore: version the widget changelog");
@@ -899,7 +899,7 @@ describe("create-version in monorepo mode", () => {
     async () => {
       const { repositoryRoot, remoteRoot } = createReleasedMonorepo();
       writeFileSync(
-        path.join(repositoryRoot, "astra-rp.config.js"),
+        path.join(repositoryRoot, "golfo-rp.config.js"),
         ['export default {', '  changelog: { audience: "quien usa {name}" },', '  packages: "workspaces",', "  checks: false,", "};", ""].join("\n")
       );
       commitAll(repositoryRoot, "chore: stop publishing");

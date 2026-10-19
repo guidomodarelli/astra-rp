@@ -3,7 +3,7 @@
  * because they are missing. The agents are tried in the configured order (Claude Code, then Codex
  * by default): each one reads an isolated, read-only copy of the repository with the release diff
  * and log, outside the checkout, and answers the entries as Markdown,
- * which astra-rp checks before writing them. The first valid answer wins; when every agent fails,
+ * which golfo-rp checks before writing them. The first valid answer wins; when every agent fails,
  * the caller reports why and the release stops as it does without drafting.
  *
  * @module create-version/changelog-draft
@@ -74,7 +74,7 @@ import { quoteShellArguments, runCaptured, runCapturedWithInput } from "./proces
 
 /**
  * Writes the prompt the agent receives: what to draft, the files of the isolated workspace it runs
- * in (snapshot and release context) and the exact answer format astra-rp accepts. The project rules
+ * in (snapshot and release context) and the exact answer format golfo-rp accepts. The project rules
  * about the changelog win over these guidelines.
  *
  * @param {ChangelogDraftRequest} request - Package, changelog and commits of the release.

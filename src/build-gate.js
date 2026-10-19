@@ -8,12 +8,12 @@
  * be read there is nothing to compare, so a stable version builds.
  *
  * A release delegated to CI is skipped only on the commit that changes
- * `.astra-rp/release.json` against its first parent, the same commit scoping the
- * generated `.astra-rp/vercel-ignore-build.mjs` applies (that template stays
+ * `.golfo-rp/release.json` against its first parent, the same commit scoping the
+ * generated `.golfo-rp/vercel-ignore-build.mjs` applies (that template stays
  * dependency-free, so it inlines the check). Later commits keep the metadata
  * untouched and fall through to the version rule. Without a readable parent
  * (shallow clone or first commit) the release commit is recognized by its own
- * `Astra-Rp-Execution: ci` trailer, which later commits never carry, so the
+ * `Golfo-Rp-Execution: ci` trailer, which later commits never carry, so the
  * deployment still waits for the release workflow.
  *
  * @module build-gate
@@ -83,7 +83,7 @@ function readVersion(readManifest) {
 }
 
 /**
- * Tells whether the deployed commit carries exactly one `Astra-Rp-Execution: ci`
+ * Tells whether the deployed commit carries exactly one `Golfo-Rp-Execution: ci`
  * trailer, the commit-local mark `create-version` writes in a release delegated
  * to CI. A Git failure counts as "no trailer".
  *
@@ -106,7 +106,7 @@ function hasCiReleaseTrailer(repositoryRoot) {
  * Tells whether the deployed commit is the one that wrote the CI release
  * metadata. With a readable first parent it compares the metadata against it;
  * without one (first commit or shallow clone) it relies on the release commit's
- * own `Astra-Rp-Execution: ci` trailer, so the CI gate holds in shallow checkouts.
+ * own `Golfo-Rp-Execution: ci` trailer, so the CI gate holds in shallow checkouts.
  *
  * @param {string} repositoryRoot - Checkout whose `HEAD` is being deployed.
  * @returns {boolean} Whether `HEAD` is the CI release commit.

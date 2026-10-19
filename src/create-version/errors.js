@@ -1,5 +1,5 @@
 /**
- * Errors of `astra-rp create-version`.
+ * Errors of `golfo-rp create-version`.
  *
  * @module create-version/errors
  */

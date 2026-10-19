@@ -1,12 +1,12 @@
 {
-  "name": "@astra-kit/rp",
+  "name": "@golfo/rp",
   "version": "1.0.0",
   "description": "Dependency-free release process: stable version rules, Vercel build gate, manual changelog checks with automatic closing of [Unreleased], and terminal UI.",
   "license": "MIT",
   "author": "Guido Modarelli",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/guidomodarelli/astra-rp.git"
+    "url": "git+https://github.com/guidomodarelli/golfo-rp.git"
   },
   "type": "module",
   "sideEffects": false,
@@ -15,7 +15,7 @@
   },
   "packageManager": "pnpm@12.6.0",
   "bin": {
-    "astra-rp": "./bin/astra-rp.js"
+    "golfo-rp": "./bin/golfo-rp.js"
   },
   "exports": {
     ".": {
@@ -78,10 +78,10 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --dir tests",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
-    "create-version": "node bin/astra-rp.js create-version",
-    "cv": "node bin/astra-rp.js create-version",
+    "create-version": "node bin/golfo-rp.js create-version",
+    "cv": "node bin/golfo-rp.js create-version",
     "prepack": "pnpm build:types",
-    "prepublishOnly": "node bin/astra-rp.js guard-publish"
+    "prepublishOnly": "node bin/golfo-rp.js guard-publish"
   },
   "publishConfig": {
     "access": "public"

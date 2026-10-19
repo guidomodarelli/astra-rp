@@ -1,5 +1,5 @@
 /**
- * Pure release planning of `astra-rp create-version`.
+ * Pure release planning of `golfo-rp create-version`.
  *
  * Receives the snapshot gathered by `state.js` and the project capabilities,
  * and decides without touching Git, npm or databases what is still missing
@@ -749,7 +749,7 @@ function requireCleanChangelog(plan, state, commands) {
 }
 
 /**
- * Blocks a resume plan while `astra-rp.config.js` or `astra-rp.config.mjs` has uncommitted changes:
+ * Blocks a resume plan while `golfo-rp.config.js` or `golfo-rp.config.mjs` has uncommitted changes:
  * the run imports the configuration from the working tree, so resuming would check `versionFiles`
  * (and run the hooks) with a configuration other than the one of the release commit.
  *
@@ -930,7 +930,7 @@ function planDetachedResume(version, capabilities, state) {
   const tag = toReleaseTag(version);
 
   if (!capabilities.publish) {
-    return blockedPlan([{ title: `${tag} no está en ${state.npm?.registryLabel ?? "npm"}, pero este proyecto no configura publish`, details: ["Agregá publish en astra-rp.config.js o publicalo a mano."] }]);
+    return blockedPlan([{ title: `${tag} no está en ${state.npm?.registryLabel ?? "npm"}, pero este proyecto no configura publish`, details: ["Agregá publish en golfo-rp.config.js o publicalo a mano."] }]);
   }
 
   const blockers = findDetachedReleaseBlockers(version, state, capabilities.commands ?? DEFAULT_PROJECT_COMMANDS);
@@ -1076,7 +1076,7 @@ export function missingChecksBlocker(commands) {
   return {
     title: "El proyecto no valida nada antes de publicar",
     details: [
-      `Agregá un script ${DEFAULT_CHECKS_SCRIPT} en package.json (se corre ${commands.runScript(DEFAULT_CHECKS_SCRIPT)}) o checks en astra-rp.config.(m)js.`,
+      `Agregá un script ${DEFAULT_CHECKS_SCRIPT} en package.json (se corre ${commands.runScript(DEFAULT_CHECKS_SCRIPT)}) o checks en golfo-rp.config.(m)js.`,
       "Para saltear la validación a propósito: checks: false.",
     ],
   };

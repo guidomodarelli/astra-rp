@@ -1,5 +1,5 @@
 /**
- * Git, npm, configuration and display values of the shared `astra-rp create-version` command.
+ * Git, npm, configuration and display values of the shared `golfo-rp create-version` command.
  *
  * @module constants/create-version
  */
@@ -19,13 +19,13 @@ export const RELEASE_REMOTE = "origin";
 export const REMOTE_MAIN_REF = `${RELEASE_REMOTE}/${MAIN_BRANCH}`;
 
 /** Configuration module read from the repository root. */
-export const CREATE_VERSION_CONFIG_FILE = "astra-rp.config.js";
+export const CREATE_VERSION_CONFIG_FILE = "golfo-rp.config.js";
 
 /**
  * Configuration candidates in lookup order: `.mjs` is always ESM, so projects
  * without `"type": "module"` load it without Node warnings.
  */
-export const CREATE_VERSION_CONFIG_FILES = Object.freeze(["astra-rp.config.mjs", CREATE_VERSION_CONFIG_FILE]);
+export const CREATE_VERSION_CONFIG_FILES = Object.freeze(["golfo-rp.config.mjs", CREATE_VERSION_CONFIG_FILE]);
 
 /** Manifest whose `version` is released; shared with the build gate. */
 export { PACKAGE_MANIFEST_FILE } from "./build-gate.js";
@@ -41,9 +41,9 @@ export const NPM_TOKEN_VARIABLE = NPM_REGISTRY_TOKEN_VARIABLE;
 
 /**
  * Path segments, relative to the user home directory (`os.homedir()`), of the environment file
- * shared by every project: one `NPM_TOKEN` for all the repositories that release with astra-rp.
+ * shared by every project: one `NPM_TOKEN` for all the repositories that release with golfo-rp.
  */
-export const SHARED_ENVIRONMENT_FILE_SEGMENTS = Object.freeze([".config", "astra-rp", LOCAL_ENVIRONMENT_FILE]);
+export const SHARED_ENVIRONMENT_FILE_SEGMENTS = Object.freeze([".config", "golfo-rp", LOCAL_ENVIRONMENT_FILE]);
 
 /** How the shared environment file is shown to the user, independent of the platform. */
 export const SHARED_ENVIRONMENT_FILE_LABEL = `~/${SHARED_ENVIRONMENT_FILE_SEGMENTS.join("/")}`;
@@ -228,7 +228,7 @@ export const NPM_NOT_FOUND_CODE = "E404";
 export const NPM_DIST_TAG = "latest";
 
 
-/** Command-line flags of `astra-rp create-version`. */
+/** Command-line flags of `golfo-rp create-version`. */
 export const CREATE_VERSION_FLAG = Object.freeze({
   bump: "bump",
   patch: "patch",
@@ -262,7 +262,7 @@ export const RELEASE_TYPE_SHORT_NAME = Object.freeze({
 });
 
 /**
- * Long flag of each short flag of `astra-rp create-version`. Short flags are whole tokens (`-sv` has
+ * Long flag of each short flag of `golfo-rp create-version`. Short flags are whole tokens (`-sv` has
  * two letters), so they are never grouped: `-lm` is rejected instead of read as `-l -m`. A value may
  * follow as the next token or after `=` (`-b m`, `-b=m`, `-sv 1.3.0`, `-sv=1.3.0`).
  */
@@ -280,7 +280,7 @@ export const CREATE_VERSION_SHORT_FLAG = Object.freeze({
 export const SHORT_FLAG_TOKEN_PATTERN = /^-(?<name>[^-=][^=]*)(?:=(?<value>.*))?$/su;
 
 /** Message of the `git stash` entry holding the changes `--ignore-local-changes` sets aside. */
-export const LOCAL_CHANGES_STASH_MESSAGE = "astra-rp create-version: cambios locales apartados durante el release";
+export const LOCAL_CHANGES_STASH_MESSAGE = "golfo-rp create-version: cambios locales apartados durante el release";
 
 /** Optional `v` prefix accepted in hand-typed versions. */
 export const VERSION_PREFIX_PATTERN = /^v/u;
@@ -370,7 +370,7 @@ export const NPM_PACK_DRY_RUN_ARGUMENTS = Object.freeze(["pack", "--dry-run", "-
  * Prefix of the temporary directory, outside the package root, that holds the prepared archive
  * while `npm pack --dry-run` runs, so npm never packs the archive into the package it describes.
  */
-export const ARTIFACT_HOLDING_DIRECTORY_PREFIX = "astra-rp-artifact-";
+export const ARTIFACT_HOLDING_DIRECTORY_PREFIX = "golfo-rp-artifact-";
 
 /** Node.js error code of a `rename` across file systems, retried as copy and delete. */
 export const CROSS_DEVICE_RENAME_ERROR_CODE = "EXDEV";
@@ -480,7 +480,7 @@ export const NPM_REGISTRY_PROTOCOLS = Object.freeze(["http:", "https:"]);
 export const NPM_AUTH_TOKEN_REFERENCE = `\${${NPM_TOKEN_VARIABLE}}`;
 
 /** Prefix of the temporary directory holding the publish-only npm user config. */
-export const NPM_AUTH_DIRECTORY_PREFIX = "astra-rp-npm-auth-";
+export const NPM_AUTH_DIRECTORY_PREFIX = "golfo-rp-npm-auth-";
 
 /** Characters that could break out of a quoted path on the Windows shell. */
 export const UNSAFE_QUOTED_PATH_PATTERN = /["%]/u;

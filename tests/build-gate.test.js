@@ -17,7 +17,7 @@ import {
 const GIT_FIXTURE_TEST_TIMEOUT_MS = 60_000;
 
 /** CLI exercised by the Vercel `ignoreCommand` wrappers. */
-const CLI_PATH = fileURLToPath(new URL("../bin/astra-rp.js", import.meta.url));
+const CLI_PATH = fileURLToPath(new URL("../bin/golfo-rp.js", import.meta.url));
 
 /** Git variables exported by hooks that would redirect fixture commands. */
 const GIT_HOOK_ENVIRONMENT_VARIABLES = ["GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_PREFIX"];
@@ -55,7 +55,7 @@ function runGit(gitArguments, workingDirectory) {
  * @returns {string} Repository root.
  */
 function createRepositoryWithVersions(versions) {
-  const repositoryRoot = mkdtempSync(path.join(os.tmpdir(), "astra-rp-gate-"));
+  const repositoryRoot = mkdtempSync(path.join(os.tmpdir(), "golfo-rp-gate-"));
   temporaryDirectories.push(repositoryRoot);
   runGit(["init", "--quiet"], repositoryRoot);
   runGit(["config", "user.email", "release@example.test"], repositoryRoot);
@@ -76,15 +76,15 @@ function createRepositoryWithVersions(versions) {
  *
  * @param {string} repositoryRoot - Repository.
  * @param {string} version - Released `package.json` version.
- * @param {{ version: string, execution: string }} metadata - Contents of `.astra-rp/release.json`.
- * @param {string | null} [executionTrailer] - Value of the `Astra-Rp-Execution` trailer, or `null` to omit it.
+ * @param {{ version: string, execution: string }} metadata - Contents of `.golfo-rp/release.json`.
+ * @param {string | null} [executionTrailer] - Value of the `Golfo-Rp-Execution` trailer, or `null` to omit it.
  */
 function commitRelease(repositoryRoot, version, metadata, executionTrailer = null) {
-  mkdirSync(path.join(repositoryRoot, ".astra-rp"), { recursive: true });
+  mkdirSync(path.join(repositoryRoot, ".golfo-rp"), { recursive: true });
   writeFileSync(path.join(repositoryRoot, "package.json"), `${JSON.stringify({ name: "fixture", version }, null, 2)}\n`);
-  writeFileSync(path.join(repositoryRoot, ".astra-rp/release.json"), JSON.stringify(metadata));
+  writeFileSync(path.join(repositoryRoot, ".golfo-rp/release.json"), JSON.stringify(metadata));
   runGit(["add", "-A"], repositoryRoot);
-  const trailerArguments = executionTrailer === null ? [] : ["--trailer", `Astra-Rp-Execution: ${executionTrailer}`];
+  const trailerArguments = executionTrailer === null ? [] : ["--trailer", `Golfo-Rp-Execution: ${executionTrailer}`];
   runGit(["commit", "--quiet", "-m", `chore(release): ${version}`, ...trailerArguments], repositoryRoot);
 }
 
@@ -106,14 +106,14 @@ function commitFollowUpChange(repositoryRoot) {
  * @returns {string} Shallow checkout whose `HEAD` has no readable parent.
  */
 function cloneShallow(repositoryRoot) {
-  const shallowCheckout = path.join(mkdtempSync(path.join(os.tmpdir(), "astra-rp-gate-shallow-")), "checkout");
+  const shallowCheckout = path.join(mkdtempSync(path.join(os.tmpdir(), "golfo-rp-gate-shallow-")), "checkout");
   temporaryDirectories.push(path.dirname(shallowCheckout));
   runGit(["clone", "--quiet", "--depth", "1", pathToFileURL(repositoryRoot).href, shallowCheckout], repositoryRoot);
   return shallowCheckout;
 }
 
 /**
- * Runs `astra-rp ignore-build` in a checkout.
+ * Runs `golfo-rp ignore-build` in a checkout.
  *
  * @param {string} repositoryRoot - Checkout being deployed.
  * @param {string[]} [cliArguments] - CLI arguments.
@@ -164,7 +164,7 @@ describe("build decision", () => {
   });
 });
 
-describe("astra-rp ignore-build", () => {
+describe("golfo-rp ignore-build", () => {
   it("should defer only the exact CI release while keeping ordinary local build decisions", () => {
     // Arrange, Act and Assert
     for (const { metadata, expectedDecision } of [

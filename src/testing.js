@@ -1,6 +1,6 @@
 /**
  * Version bump fixtures for the test suites of every repository that uses
- * `astra-rp`, so `create-version`, the Vercel build gate and any custom release
+ * `golfo-rp`, so `create-version`, the Vercel build gate and any custom release
  * command are checked against the same rule: from a stable version only the
  * next patch, minor or major is allowed.
  *

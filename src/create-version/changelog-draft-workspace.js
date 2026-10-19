@@ -1,7 +1,7 @@
 /**
  * Isolated workspace where the changelog drafting agents run: a temporary directory outside the
  * repository with a snapshot of the files Git tracks at `HEAD` and the release context (diff and
- * log of the release range, plus the working tree changelog) that astra-rp reads for them. The
+ * log of the release range, plus the working tree changelog) that golfo-rp reads for them. The
  * agents never see the checkout, its `.git` directory nor its untracked files, and need no Git
  * command of their own.
  *

@@ -11,7 +11,7 @@ import { ReleaseStepError } from "./errors.js";
 /**
  * Builds the trailer paragraph appended to the release commit message.
  * @param {"local" | "ci"} execution - Location where the release commit is prepared.
- * @returns {string} Trailer line such as `Astra-Rp-Execution: ci`.
+ * @returns {string} Trailer line such as `Golfo-Rp-Execution: ci`.
  */
 export function formatReleaseExecutionTrailer(execution) {
   return `${RELEASE_EXECUTION_TRAILER}: ${execution}`;

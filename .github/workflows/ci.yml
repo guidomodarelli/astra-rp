@@ -1,0 +1,39 @@
+name: CI
+
+# Pull requests validate the merge commit and pushes to main validate main; other branch pushes
+# are covered by their pull request, so the suite does not run twice for the same change.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    # Consumers release from Windows and Linux runners, and the release commands spawn Git and the
+    # package manager, so both platforms run the full check.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      # Installs pnpm from packageManager with the frozen lockfile.
+      - uses: pnpm/setup@v2.1.0
+        with:
+          cache: true
+          require-lockfile: true
+      - run: pnpm check

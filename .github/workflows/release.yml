@@ -28,6 +28,9 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # The worker runs pnpm check itself in a few minutes; the limit stops a hung step (an install
+    # or a test that never ends) instead of holding the release concurrency group for hours.
+    timeout-minutes: 30
     env:
       HUSKY: '0'
 
